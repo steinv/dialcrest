@@ -52,3 +52,5 @@ build/
 /android/build/
 
 .firebase
+node_modules
+dist/

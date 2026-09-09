@@ -59,11 +59,14 @@
     "rules": "database.rules.json"
   },
   "hosting": {
-    "public": "public",
+    "public": "dist",
     "ignore": [
       "firebase.json",
       "**/.*",
       "**/node_modules/**"
+    ],
+    "predeploy": [
+      "npm --prefix site run build"
     ],
     "rewrites": [
       {
@@ -107,20 +110,20 @@
         ]
       },
       {
-        "source": "**/*.@(css|js)",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "public, max-age=3600, must-revalidate"
-          }
-        ]
-      },
-      {
         "source": "**/*.@(png|jpg|jpeg|gif|webp|svg|ico)",
         "headers": [
           {
             "key": "Cache-Control",
             "value": "public, max-age=86400, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "/assets/**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=31536000, immutable"
           }
         ]
       }
