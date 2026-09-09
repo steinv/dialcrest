@@ -75,19 +75,38 @@
     </div>
   </div>
 
-  <div class="screenshot-strip">
-    <div class="shot-frame"><img src="/images/screenshots/dialer.png" alt="Dialcrest dialer screen"></div>
-    <div class="shot-frame"><img src="/images/screenshots/incoming-call.png" alt="Dialcrest incoming call screen"></div>
-    <div class="shot-frame"><img src="/images/screenshots/messages.png" alt="Dialcrest messages screen"></div>
-    <div class="shot-frame"><img src="/images/screenshots/call-history.png" alt="Dialcrest call history screen"></div>
-    <div class="shot-frame"><img src="/images/screenshots/settings.png" alt="Dialcrest settings screen"></div>
+  <div class="screenshot-carousel" id="screenshotCarousel">
+    <div class="carousel-viewport">
+      <div class="carousel-track" id="carouselTrack">
+        <figure class="carousel-slide"><img src="/images/screenshots/dialer.png" alt="Dialcrest dialer screen"></figure>
+        <figure class="carousel-slide"><img src="/images/screenshots/incoming-call.png" alt="Dialcrest incoming call screen"></figure>
+        <figure class="carousel-slide"><img src="/images/screenshots/messages.png" alt="Dialcrest messages screen"></figure>
+        <figure class="carousel-slide"><img src="/images/screenshots/call-history.png" alt="Dialcrest call history screen"></figure>
+        <figure class="carousel-slide"><img src="/images/screenshots/settings.png" alt="Dialcrest settings screen"></figure>
+      </div>
+      <button type="button" class="carousel-btn prev" aria-label="Previous screenshot">‹</button>
+      <button type="button" class="carousel-btn next" aria-label="Next screenshot">›</button>
+    </div>
+    <div class="carousel-dots" id="carouselDots"></div>
+  </div>
+
+  <div class="lightbox" id="lightbox" hidden>
+    <button type="button" class="lightbox-close" aria-label="Close">×</button>
+    <button type="button" class="lightbox-btn prev" aria-label="Previous screenshot">‹</button>
+    <img class="lightbox-img" id="lightboxImg" src="" alt="">
+    <button type="button" class="lightbox-btn next" aria-label="Next screenshot">›</button>
   </div>
 
   <div class="callout">
     <h2>Open source, by design</h2>
     <p>Dialcrest is developed in the open. Read the code, file an issue, or run your own
     build against your own Firebase/Twilio project.</p>
-    <a class="btn" href="https://github.com/steinv/dialcrest" target="_blank" rel="noopener">View on GitHub</a>
+    <div class="callout--buttons">
+      <a class="btn" href="https://github.com/steinv/dialcrest" target="_blank" rel="noopener">View on GitHub</a>
+      <a class="bmc-badge" href="https://buymeacoffee.com/steinv" target="_blank" rel="noopener">
+        <img src="/images/bmc-badge.png" alt="Buy me a coffee">
+      </a>
+    </div>
   </div>
 </main>
 
@@ -102,6 +121,9 @@
     </div>
   </div>
 </footer>
+
+
+<script src="/script.js" defer></script>
 
 </body>
 </html>

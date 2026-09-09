@@ -1,5 +1,7 @@
 # Dialcrest
 
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-ffdd00?logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/steinv)
+
 Dialcrest is a mobile calling and texting app built on the Twilio Voice SDK.
 The Flutter/Dart package name in this repo is still `twilio_phone` (its
 original name, pre-rebrand) — the app itself now ships as Dialcrest.
