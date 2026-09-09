@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "917581683919",
+    "project_id": "twilio-phone-peblet",
+    "storage_bucket": "twilio-phone-peblet.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:917581683919:android:0fdfd4147afdbd0d172bba",
+        "android_client_info": {
+          "package_name": "be.peblet.twilio_phone"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCfWsROklqcWI1_w2ty6Rg-IKk8l_smUQ8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

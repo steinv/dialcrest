@@ -1,0 +1,321 @@
+{
+  "@@locale": "en",
+
+  "authSubtitle": "Enter your Twilio credentials to start making and receiving calls and messages.",
+  "@authSubtitle": {},
+
+  "accountSidLabel": "Account SID",
+  "@accountSidLabel": {},
+
+  "accountSidValidatorError": "Please enter your Account SID",
+  "@accountSidValidatorError": {},
+
+  "authTokenLabel": "Auth Token",
+  "@authTokenLabel": {},
+
+  "authTokenValidatorError": "Please enter your Auth Token",
+  "@authTokenValidatorError": {},
+
+  "connect": "Connect",
+  "@connect": {},
+
+  "consoleHelpText": "You can find your Account SID and Auth Token in your Twilio Console.",
+  "@consoleHelpText": {},
+
+  "invalidCredentialsError": "Invalid Account SID or Auth Token or suspended account. Check your Twilio Console and try again.",
+  "@invalidCredentialsError": {},
+
+  "credentialsCheckError": "Could not verify credentials (check your connection): {error}",
+  "@credentialsCheckError": {
+    "placeholders": { "error": {} }
+  },
+
+  "noCallHistory": "No call history",
+  "@noCallHistory": {},
+
+  "couldNotLoadCallHistory": "Could not load call history",
+  "@couldNotLoadCallHistory": {},
+
+  "retry": "Retry",
+  "@retry": {},
+
+  "failedToLoadCallHistory": "Failed to load call history: {error}",
+  "@failedToLoadCallHistory": {
+    "placeholders": { "error": {} }
+  },
+
+  "callTypeMissed": "Missed",
+  "@callTypeMissed": {},
+
+  "callTypeIncoming": "Incoming",
+  "@callTypeIncoming": {},
+
+  "callTypeOutgoing": "Outgoing",
+  "@callTypeOutgoing": {},
+
+  "missedSuffix": " (Missed)",
+  "@missedSuffix": {},
+
+  "addToContacts": "Add to Contacts",
+  "@addToContacts": {},
+
+  "callBack": "Call Back",
+  "@callBack": {},
+
+  "callDetailsType": "Type: {type}",
+  "@callDetailsType": {
+    "placeholders": { "type": {} }
+  },
+
+  "callDetailsTime": "Time: {time}",
+  "@callDetailsTime": {
+    "placeholders": { "time": {} }
+  },
+
+  "callDetailsDuration": "Duration: {duration}",
+  "@callDetailsDuration": {
+    "placeholders": { "duration": {} }
+  },
+
+  "durationHoursMinutes": "{hours}h {minutes}m",
+  "@durationHoursMinutes": {
+    "placeholders": { "hours": {}, "minutes": {} }
+  },
+
+  "durationMinutesSeconds": "{minutes}m {seconds}s",
+  "@durationMinutesSeconds": {
+    "placeholders": { "minutes": {}, "seconds": {} }
+  },
+
+  "durationSeconds": "{seconds}s",
+  "@durationSeconds": {
+    "placeholders": { "seconds": {} }
+  },
+
+  "couldNotStartCall": "Could not start call to {number}",
+  "@couldNotStartCall": {
+    "placeholders": { "number": {} }
+  },
+
+  "connectingTo": "Connecting to {number}…",
+  "@connectingTo": {
+    "placeholders": { "number": {} }
+  },
+
+  "failedToMakeCall": "Failed to make call: {error}",
+  "@failedToMakeCall": {
+    "placeholders": { "error": {} }
+  },
+
+  "contactsPermissionDenied": "Contacts permission was denied. Contact names won't be shown until it's granted in system Settings > Apps.",
+  "@contactsPermissionDenied": {},
+
+  "failedToSwitchNumber": "Failed to switch number: {error}",
+  "@failedToSwitchNumber": {
+    "placeholders": { "error": {} }
+  },
+
+  "incomingCallTitle": "Incoming Call",
+  "@incomingCallTitle": {},
+
+  "incomingCallBody": "From: {name}",
+  "@incomingCallBody": {
+    "placeholders": { "name": {} }
+  },
+
+  "newMessageTitle": "New Message",
+  "@newMessageTitle": {},
+
+  "newConversationTitle": "New Conversation",
+  "@newConversationTitle": {},
+
+  "phoneNumberOrContactHint": "Phone number or contact name",
+  "@phoneNumberOrContactHint": {},
+
+  "cancel": "Cancel",
+  "@cancel": {},
+
+  "start": "Start",
+  "@start": {},
+
+  "newConversationTooltip": "New conversation",
+  "@newConversationTooltip": {},
+
+  "dialerTabLabel": "Dialer",
+  "@dialerTabLabel": {},
+
+  "callsTabLabel": "Calls",
+  "@callsTabLabel": {},
+
+  "messagesTabLabel": "Messages",
+  "@messagesTabLabel": {},
+
+  "settingsTabLabel": "Settings",
+  "@settingsTabLabel": {},
+
+  "appBarTitleCallHistory": "Call History",
+  "@appBarTitleCallHistory": {},
+
+  "appBarTitleDefault": "Twilio Softphone",
+  "@appBarTitleDefault": {},
+
+  "switchOutgoingNumberTooltip": "Switch outgoing number",
+  "@switchOutgoingNumberTooltip": {},
+
+  "switchOutgoingNumberTooltipWithCurrent": "Switch outgoing number (current: {number})",
+  "@switchOutgoingNumberTooltipWithCurrent": {
+    "placeholders": { "number": {} }
+  },
+
+  "somethingWentWrong": "Something went wrong",
+  "@somethingWentWrong": {},
+
+  "failedToLoadMessages": "Failed to load messages: {error}",
+  "@failedToLoadMessages": {
+    "placeholders": { "error": {} }
+  },
+
+  "failedToLoadMoreMessages": "Failed to load more messages: {error}",
+  "@failedToLoadMoreMessages": {
+    "placeholders": { "error": {} }
+  },
+
+  "failedToSendMessage": "Failed to send message: {error}",
+  "@failedToSendMessage": {
+    "placeholders": { "error": {} }
+  },
+
+  "noMessagesYet": "No messages yet",
+  "@noMessagesYet": {},
+
+  "couldNotLoadMessages": "Could not load messages",
+  "@couldNotLoadMessages": {},
+
+  "startAConversation": "Start a conversation",
+  "@startAConversation": {},
+
+  "typeMessageHint": "Type a message...",
+  "@typeMessageHint": {},
+
+  "planUnavailableError": "The {plan} plan isn't available from the store right now. Please try again shortly.",
+  "@planUnavailableError": {
+    "placeholders": { "plan": {} }
+  },
+
+  "couldNotLoadSubscription": "Could not load subscription status: {error}",
+  "@couldNotLoadSubscription": {
+    "placeholders": { "error": {} }
+  },
+
+  "purchaseFailed": "Purchase failed: {error}",
+  "@purchaseFailed": {
+    "placeholders": { "error": {} }
+  },
+
+  "failedToUpdateMode": "Failed to update mode: {error}",
+  "@failedToUpdateMode": {
+    "placeholders": { "error": {} }
+  },
+
+  "couldNotLoadPhoneNumbers": "Could not load phone numbers: {error}",
+  "@couldNotLoadPhoneNumbers": {
+    "placeholders": { "error": {} }
+  },
+
+  "failedToUpdateNumberConfig": "Failed to update number configuration: {error}",
+  "@failedToUpdateNumberConfig": {
+    "placeholders": { "error": {} }
+  },
+
+  "logOut": "Log out",
+  "@logOut": {},
+
+  "logOutConfirmMessage": "This removes your Twilio Account SID and Auth Token from this device. You can reconnect at any time.",
+  "@logOutConfirmMessage": {},
+
+  "licenseTitle": "License",
+  "@licenseTitle": {},
+
+  "licenseSubtitle": "Your Dialcrest subscription for this Twilio account.",
+  "@licenseSubtitle": {},
+
+  "purchasingUnavailable": "Purchasing isn't available on this platform.",
+  "@purchasingUnavailable": {},
+
+  "trialExpired": "Trial expired",
+  "@trialExpired": {},
+
+  "subscriptionExpired": "Subscription expired",
+  "@subscriptionExpired": {},
+
+  "trialDaysLeft": "Trial — {days} {days, plural, one{day} other{days}} left",
+  "@trialDaysLeft": {
+    "placeholders": { "days": {} }
+  },
+
+  "renewsOn": "Renews on {date}",
+  "@renewsOn": {
+    "placeholders": { "date": {} }
+  },
+
+  "expiresOnAutoRenewOff": "Expires on {date} — auto-renew is off",
+  "@expiresOnAutoRenewOff": {
+    "placeholders": { "date": {} }
+  },
+
+  "monthly": "Monthly",
+  "@monthly": {},
+
+  "yearly": "Yearly",
+  "@yearly": {},
+
+  "perMonthSuffix": "/month",
+  "@perMonthSuffix": {},
+
+  "perYearSuffix": "/year",
+  "@perYearSuffix": {},
+
+  "yearlyDiscountNote": "Purchasing for a year gives you 2 months free. Subscriptions renew automatically until canceled.",
+  "@yearlyDiscountNote": {},
+
+  "modeTitle": "Mode",
+  "@modeTitle": {},
+
+  "modeSubtitleVacation": "This device will not ring for incoming calls. Other people using this Twilio account are unaffected.",
+  "@modeSubtitleVacation": {},
+
+  "modeSubtitleOnline": "This device rings for incoming calls as normal.",
+  "@modeSubtitleOnline": {},
+
+  "onlineMode": "Online mode",
+  "@onlineMode": {},
+
+  "vacationMode": "Vacation mode",
+  "@vacationMode": {},
+
+  "outgoingTitle": "Outgoing",
+  "@outgoingTitle": {},
+
+  "outgoingSubtitle": "The number used as caller ID when you place a call or send a text.",
+  "@outgoingSubtitle": {},
+
+  "noPhoneNumbersFound": "No phone numbers found on this Twilio account.",
+  "@noPhoneNumbersFound": {},
+
+  "incomingTitle": "Incoming",
+  "@incomingTitle": {},
+
+  "incomingSubtitle": "Only checked numbers ring this app.",
+  "@incomingSubtitle": {},
+
+  "moreResults": "{count} results · More results",
+  "@moreResults": {
+    "placeholders": { "count": {} }
+  },
+
+  "audioMessage": "Audio message",
+  "@audioMessage": {},
+
+  "attachment": "Attachment",
+  "@attachment": {}
+}

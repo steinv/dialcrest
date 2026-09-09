@@ -1,0 +1,391 @@
+/* Shared styles for the Dialcrest marketing site (index, faq, privacy) */
+
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --fg: #12211d;
+  --muted: #5b6b66;
+  --accent: #0f8a6a;
+  --accent-fg: #ffffff;
+  --border: #e4ece9;
+  --card: #f5faf8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1512;
+    --fg: #eaf2ef;
+    --muted: #9fb3ac;
+    --accent: #6fe3c4;
+    --accent-fg: #0d1512;
+    --border: #22322c;
+    --card: #131f1a;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.6;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+img {
+  max-width: 100%;
+}
+
+/* Nav */
+
+.site-header {
+  border-bottom: 1px solid var(--border);
+}
+
+.site-nav {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.site-nav .brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 1.15rem;
+  color: var(--fg);
+}
+
+.site-nav .brand:hover {
+  text-decoration: none;
+}
+
+.site-nav .brand img {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+
+.site-nav .links {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.site-nav .links a {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.site-nav .links a.active,
+.site-nav .links a:hover {
+  color: var(--fg);
+}
+
+/* Main containers */
+
+main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 24px 80px;
+}
+
+main.narrow {
+  max-width: 720px;
+}
+
+/* Hero */
+
+.hero {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 64px 24px 32px;
+  text-align: center;
+}
+
+.hero img.logo {
+  width: 96px;
+  height: 96px;
+  border-radius: 22px;
+  margin-bottom: 24px;
+}
+
+.hero h1 {
+  font-size: 2.25rem;
+  margin: 0 0 12px;
+}
+
+.hero p.tagline {
+  color: var(--muted);
+  font-size: 1.15rem;
+  max-width: 560px;
+  margin: 0 auto 32px;
+}
+
+.store-badges {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.store-badges a {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.store-badges a:hover {
+  border-color: var(--accent);
+  text-decoration: none;
+}
+
+.store-note {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-top: 8px;
+}
+
+/* Feature grid */
+
+.features {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 20px;
+  margin: 48px 0;
+}
+
+.feature-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 24px;
+}
+
+.feature-card h3 {
+  margin: 0 0 8px;
+  font-size: 1.05rem;
+}
+
+.feature-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+/* Screenshot strip */
+
+.screenshot-strip {
+  display: flex;
+  gap: 20px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  padding: 12px 4px 28px;
+  margin: 24px 0 48px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.shot-frame {
+  flex: none;
+  scroll-snap-align: start;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  padding: 12px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.38), 0 2px 10px rgba(0, 0, 0, 0.22);
+}
+
+.shot-frame img {
+  display: block;
+  height: 380px;
+  width: auto;
+  border-radius: 18px;
+}
+
+@media (max-width: 640px) {
+  .shot-frame img {
+    height: 240px;
+  }
+  .shot-frame {
+    padding: 8px;
+    border-radius: 20px;
+  }
+  .screenshot-strip {
+    gap: 12px;
+  }
+}
+
+/* Open source callout */
+
+.callout {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 32px;
+  margin: 48px 0;
+  text-align: center;
+}
+
+.callout h2 {
+  margin-top: 0;
+}
+
+.callout .btn {
+  display: inline-block;
+  margin-top: 12px;
+  padding: 10px 22px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-weight: 700;
+}
+
+.callout .btn:hover {
+  text-decoration: none;
+  opacity: 0.9;
+}
+
+/* Page headings (faq/privacy) */
+
+h1 {
+  font-size: 1.75rem;
+  margin-bottom: 0.25rem;
+}
+
+.updated {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin-bottom: 2rem;
+}
+
+h2 {
+  font-size: 1.15rem;
+  margin-top: 2.25rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.35rem;
+}
+
+p, li {
+  font-size: 1rem;
+}
+
+strong.contact {
+  font-size: 1.05rem;
+}
+
+/* FAQ */
+
+.faq-intro {
+  color: var(--muted);
+  margin-bottom: 2rem;
+}
+
+.faq-toc {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 20px 24px;
+  margin-bottom: 2.5rem;
+}
+
+.faq-toc p {
+  margin: 0 0 8px;
+  font-weight: 700;
+}
+
+.faq-toc ol {
+  margin: 0;
+  padding-left: 1.2rem;
+  columns: 2;
+}
+
+.faq-item {
+  margin-top: 3rem;
+  scroll-margin-top: 24px;
+}
+
+.faq-item h2 {
+  border-bottom: none;
+  padding-bottom: 0;
+  margin-top: 0;
+}
+
+.faq-item .shot {
+  float: right;
+  width: 220px;
+  margin: 0 0 16px 24px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+}
+
+.faq-item::after {
+  content: "";
+  display: table;
+  clear: both;
+}
+
+@media (max-width: 640px) {
+  .faq-item .shot {
+    float: none;
+    width: 100%;
+    max-width: 260px;
+    margin: 0 auto 16px;
+    display: block;
+  }
+  .faq-toc ol {
+    columns: 1;
+  }
+}
+
+/* Footer */
+
+.site-footer {
+  border-top: 1px solid var(--border);
+  margin-top: 48px;
+}
+
+.site-footer .inner {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 32px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.site-footer .links {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="phone_account_name" translatable="false">Dialcrest</string>
+    <string name="phone_account_desc" translatable="false">Provides calling services for Dialcrest</string>
+</resources>

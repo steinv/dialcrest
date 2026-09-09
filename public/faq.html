@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FAQ — Dialcrest</title>
+<meta name="description" content="Frequently asked questions about using Dialcrest with your own Twilio account: logging in, calls, messages, vacation mode, and subscriptions.">
+<link rel="icon" type="image/png" sizes="32x32" href="/images/icons/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/images/icons/favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/images/icons/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="site-nav">
+    <a class="brand" href="/">
+      <img src="/images/icons/favicon-48x48.png" alt="">
+      Dialcrest
+    </a>
+    <div class="links">
+      <a href="/">Home</a>
+      <a href="/faq" class="active">FAQ</a>
+      <a href="/privacy">Privacy</a>
+      <a href="https://github.com/steinv/dialcrest" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </nav>
+</header>
+
+<main>
+  <h1>Frequently Asked Questions</h1>
+  <p class="faq-intro">Dialcrest is a thin, native app in front of your own Twilio account.
+  Most questions below come down to that one idea — here's what it means in practice.</p>
+
+  <div class="faq-toc">
+    <p>Jump to:</p>
+    <ol>
+      <li><a href="#account">Do I need a Twilio account?</a></li>
+      <li><a href="#login">How do I log in?</a></li>
+      <li><a href="#outgoing">How do I make a call or send a text?</a></li>
+      <li><a href="#incoming">How do incoming calls work?</a></li>
+      <li><a href="#history">Where's my call history?</a></li>
+      <li><a href="#numbers">Can I use more than one phone number?</a></li>
+      <li><a href="#vacation">What does Vacation mode do?</a></li>
+      <li><a href="#push">Why didn't my phone ring for an incoming call?</a></li>
+      <li><a href="#subscription">How does the free trial and subscription work?</a></li>
+      <li><a href="#twilio">Is Dialcrest affiliated with Twilio? Who do I pay?</a></li>
+      <li><a href="#privacy">What data does Dialcrest store?</a></li>
+      <li><a href="#source">Where's the source code?</a></li>
+    </ol>
+  </div>
+
+  <div class="faq-item" id="account">
+    <h2>Do I need a Twilio account?</h2>
+    <p>Yes. Dialcrest doesn't provide phone numbers or calling minutes itself — it's an
+    app in front of a Twilio account you own. You'll need a
+    <a href="https://www.twilio.com" target="_blank" rel="noopener">Twilio account</a>
+    with at least one Voice-capable phone number, and your account's
+    <strong>Account SID</strong> and <strong>Auth Token</strong> (found on the Twilio
+    Console dashboard).</p>
+  </div>
+
+  <div class="faq-item" id="login">
+    <h2>How do I log in?</h2>
+    <p>On first launch, enter your Twilio <strong>Account SID</strong> and
+    <strong>Auth Token</strong>. Dialcrest verifies them with Twilio, then stores them
+    only in your device's encrypted storage (Android Keystore / iOS Keychain) — they're
+    never written to our database. From there the app registers your device so it can
+    make and receive calls on your Twilio number.</p>
+  </div>
+
+  <div class="faq-item" id="outgoing">
+    <img class="shot" src="/images/screenshots/dialer.png" alt="Dialer screen with a number entered and a matched contact shown">
+    <h2>How do I make a call or send a text?</h2>
+    <p>Use the <strong>Dialer</strong> tab to type or paste a number — matching contacts
+    are shown automatically — then tap the call button to dial, or switch to the
+    <strong>Messages</strong> tab to start a text conversation. Whichever number you've
+    set as your <em>Outgoing</em> caller ID (see Settings) is what the person you're
+    calling or texting will see.</p>
+  </div>
+
+  <div class="faq-item" id="incoming">
+    <img class="shot" src="/images/screenshots/incoming-call.png" alt="Incoming call screen showing caller name and accept/decline buttons">
+    <h2>How do incoming calls work?</h2>
+    <p>When someone calls one of your Twilio numbers that's set to ring this device (see
+    <em>Incoming</em> in Settings), Dialcrest shows a native incoming-call screen —
+    accept to answer, decline to reject. This works even when the app is closed: a push
+    notification wakes it up to show the call.</p>
+  </div>
+
+  <div class="faq-item" id="history">
+    <img class="shot" src="/images/screenshots/call-history.png" alt="Call history list with recent incoming and outgoing calls">
+    <h2>Where's my call history?</h2>
+    <p>The <strong>Calls</strong> tab lists your recent incoming, outgoing, and missed
+    calls, pulled directly from your Twilio account and cached on your device. It's not
+    stored on Dialcrest's servers.</p>
+  </div>
+
+  <div class="faq-item" id="numbers">
+    <h2>Can I use more than one phone number?</h2>
+    <p>Yes, if your Twilio account has more than one number. In <strong>Settings</strong>,
+    the <em>Outgoing</em> section picks a single number as your caller ID for calls and
+    texts you send, and the <em>Incoming</em> section lets you check as many numbers as
+    you want to have ring this device.</p>
+  </div>
+
+  <div class="faq-item" id="vacation">
+    <img class="shot" src="/images/screenshots/settings.png" alt="Settings screen showing Online and Vacation mode toggle">
+    <h2>What does Vacation mode do?</h2>
+    <p>Switching to <strong>Vacation</strong> in Settings stops incoming calls from
+    ringing on <em>this device</em> — handy when you're away and don't want to be
+    disturbed. It only affects your device: other people or devices using the same
+    Twilio account are unaffected, and you can still see missed calls and messages when
+    you switch back to <strong>Online</strong>.</p>
+  </div>
+
+  <div class="faq-item" id="push">
+    <h2>Why didn't my phone ring for an incoming call?</h2>
+    <p>A few common causes: the number that was called isn't checked under
+    <em>Incoming</em> in Settings; the device is in <em>Vacation</em> mode; notification
+    permissions were denied; or, on iOS specifically, VoIP push hasn't been configured
+    for this deployment yet (a one-time setup step for whoever runs the app's backend).
+    Outgoing calls and texts aren't affected by any of this.</p>
+  </div>
+
+  <div class="faq-item" id="subscription">
+    <h2>How does the free trial and subscription work?</h2>
+    <p>Dialcrest starts with a free trial. Afterwards, a subscription (monthly or yearly,
+    purchased through the App Store or Google Play) is required to keep using the app.
+    Your remaining trial days and current plan are shown at the top of
+    <strong>Settings</strong>. Subscriptions renew automatically until canceled through
+    your App Store or Google Play account.</p>
+  </div>
+
+  <div class="faq-item" id="twilio">
+    <h2>Is Dialcrest affiliated with Twilio? Who do I pay?</h2>
+    <p>Dialcrest is an independent app built on the
+    <a href="https://www.twilio.com/docs/voice" target="_blank" rel="noopener">Twilio Voice SDK</a>
+    and Twilio's APIs — it isn't operated or endorsed by Twilio. There are two separate
+    charges to be aware of: your <strong>Twilio account</strong> bills you directly for
+    calls, texts, and phone numbers, at Twilio's own rates; your <strong>Dialcrest
+    subscription</strong> (see above) is a separate charge for the app itself.</p>
+  </div>
+
+  <div class="faq-item" id="privacy">
+    <h2>What data does Dialcrest store?</h2>
+    <p>Very little, and never your call or message content — that stays with Twilio,
+    under your account. Full details, including exactly what's stored on-device versus
+    in Dialcrest's backend, are in the <a href="/privacy">Privacy Policy</a>.</p>
+  </div>
+
+  <div class="faq-item" id="source">
+    <h2>Where's the source code?</h2>
+    <p>Dialcrest is open source under the GPLv3 license. The full app (Flutter) and
+    backend (Firebase Cloud Functions) source is available on
+    <a href="https://github.com/steinv/dialcrest" target="_blank" rel="noopener">GitHub</a>.</p>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="inner">
+    <div>Made by <a href="https://peblet.be" target="_blank" rel="noopener">Peblet</a></div>
+    <div class="links">
+      <a href="/">Home</a>
+      <a href="/privacy">Privacy Policy</a>
+      <a href="https://github.com/steinv/dialcrest" target="_blank" rel="noopener">GitHub</a>
+      <a href="mailto:dialcrest@peblet.be">Contact</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,349 @@
+// ignore: unused_import
+import 'package:intl/intl.dart' as intl;
+import 'app_localizations.dart';
+
+// ignore_for_file: type=lint
+
+/// The translations for Spanish Castilian (`es`).
+class AppLocalizationsEs extends AppLocalizations {
+  AppLocalizationsEs([String locale = 'es']) : super(locale);
+
+  @override
+  String get authSubtitle =>
+      'Introduce tus credenciales de Twilio para empezar a realizar y recibir llamadas y mensajes.';
+
+  @override
+  String get accountSidLabel => 'Account SID';
+
+  @override
+  String get accountSidValidatorError => 'Introduce tu Account SID';
+
+  @override
+  String get authTokenLabel => 'Auth Token';
+
+  @override
+  String get authTokenValidatorError => 'Introduce tu Auth Token';
+
+  @override
+  String get connect => 'Conectar';
+
+  @override
+  String get consoleHelpText =>
+      'Encontrarás tu Account SID y tu Auth Token en tu Twilio Console.';
+
+  @override
+  String get invalidCredentialsError =>
+      'Account SID o Auth Token no válidos, o cuenta suspendida. Revisa tu Twilio Console e inténtalo de nuevo.';
+
+  @override
+  String credentialsCheckError(Object error) {
+    return 'No se pudieron verificar las credenciales (revisa tu conexión): $error';
+  }
+
+  @override
+  String get noCallHistory => 'Sin historial de llamadas';
+
+  @override
+  String get couldNotLoadCallHistory =>
+      'No se pudo cargar el historial de llamadas';
+
+  @override
+  String get retry => 'Reintentar';
+
+  @override
+  String failedToLoadCallHistory(Object error) {
+    return 'Error al cargar el historial de llamadas: $error';
+  }
+
+  @override
+  String get callTypeMissed => 'Perdida';
+
+  @override
+  String get callTypeIncoming => 'Entrante';
+
+  @override
+  String get callTypeOutgoing => 'Saliente';
+
+  @override
+  String get missedSuffix => ' (Perdida)';
+
+  @override
+  String get addToContacts => 'Añadir a contactos';
+
+  @override
+  String get callBack => 'Devolver llamada';
+
+  @override
+  String callDetailsType(Object type) {
+    return 'Tipo: $type';
+  }
+
+  @override
+  String callDetailsTime(Object time) {
+    return 'Hora: $time';
+  }
+
+  @override
+  String callDetailsDuration(Object duration) {
+    return 'Duración: $duration';
+  }
+
+  @override
+  String durationHoursMinutes(Object hours, Object minutes) {
+    return '$hours h $minutes min';
+  }
+
+  @override
+  String durationMinutesSeconds(Object minutes, Object seconds) {
+    return '$minutes min $seconds s';
+  }
+
+  @override
+  String durationSeconds(Object seconds) {
+    return '$seconds s';
+  }
+
+  @override
+  String couldNotStartCall(Object number) {
+    return 'No se pudo iniciar la llamada a $number';
+  }
+
+  @override
+  String connectingTo(Object number) {
+    return 'Conectando con $number…';
+  }
+
+  @override
+  String failedToMakeCall(Object error) {
+    return 'Error al realizar la llamada: $error';
+  }
+
+  @override
+  String get contactsPermissionDenied =>
+      'Se denegó el acceso a los contactos. Los nombres de contacto no se mostrarán hasta que se conceda el permiso en Ajustes > Aplicaciones.';
+
+  @override
+  String failedToSwitchNumber(Object error) {
+    return 'Error al cambiar de número: $error';
+  }
+
+  @override
+  String get incomingCallTitle => 'Llamada entrante';
+
+  @override
+  String incomingCallBody(Object name) {
+    return 'De: $name';
+  }
+
+  @override
+  String get newMessageTitle => 'Nuevo mensaje';
+
+  @override
+  String get newConversationTitle => 'Nueva conversación';
+
+  @override
+  String get phoneNumberOrContactHint =>
+      'Número de teléfono o nombre de contacto';
+
+  @override
+  String get cancel => 'Cancelar';
+
+  @override
+  String get start => 'Iniciar';
+
+  @override
+  String get newConversationTooltip => 'Nueva conversación';
+
+  @override
+  String get dialerTabLabel => 'Teclado';
+
+  @override
+  String get callsTabLabel => 'Llamadas';
+
+  @override
+  String get messagesTabLabel => 'Mensajes';
+
+  @override
+  String get settingsTabLabel => 'Ajustes';
+
+  @override
+  String get appBarTitleCallHistory => 'Historial de llamadas';
+
+  @override
+  String get appBarTitleDefault => 'Twilio Softphone';
+
+  @override
+  String get switchOutgoingNumberTooltip => 'Cambiar número saliente';
+
+  @override
+  String switchOutgoingNumberTooltipWithCurrent(Object number) {
+    return 'Cambiar número saliente (actual: $number)';
+  }
+
+  @override
+  String get somethingWentWrong => 'Algo salió mal';
+
+  @override
+  String failedToLoadMessages(Object error) {
+    return 'Error al cargar los mensajes: $error';
+  }
+
+  @override
+  String failedToLoadMoreMessages(Object error) {
+    return 'Error al cargar más mensajes: $error';
+  }
+
+  @override
+  String failedToSendMessage(Object error) {
+    return 'Error al enviar el mensaje: $error';
+  }
+
+  @override
+  String get noMessagesYet => 'Aún no hay mensajes';
+
+  @override
+  String get couldNotLoadMessages => 'No se pudieron cargar los mensajes';
+
+  @override
+  String get startAConversation => 'Iniciar una conversación';
+
+  @override
+  String get typeMessageHint => 'Escribe un mensaje...';
+
+  @override
+  String planUnavailableError(Object plan) {
+    return 'El plan $plan no está disponible en la tienda en este momento. Inténtalo de nuevo más tarde.';
+  }
+
+  @override
+  String couldNotLoadSubscription(Object error) {
+    return 'No se pudo cargar el estado de la suscripción: $error';
+  }
+
+  @override
+  String purchaseFailed(Object error) {
+    return 'Error en la compra: $error';
+  }
+
+  @override
+  String failedToUpdateMode(Object error) {
+    return 'Error al actualizar el modo: $error';
+  }
+
+  @override
+  String couldNotLoadPhoneNumbers(Object error) {
+    return 'No se pudieron cargar los números de teléfono: $error';
+  }
+
+  @override
+  String failedToUpdateNumberConfig(Object error) {
+    return 'Error al actualizar la configuración del número: $error';
+  }
+
+  @override
+  String get logOut => 'Cerrar sesión';
+
+  @override
+  String get logOutConfirmMessage =>
+      'Esto elimina tu Account SID y tu Auth Token de Twilio de este dispositivo. Puedes volver a conectarte en cualquier momento.';
+
+  @override
+  String get licenseTitle => 'Licencia';
+
+  @override
+  String get licenseSubtitle =>
+      'Tu suscripción de Dialcrest para esta cuenta de Twilio.';
+
+  @override
+  String get purchasingUnavailable =>
+      'Las compras no están disponibles en esta plataforma.';
+
+  @override
+  String get trialExpired => 'Prueba caducada';
+
+  @override
+  String get subscriptionExpired => 'Suscripción caducada';
+
+  @override
+  String trialDaysLeft(num days) {
+    String _temp0 = intl.Intl.pluralLogic(
+      days,
+      locale: localeName,
+      other: 'días',
+      one: 'día',
+    );
+    return 'Prueba: quedan $days $_temp0';
+  }
+
+  @override
+  String renewsOn(Object date) {
+    return 'Se renueva el $date';
+  }
+
+  @override
+  String expiresOnAutoRenewOff(Object date) {
+    return 'Caduca el $date — la renovación automática está desactivada';
+  }
+
+  @override
+  String get monthly => 'Mensual';
+
+  @override
+  String get yearly => 'Anual';
+
+  @override
+  String get perMonthSuffix => '/mes';
+
+  @override
+  String get perYearSuffix => '/año';
+
+  @override
+  String get yearlyDiscountNote =>
+      'Con la suscripción anual obtienes 2 meses gratis. Las suscripciones se renuevan automáticamente hasta que se cancelen.';
+
+  @override
+  String get modeTitle => 'Modo';
+
+  @override
+  String get modeSubtitleVacation =>
+      'Este dispositivo no sonará con las llamadas entrantes. Esto no afecta a otras personas que usen esta cuenta de Twilio.';
+
+  @override
+  String get modeSubtitleOnline =>
+      'Este dispositivo suena con normalidad con las llamadas entrantes.';
+
+  @override
+  String get onlineMode => 'Modo en línea';
+
+  @override
+  String get vacationMode => 'Modo vacaciones';
+
+  @override
+  String get outgoingTitle => 'Saliente';
+
+  @override
+  String get outgoingSubtitle =>
+      'El número usado como identificador de llamada al hacer una llamada o enviar un mensaje.';
+
+  @override
+  String get noPhoneNumbersFound =>
+      'No se encontraron números de teléfono en esta cuenta de Twilio.';
+
+  @override
+  String get incomingTitle => 'Entrante';
+
+  @override
+  String get incomingSubtitle =>
+      'Solo los números marcados hacen sonar esta aplicación.';
+
+  @override
+  String moreResults(Object count) {
+    return '$count resultados · Más resultados';
+  }
+
+  @override
+  String get audioMessage => 'Mensaje de audio';
+
+  @override
+  String get attachment => 'Archivo adjunto';
+}

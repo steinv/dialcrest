@@ -1,0 +1,29 @@
+PODS:
+  - Flutter (1.0.0)
+  - twilio_voice (0.0.1):
+    - Flutter
+    - TwilioVoice (~> 6.13.6)
+  - TwilioVoice (6.13.6)
+
+DEPENDENCIES:
+  - Flutter (from `Flutter`)
+  - twilio_voice (from `.symlinks/plugins/twilio_voice/ios`)
+
+SPEC REPOS:
+  trunk:
+    - TwilioVoice
+
+EXTERNAL SOURCES:
+  Flutter:
+    :path: Flutter
+  twilio_voice:
+    :path: ".symlinks/plugins/twilio_voice/ios"
+
+SPEC CHECKSUMS:
+  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  twilio_voice: 5afdd43685fff32fb5ebfaf60eefd98fcdc32ffd
+  TwilioVoice: 04e059fd28d95423b971e823b1c1c1d6737e4e1b
+
+PODFILE CHECKSUM: 251cb053df7158f337c0712f2ab29f4e0fa474ce
+
+COCOAPODS: 1.16.2

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dialcrest Privacy Policy</title>
+<meta name="description" content="Privacy policy for the Dialcrest app.">
+<link rel="icon" type="image/png" sizes="32x32" href="/images/icons/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/images/icons/favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/images/icons/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="site-nav">
+    <a class="brand" href="/">
+      <img src="/images/icons/favicon-48x48.png" alt="">
+      Dialcrest
+    </a>
+    <div class="links">
+      <a href="/">Home</a>
+      <a href="/faq">FAQ</a>
+      <a href="/privacy" class="active">Privacy</a>
+      <a href="https://github.com/steinv/dialcrest" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </nav>
+</header>
+
+<main class="narrow">
+  <h1>Privacy Policy for Dialcrest</h1>
+  <p class="updated">Last updated: August 6, 2026</p>
+
+  <p>Dialcrest ("the App") is developed by Peblet ("we", "us", "our"). This policy explains
+  what information the App collects, how it's used, and your choices. Dialcrest lets you make
+  and receive calls and send and receive text messages using your own Twilio account and phone
+  number.</p>
+
+  <h2>Information you provide</h2>
+  <p><strong>Twilio Account SID and Auth Token.</strong> When you connect your Twilio account,
+  the App stores your Account SID and Auth Token in your device's secure, encrypted storage
+  (Android Keystore / iOS Keychain). They are never stored on our servers. They are sent, over
+  encrypted connections, to our backend (Firebase Cloud Functions) only at the moment it's
+  needed to act on your behalf with the Twilio API — for example, to generate a short-lived
+  Twilio access token, register your device for incoming calls, or configure which of your
+  numbers rings the App. Your Auth Token is used transiently for that single request and is not
+  written to our database.</p>
+
+  <h2>Information collected automatically</h2>
+  <p><strong>Calls and messages.</strong> Your call history and text messages are fetched
+  directly from your Twilio account and stored locally on your device so the App can display
+  them. We do not copy or retain the content of your calls or messages on our servers. The
+  actual calls and SMS/MMS traffic are carried and billed by Twilio under your own Twilio
+  account and are subject to
+  <a href="https://www.twilio.com/en-us/legal/privacy" target="_blank" rel="noopener">Twilio's Privacy Policy</a>.</p>
+
+  <p><strong>Contacts.</strong> With your permission, the App reads your device's contacts to
+  show names instead of raw phone numbers on calls and messages. Contacts are read on-device
+  only and are never uploaded, transmitted, or stored anywhere outside your device.</p>
+
+  <p><strong>Push notifications.</strong> To alert you of incoming calls and messages while the
+  App isn't open, we use Firebase Cloud Messaging (Android) and Apple Push Notification service
+  / Twilio's VoIP push (iOS). This requires registering a device push token with Twilio and
+  Firebase; this token identifies your device for delivering notifications, not you
+  personally.</p>
+
+  <p><strong>Subscription status.</strong> The App offers a free trial followed by a paid
+  subscription, purchased through the Apple App Store or Google Play. When you subscribe, your
+  purchase receipt/token is sent to our backend to verify the purchase with Apple or Google. We
+  store your subscription status (plan, expiration date, auto-renew flag) associated with your
+  Twilio Account SID in our database, so the App can check your access level. We do not receive
+  or store your payment card details — those are handled entirely by Apple or Google.</p>
+
+  <p><strong>Diagnostic data.</strong> We use Firebase App Check to verify that requests to our
+  backend come from a genuine copy of the App. This does not identify you personally.</p>
+
+  <p>We do not use analytics, advertising, or crash-reporting SDKs, and we do not sell or share
+  your information with third parties for advertising purposes.</p>
+
+  <h2>Permissions the App requests</h2>
+  <ul>
+    <li><strong>Microphone</strong> — required to place and receive calls.</li>
+    <li><strong>Contacts</strong> — required to show contact names for calls and messages
+      (optional; the App works without it, showing phone numbers instead).</li>
+    <li><strong>Notifications</strong> — required to alert you of incoming calls and
+      messages.</li>
+  </ul>
+
+  <h2>Data retention and deletion</h2>
+  <p>Your Twilio credentials and local call/message cache are stored only on your device and
+  are deleted when you log out or uninstall the App. To delete your subscription record from
+  our database, or for any other privacy request, contact us using the details below.</p>
+
+  <h2>Children's privacy</h2>
+  <p>Dialcrest is not directed at children under 16 and we do not knowingly collect information
+  from them.</p>
+
+  <h2>Changes to this policy</h2>
+  <p>We may update this policy from time to time. Changes will be posted on this page with an
+  updated "Last updated" date.</p>
+
+  <h2>Contact us</h2>
+  <p>If you have questions about this policy or your data, contact us at:<br>
+  <strong class="contact"><a href="mailto:dialcrest@peblet.be">dialcrest@peblet.be</a></strong></p>
+</main>
+
+<footer class="site-footer">
+  <div class="inner">
+    <div>Made by <a href="https://peblet.be" target="_blank" rel="noopener">Peblet</a></div>
+    <div class="links">
+      <a href="/">Home</a>
+      <a href="/faq">FAQ</a>
+      <a href="https://github.com/steinv/dialcrest" target="_blank" rel="noopener">GitHub</a>
+      <a href="mailto:dialcrest@peblet.be">Contact</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
