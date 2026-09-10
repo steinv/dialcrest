@@ -23,7 +23,7 @@
 
   function goTo(i) {
     index = (i + slides.length) % slides.length;
-    track.style.transform = 'translateX(-' + (index * 100) + '%)';
+    track.style.transform = 'translateX(calc(-' + index + ' * (100% + 20px)))';
     dots.forEach(function (dot, d) { dot.classList.toggle('active', d === index); });
     if (!lightbox.hidden) {
       lightboxImg.src = slides[index].querySelector('img').src;
