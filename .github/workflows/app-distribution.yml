@@ -1,0 +1,63 @@
+name: Distribute Android build to testers
+
+# Manual only: this ships straight to testers via Firebase App Distribution,
+# so it shouldn't fire on every push.
+on:
+  workflow_dispatch:
+    inputs:
+      release_notes:
+        description: "Release notes shown to testers"
+        required: false
+        default: ""
+      tester_groups:
+        description: "Firebase App Distribution tester group(s), comma-separated"
+        required: false
+        default: "testers"
+
+jobs:
+  distribute:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.44.4"
+          channel: stable
+
+      - name: Decode signing keystore
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/playstore.jks
+
+      - name: Write key.properties
+        run: |
+          cat > android/key.properties <<EOF
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          storeFile=playstore.jks
+          EOF
+
+      - run: flutter pub get
+
+      # appCheckDebugProvider=true: testers install this outside Play, so
+      # Play Integrity can't attest the build. See lib/main.dart.
+      - name: Build release APK for App Distribution
+        run: flutter build apk --release --dart-define=appCheckDebugProvider=true
+
+      - name: Write Firebase service account credentials
+        run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}' > "$RUNNER_TEMP/firebase-service-account.json"
+
+      - name: Upload to Firebase App Distribution
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-service-account.json
+        run: |
+          npx firebase-tools@15 appdistribution:distribute \
+            build/app/outputs/flutter-apk/app-release.apk \
+            --app 1:917581683919:android:0fdfd4147afdbd0d172bba \
+            --groups "${{ github.event.inputs.tester_groups }}" \
+            --release-notes "${{ github.event.inputs.release_notes }}"
