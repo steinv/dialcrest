@@ -61,11 +61,16 @@ void main() async {
   ]);
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  // Play Integrity / App Attest only recognize builds Google/Apple know
+  // about (e.g. a Play Console release), so release builds handed to
+  // testers via Firebase App Distribution need the debug provider instead
+  // — pass --dart-define=appCheckDebugProvider=true when building those.
+  final useDebugAppCheckProvider = kDebugMode || const bool.fromEnvironment('appCheckDebugProvider');
   await FirebaseAppCheck.instance.activate(
-    androidProvider: kDebugMode
+    androidProvider: useDebugAppCheckProvider
         ? AndroidProvider.debug
         : AndroidProvider.playIntegrity,
-    appleProvider: kDebugMode
+    appleProvider: useDebugAppCheckProvider
         ? AppleProvider.debug
         : AppleProvider.appAttestWithDeviceCheckFallback,
   );
