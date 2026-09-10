@@ -1,8 +1,17 @@
 /**
- * Push secrets live in a SINGLE Secret Manager secret, TWILIO_PEBLET_SECRET,
- * holding both push keys as JSON: { android_fcm: {<FCM v1 service-account>},
- * ios_apn_pk: "<APN private key PEM>" }. One secret instead of two keeps the
- * Secret Manager cost down. Locally it's read from functions/.secret.local.
+ * All secrets live in a SINGLE Secret Manager secret, TWILIO_PEBLET_SECRET, as
+ * JSON with each individual secret as a property:
+ *   { android_fcm: {<FCM v1 service-account JSON>},
+ *     ios_apn_pk: "<APN private key PEM>",
+ *     apple_iap_key: {issuerId, keyId, privateKey, bundleId} }
+ * android_fcm doubles as the Google Play service account: it's also been
+ * granted "View financial data" access in Play Console, so the same
+ * credentials verify Play subscription purchases (see
+ * subscriptionReverificationConfig) — no separate Play-specific service
+ * account needed.
+ * One secret instead of several keeps Secret Manager cost down and gives every
+ * function a single, consistent place to read credentials from. Locally it's
+ * read from functions/.secret.local.
  * https://firebase.google.com/docs/functions/config-env#secrets
  *
  * Manage with:
@@ -43,24 +52,29 @@ const twilioPebletSecret = defineSecret('TWILIO_PEBLET_SECRET');
 // Empty until iOS push is enabled — when empty, createOrUpdatePushCredentials skips the iOS branch.
 // See README "Enabling iOS push" for how to obtain and configure it.
 const iosApnCertificate = defineString('IOS_APN_CERTIFICATE', { default: '' });
+const androidPackageName = defineString('ANDROID_PACKAGE_NAME', { default: 'be.peblet.twilio_phone' });
 
-// App Store Connect "In-App Purchase" API key, as JSON: {issuerId, keyId, privateKey, bundleId}.
-// Used to call the App Store Server API to verify/re-verify subscription purchases.
-const appleIapKeySecret = defineSecret('APPLE_IAP_KEY');
-// Google Play service-account JSON with access to this app's subscription data,
-// used to call the Play Developer API to verify/re-verify subscription purchases.
-const googlePlayServiceAccountSecret = defineSecret('GOOGLE_PLAY_SERVICE_ACCOUNT');
-const androidPackageName = defineString('ANDROID_PACKAGE_NAME', { default: '' });
+interface PebletSecrets {
+    android_fcm?: object;
+    ios_apn_pk?: string;
+    apple_iap_key?: AppleConfig;
+}
+
+function pebletSecrets(): PebletSecrets {
+    return JSON.parse(twilioPebletSecret.value()) as PebletSecrets;
+}
 
 function appleConfig(): AppleConfig {
-    return JSON.parse(appleIapKeySecret.value()) as AppleConfig;
+    return pebletSecrets().apple_iap_key ?? ({} as AppleConfig);
 }
 
 function subscriptionReverificationConfig(): ReverificationConfig {
     return {
         apple: appleConfig(),
         googlePackageName: androidPackageName.value(),
-        googleServiceAccountJson: googlePlayServiceAccountSecret.value(),
+        // android_fcm doubles as the Google Play service account (granted
+        // "View financial data" access in Play Console) — see the file header.
+        googleServiceAccountJson: JSON.stringify(pebletSecrets().android_fcm ?? {}),
     };
 }
 
@@ -69,7 +83,7 @@ function subscriptionReverificationConfig(): ReverificationConfig {
  * androidFcmSecret must be the FCM service-account JSON as a string.
  */
 function pushSecrets(): { androidFcmSecret: string; iosApnPrivateKey: string } {
-    const parsed = JSON.parse(twilioPebletSecret.value());
+    const parsed = pebletSecrets();
     return {
         androidFcmSecret: JSON.stringify(parsed.android_fcm ?? {}),
         iosApnPrivateKey: parsed.ios_apn_pk ?? '',
@@ -133,7 +147,7 @@ exports.twilioRegister = onCall({ enforceAppCheck: true, region: REGION, cors: t
  * ANDROID https://github.com/twilio/voice-quickstart-android#7-create-a-push-credential-using-your-fcm-server-key
  */
 exports.twilioAccessToken = onCall(
-    { enforceAppCheck: true, region: REGION, cors: true, timeoutSeconds: 30, secrets: [appleIapKeySecret, googlePlayServiceAccountSecret] },
+    { enforceAppCheck: true, region: REGION, cors: true, timeoutSeconds: 30, secrets: [twilioPebletSecret] },
     (req) => {
         const accountSid = req.data['accountSid'];
         return lastValueFrom(
@@ -151,7 +165,7 @@ exports.twilioAccessToken = onCall(
  * Server API (not the client-supplied receipt alone), and persists the
  * resulting expiry/auto-renew state.
  */
-exports.twilioVerifyApplePurchase = onCall({ enforceAppCheck: true, region: REGION, cors: true, timeoutSeconds: 30, secrets: [appleIapKeySecret] },
+exports.twilioVerifyApplePurchase = onCall({ enforceAppCheck: true, region: REGION, cors: true, timeoutSeconds: 30, secrets: [twilioPebletSecret] },
     (req) => lastValueFrom(verifyApplePurchase(req.data['accountSid'], req.data['signedTransactionInfo'], appleConfig()))
 );
 
@@ -161,9 +175,10 @@ exports.twilioVerifyApplePurchase = onCall({ enforceAppCheck: true, region: REGI
  * persists the resulting expiry/auto-renew state.
  */
 exports.twilioVerifyGooglePurchase = onCall(
-    { enforceAppCheck: true, region: REGION, cors: true, timeoutSeconds: 30, secrets: [googlePlayServiceAccountSecret] },
+    { enforceAppCheck: true, region: REGION, cors: true, timeoutSeconds: 30, secrets: [twilioPebletSecret] },
     (req) => lastValueFrom(verifyGooglePurchase(
-        req.data['accountSid'], req.data['purchaseToken'], androidPackageName.value(), googlePlayServiceAccountSecret.value(),
+        req.data['accountSid'], req.data['purchaseToken'], androidPackageName.value(),
+        JSON.stringify(pebletSecrets().android_fcm ?? {}),
     ))
 );
 

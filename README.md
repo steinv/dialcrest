@@ -50,6 +50,50 @@ Localized strings live in `lib/l10n/*.arb` (English, German, French, Spanish,
 Dutch) — run `flutter gen-l10n` after editing them to regenerate
 `lib/l10n/generated/`.
 
+## Secrets
+
+Every backend secret this project needs lives in **one** Secret Manager
+secret, `TWILIO_PEBLET_SECRET`, as a single JSON object — one property per
+individual secret. Keeping them all in one secret (instead of one Secret
+Manager secret per credential) keeps Secret Manager cost down and gives every
+function a single, consistent place to read credentials from.
+
+```json
+{
+  "android_fcm": { "<FCM v1 service-account JSON>": "..." },
+  "ios_apn_pk": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----",
+  "apple_iap_key": {
+    "issuerId": "...",
+    "keyId": "...",
+    "privateKey": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----",
+    "bundleId": "be.peblet.twilio_phone"
+  }
+}
+```
+
+| Property | What it is | Where it comes from |
+| --- | --- | --- |
+| `android_fcm` | Firebase FCM v1 service-account JSON (shared across all tenants). Also doubles as the Google Play service account — see below | Firebase Console → Project settings → Service accounts → Generate new private key. |
+| `ios_apn_pk` | APN VoIP private key (PEM), paired with `IOS_APN_CERTIFICATE` | `apn_key.pem` — see "Enabling iOS push" below. |
+| `apple_iap_key` | App Store Connect "In-App Purchase" API key — used to call the App Store Server API to verify/re-verify subscription purchases | App Store Connect → Users and Access → Integrations → In-App Purchase → generate a key; `bundleId` is this app's iOS bundle ID. |
+
+There's no separate Google Play service-account secret: the `android_fcm`
+service account is also linked in Google Play Console (Setup → API access)
+and granted "View financial data" access there, so the same credentials are
+reused to call the Play Developer API and verify subscription purchases —
+one fewer credential to manage and rotate.
+
+Set/rotate it with:
+
+```bash
+firebase functions:secrets:set TWILIO_PEBLET_SECRET   # set / rotate (paste the full JSON)
+firebase functions:secrets:access TWILIO_PEBLET_SECRET # view current value
+```
+
+For local emulator runs, the same JSON is read from `functions/.secret.local`
+(gitignored) as a normal dotenv `KEY=value` line whose value is the JSON
+string, e.g. `TWILIO_PEBLET_SECRET={"android_fcm":{},...}`.
+
 ## Enabling iOS push (incoming calls)
 
 iOS push is **disabled by default**. Outgoing calls work without it, but to
@@ -121,24 +165,8 @@ MII...
 -----END CERTIFICATE-----"
 ```
 
-**Private key** — it lives alongside the FCM key inside the single
-`TWILIO_PEBLET_SECRET` Secret Manager secret, which is JSON:
-
-```json
-{
-  "android_fcm": { "<FCM v1 service-account JSON>": "..." },
-  "ios_apn_pk": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
-}
-```
-
-Set/rotate it with:
-
-```bash
-firebase functions:secrets:set TWILIO_PEBLET_SECRET   # set / rotate (paste the full JSON)
-firebase functions:secrets:access TWILIO_PEBLET_SECRET # view current value
-```
-
-For local emulator runs, the same JSON is read from `functions/.secret.local`.
+**Private key** — it goes in the `ios_apn_pk` property of `TWILIO_PEBLET_SECRET`
+(see the [Secrets](#secrets) section above).
 
 ### 4. Deploy
 
