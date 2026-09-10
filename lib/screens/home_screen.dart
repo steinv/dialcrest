@@ -170,6 +170,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _showIncomingMessageNotification(from, body);
       };
 
+      // A notification was tapped (app was backgrounded/killed) — no banner
+      // moment, just open the conversation directly.
+      _twilioService.onOpenConversation = (from, body) {
+        _handleIncomingMessage(from, body);
+      };
+
       // Start polling for incoming communications
       _twilioService.startPollingForIncomingCommunications();
       _loadOutgoingNumbers();
@@ -284,6 +290,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
 
     storageService.addMessage(message);
+    // If the Messages tab is already open (on this or another conversation),
+    // switching _selectedIndex/_selectedContact below won't recreate
+    // MessagesScreen, so it wouldn't otherwise pick up the new message.
+    _messagesKey.currentState?.refresh();
 
     setState(() {
       _showNotification = false;

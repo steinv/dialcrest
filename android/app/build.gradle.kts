@@ -65,3 +65,14 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // Needed to compile against FirebaseMessagingService/RemoteMessage in
+    // DialcrestFirebaseMessagingService: the firebase_messaging Flutter
+    // plugin depends on this internally, but as an `implementation` (not
+    // `api`) dependency it isn't exposed to this module's compile classpath.
+    // Version aligned with the BOM firebase_core pulls in (see
+    // firebase_core's android/gradle.properties).
+    implementation(platform("com.google.firebase:firebase-bom:33.16.0"))
+    implementation("com.google.firebase:firebase-messaging")
+}

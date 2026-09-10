@@ -19,6 +19,7 @@ const FUNCTIONS_BASE_URL = 'https://europe-west1-twilio-phone-peblet.cloudfuncti
 const OUTGOING_CALL_URL = `${FUNCTIONS_BASE_URL}/twilioOutgoingCall`;
 const INCOMING_CALL_URL = `${FUNCTIONS_BASE_URL}/twilioIncomingCall`;
 const STATUS_CALLBACK_URL = `${FUNCTIONS_BASE_URL}/twilioCallStatusChanges`;
+const INCOMING_MESSAGE_URL = `${FUNCTIONS_BASE_URL}/twilioIncomingMessage`;
 
 /**
  * Voice SDK client identity for a tenant. Each user brings their own Twilio
@@ -76,6 +77,8 @@ interface OriginalNumberConfig {
     voiceFallbackMethod: string;
     statusCallback: string;
     statusCallbackMethod: string;
+    smsUrl: string;
+    smsMethod: string;
 }
 
 function originalConfigRef(db: Database, accountSid: string, numberSid: string) {
@@ -104,6 +107,8 @@ function configureNumber(
         voiceFallbackMethod: number.voiceFallbackMethod ?? 'POST',
         statusCallback: number.statusCallback ?? '',
         statusCallbackMethod: number.statusCallbackMethod ?? 'POST',
+        smsUrl: number.smsUrl ?? '',
+        smsMethod: number.smsMethod ?? 'POST',
     };
     return from(originalConfigRef(db, accountSid, number.sid).set(original)).pipe(
         switchMap(() => from(client.incomingPhoneNumbers(number.sid).update({
@@ -111,6 +116,8 @@ function configureNumber(
             voiceUrl: '',
             statusCallback: STATUS_CALLBACK_URL,
             statusCallbackMethod: 'POST',
+            smsUrl: INCOMING_MESSAGE_URL,
+            smsMethod: 'POST',
         }))),
         map(() => undefined),
     );
@@ -127,10 +134,11 @@ function restoreNumber(client: Twilio, db: Database, accountSid: string, numberS
     return from(ref.once('value')).pipe(
         switchMap((snapshot) => {
             const original = snapshot.val() as OriginalNumberConfig | null;
-            const restoreFields = original ?? {
+            const restoreFields: OriginalNumberConfig = original ?? {
                 voiceUrl: '', voiceMethod: 'POST', voiceApplicationSid: '',
                 voiceFallbackUrl: '', voiceFallbackMethod: 'POST',
                 statusCallback: '', statusCallbackMethod: 'POST',
+                smsUrl: '', smsMethod: 'POST',
             };
             return from(client.incomingPhoneNumbers(numberSid).update(restoreFields));
         }),
@@ -295,6 +303,60 @@ export function callbackCallStatusChanges(request: Request, response: express.Re
 
     // todo save request body in database using callSid as key
     response.status(202).send();
+}
+
+/**
+ * TwiML webhook for an inbound SMS/MMS (configured as the number's smsUrl by
+ * configureNumber). Pushes a silent/data-only FCM message to every device
+ * registered for this tenant (registerMessagingDevice) so the client shows an
+ * in-app banner (foreground) or an OS notification (background/terminated) —
+ * sent directly via the Firebase Admin SDK rather than through Twilio's
+ * Conversations/Notify push-credential system, which is Voice-specific (see
+ * the TODO on createOrUpdatePushCredentials). No reply is sent back to the
+ * sender, so the response is an empty MessagingResponse.
+ */
+export async function callbackIncomingMessage(request: Request, response: express.Response) {
+    const accountSid = request.body.AccountSid;
+    const from = request.body.From ?? '';
+    const to = request.body.To ?? '';
+    const body = request.body.Body ?? '';
+    const messageSid = request.body.MessageSid ?? '';
+
+    const tokensSnapshot = await admin.database().ref(`/twilio/${accountSid}/messaging-tokens`).once('value');
+    const tokens = Object.keys((tokensSnapshot.val() ?? {}) as Record<string, boolean>);
+
+    if (tokens.length > 0) {
+        const results = await Promise.allSettled(tokens.map((token) => admin.messaging().send({
+            token,
+            data: { dialcrest_type: 'incoming_message', from, to, body, messageSid },
+            android: { priority: 'high' },
+            apns: { headers: { 'apns-priority': '10' }, payload: { aps: { 'content-available': 1 } } },
+        })));
+
+        // Drop tokens FCM reports as unregistered (uninstalled app / stale token) so
+        // this list doesn't grow unboundedly and future sends don't keep failing on them.
+        await Promise.all(results.map((result, i) => {
+            const isUnregistered = result.status === 'rejected' &&
+                String((result.reason as { code?: string })?.code ?? result.reason).includes('registration-token-not-registered');
+            return isUnregistered ?
+                admin.database().ref(`/twilio/${accountSid}/messaging-tokens/${tokens[i]}`).remove() :
+                Promise.resolve();
+        }));
+    }
+
+    response.type('text/xml')
+        .status(200)
+        .send(new twiml.MessagingResponse().toString());
+}
+
+/**
+ * Registers (or refreshes) this device's FCM token so callbackIncomingMessage
+ * can push incoming-SMS notifications to it. Stored as a set keyed by token
+ * (rather than one token per account) so every device sharing this tenant's
+ * Twilio account gets notified, not just the most recently registered one.
+ */
+export function registerMessagingDevice(accountSid: string, fcmToken: string): Observable<void> {
+    return from(admin.database().ref(`/twilio/${accountSid}/messaging-tokens/${fcmToken}`).set(true));
 }
 
 /**

@@ -4,6 +4,8 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart' hide Message;
 import 'package:intl/intl.dart';
 import 'package:dialcrest/dto/IncomingPhoneNumbers.dart';
 import 'package:dialcrest/models/PhoneNumber.dart';
@@ -61,7 +63,33 @@ class TwilioService {
 
   // Callbacks for incoming communications
   Function(String from)? onIncomingCall;
+
+  /// Fires while the app is foregrounded and a text arrives — drives the
+  /// in-app [NotificationOverlay] banner. In practice this only fires on iOS:
+  /// on Android, incoming-message pushes are handled natively instead (see
+  /// [_incomingMessageChannel] below), because this app's Twilio Voice FCM
+  /// service is Android's one registered FirebaseMessagingService, so
+  /// [FirebaseMessaging.onMessage] never reaches Dart there.
   Function(String from, String body)? onIncomingMessage;
+
+  /// Fires when the user taps a system/local notification for an incoming
+  /// text (app was backgrounded or fully killed) and the conversation should
+  /// just be opened directly — no banner moment, unlike [onIncomingMessage].
+  Function(String from, String body)? onOpenConversation;
+
+  /// Android equivalent of `FirebaseMessaging.getInitialMessage()`/
+  /// `onMessageOpenedApp` — see IncomingMessageFcmHandler.kt/MainActivity.kt.
+  static const _incomingMessageChannel =
+      MethodChannel('be.peblet.twilio_phone/incoming_message');
+
+  /// iOS only in practice: shows/detects taps on the local notification built
+  /// from the silent/data-only FCM push while backgrounded/terminated (see
+  /// _firebaseMessagingBackgroundHandler in main.dart). Unused on Android,
+  /// where IncomingMessageFcmHandler.kt shows a native notification instead.
+  final FlutterLocalNotificationsPlugin _localNotifications =
+      FlutterLocalNotificationsPlugin();
+
+  StreamSubscription<RemoteMessage>? _onMessageSubscription;
 
   /// How long a completed twilioRegister run stays valid before being redone.
   /// Registration is idempotent server-side, but re-running it walks every
@@ -94,11 +122,94 @@ class TwilioService {
     _initializeClient();
     _tokenRefreshSubscription = FirebaseMessaging.instance.onTokenRefresh.listen((_) {
       _registerVoice();
+      _registerMessagingDevice();
     });
+    _initializeIncomingMessageHandling();
   }
 
   void dispose() {
     _tokenRefreshSubscription?.cancel();
+    _onMessageSubscription?.cancel();
+  }
+
+  /// Sets up everything needed to notify the user of an incoming text: asks
+  /// for notification permission, registers this device's FCM token so the
+  /// twilioIncomingMessage webhook can reach it, and wires up both the
+  /// foreground banner path (onIncomingMessage, effectively iOS-only) and the
+  /// "tap a notification to open the conversation" path (onOpenConversation,
+  /// covering a cold start and an already-running tap on both platforms).
+  Future<void> _initializeIncomingMessageHandling() async {
+    try {
+      await FirebaseMessaging.instance.requestPermission();
+      await _registerMessagingDevice();
+
+      await _localNotifications.initialize(
+        const InitializationSettings(iOS: DarwinInitializationSettings()),
+        onDidReceiveNotificationResponse: (details) =>
+            _handleNotificationPayload(details.payload),
+      );
+      final launchDetails = await _localNotifications.getNotificationAppLaunchDetails();
+      if (launchDetails?.didNotificationLaunchApp == true) {
+        _handleNotificationPayload(launchDetails!.notificationResponse?.payload);
+      }
+
+      _onMessageSubscription = FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
+
+      _incomingMessageChannel.setMethodCallHandler((call) async {
+        if (call.method == 'onIncomingMessage') _handleNativeExtras(call.arguments);
+      });
+      final initialExtras = await _incomingMessageChannel
+          .invokeMethod<Map<Object?, Object?>>('getInitialIncomingMessage');
+      _handleNativeExtras(initialExtras);
+    } catch (e, stackTrace) {
+      debugPrint('Error initializing incoming-message handling: $e');
+      debugPrintStack(stackTrace: stackTrace);
+    }
+  }
+
+  void _handleForegroundMessage(RemoteMessage message) {
+    if (message.data['dialcrest_type'] != 'incoming_message') return;
+    onIncomingMessage?.call(message.data['from'] ?? '', message.data['body'] ?? '');
+  }
+
+  /// Extras from a tapped [IncomingMessageFcmHandler] Android notification,
+  /// forwarded either at cold start or live via MainActivity.onNewIntent.
+  void _handleNativeExtras(Map<Object?, Object?>? extras) {
+    if (extras == null) return;
+    final from = extras['from'] as String?;
+    if (from == null) return;
+    onOpenConversation?.call(from, (extras['body'] as String?) ?? '');
+  }
+
+  /// A tapped iOS local notification, built by _firebaseMessagingBackgroundHandler
+  /// (main.dart) with a JSON-encoded {from, body} payload.
+  void _handleNotificationPayload(String? payload) {
+    if (payload == null) return;
+    try {
+      final decoded = jsonDecode(payload) as Map<String, dynamic>;
+      final from = decoded['from'] as String?;
+      if (from == null) return;
+      onOpenConversation?.call(from, (decoded['body'] as String?) ?? '');
+    } catch (e) {
+      debugPrint('Error decoding notification payload: $e');
+    }
+  }
+
+  /// Registers (or refreshes) this device's FCM token with the backend so
+  /// twilioIncomingMessage's webhook can push incoming-SMS notifications to
+  /// it. Independent of _registerVoice()/setTokens(), which only registers
+  /// the token with Twilio itself for Voice pushes.
+  Future<void> _registerMessagingDevice() async {
+    try {
+      final token = await FirebaseMessaging.instance.getToken();
+      if (token == null) return;
+      await _firebaseFunctions.httpsCallable('twilioRegisterMessagingDevice').call({
+        'accountSid': accountSid,
+        'fcmToken': token,
+      });
+    } catch (e) {
+      debugPrint('Error registering messaging device: $e');
+    }
   }
 
   /// Verifies a Twilio Account SID / Auth Token pair against the Twilio REST API

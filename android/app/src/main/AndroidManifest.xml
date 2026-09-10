@@ -1,5 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.READ_CONTACTS"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="Dialcrest"
         android:name="${applicationName}"
@@ -26,10 +27,13 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-        <!-- twilio_voice: receives incoming-call FCM pushes and shows the native call UI.
-             The plugin does NOT self-register this service, so it must be declared here. -->
+        <!-- This app's one FCM receiver: routes Twilio Voice call pushes to the
+             native call UI, and Dialcrest's own incoming-SMS pushes to a
+             notification. See DialcrestFirebaseMessagingService. twilio_voice's
+             own VoiceFirebaseMessagingService is not declared here since Android
+             only reliably delivers pushes to a single registered service. -->
         <service
-            android:name="com.twilio.twilio_voice.fcm.VoiceFirebaseMessagingService"
+            android:name=".DialcrestFirebaseMessagingService"
             android:exported="false"
             android:stopWithTask="false">
             <intent-filter>

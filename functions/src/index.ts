@@ -18,11 +18,13 @@ import { lastValueFrom, switchMap, throwError } from 'rxjs';
 import {
     callbackCallStatusChanges,
     callbackIncomingCall,
+    callbackIncomingMessage,
     callbackOutgoingCall,
     createOrUpdatePushCredentials,
     accessToken,
     getIncomingAppSid,
     configureSelectedNumbers,
+    registerMessagingDevice,
 } from './twilio';
 import {
     AppleConfig,
@@ -89,6 +91,11 @@ exports.twilioOutgoingCall = onRequest({ region: REGION, cors: true, timeoutSeco
 // https://europe-west1-twilio-phone-peblet.cloudfunctions.net/twilioCallStatusChanges
 exports.twilioCallStatusChanges = onRequest({ region: REGION, cors: true, timeoutSeconds: 30 },
     (req, res) => callbackCallStatusChanges(req, res)
+);
+
+// https://europe-west1-twilio-phone-peblet.cloudfunctions.net/twilioIncomingMessage
+exports.twilioIncomingMessage = onRequest({ region: REGION, cors: true, timeoutSeconds: 30 },
+    (req, res) => callbackIncomingMessage(req, res)
 );
 
 /**
@@ -176,4 +183,12 @@ exports.twilioGetIncomingAppSid = onCall({ enforceAppCheck: true, region: REGION
  */
 exports.twilioConfigureNumbers = onCall({ enforceAppCheck: true, region: REGION, cors: true, timeoutSeconds: 30 },
     (req) => lastValueFrom(configureSelectedNumbers(req.data['accountSid'], req.data['authToken'], req.data['selectedSids']))
+);
+
+/**
+ * Registers (or refreshes) this device's FCM token so twilioIncomingMessage's
+ * webhook can push incoming-SMS notifications to it.
+ */
+exports.twilioRegisterMessagingDevice = onCall({ enforceAppCheck: true, region: REGION, cors: true, timeoutSeconds: 30 },
+    (req) => lastValueFrom(registerMessagingDevice(req.data['accountSid'], req.data['fcmToken']))
 );
