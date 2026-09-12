@@ -722,6 +722,20 @@ class TwilioService {
         );
       }
 
+      // Re-attempt registration here too: the startup call in
+      // _ensurePhoneAccount() silently skips registering if the phone
+      // permissions weren't granted yet (or otherwise fails silently), which
+      // would otherwise leave no account at all for the user to pick — the
+      // "Calling accounts" screen opens below but is simply empty.
+      final missingPhoneAccountPermissions = await _ensurePhoneAccountPermissions();
+      if (missingPhoneAccountPermissions.isNotEmpty) {
+        throw Exception(
+          '${missingPhoneAccountPermissions.join(", ")} permission not granted. Please '
+          'grant it in system Settings > Apps, then try again.',
+        );
+      }
+      await TwilioVoicePlatform.instance.registerPhoneAccount();
+
       if (!await TwilioVoicePlatform.instance.isPhoneAccountEnabled()) {
         await TwilioVoicePlatform.instance.openPhoneAccountSettings();
         throw Exception(
