@@ -38,6 +38,7 @@ import {
 import {
     AppleConfig,
     ReverificationConfig,
+    ensureAccountCreated,
     ensureTrialStarted,
     isSubscriptionActive,
     verifyApplePurchase,
@@ -117,15 +118,17 @@ exports.twilioIncomingMessage = onRequest({ region: REGION, cors: true, timeoutS
  * calls this with the user's Twilio accountSid/authToken; we create (or update)
  * the FCM/APN push credential in THAT account using our shared FCM secret, and
  * persist the resulting CR... SID(s) under /twilio/{accountSid}/push-credential.
- * Also the de-facto "account onboarded" hook: starts this account's 30-day
- * trial the first time it's ever seen (see ensureTrialStarted).
+ * Also the de-facto "account onboarded" hook: records this account's creation
+ * timestamp and starts its 30-day trial the first time it's ever seen (see
+ * ensureAccountCreated, ensureTrialStarted).
  */
 exports.twilioRegister = onCall({ enforceAppCheck: true, region: REGION, cors: true, timeoutSeconds: 30, secrets: [twilioPebletSecret] },
     (req) => {
         const { androidFcmSecret, iosApnPrivateKey } = pushSecrets();
         const accountSid = req.data['accountSid'];
         return lastValueFrom(
-            ensureTrialStarted(accountSid).pipe(
+            ensureAccountCreated(accountSid).pipe(
+                switchMap(() => ensureTrialStarted(accountSid)),
                 switchMap(() => createOrUpdatePushCredentials(
                     accountSid, req.data['authToken'], iosApnCertificate.value(), iosApnPrivateKey, androidFcmSecret,
                 )),

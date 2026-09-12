@@ -66,6 +66,15 @@ function subscriptionRef(accountSid: string) {
     return admin.database().ref(`/twilio/${accountSid}/subscription`);
 }
 
+function createdAtRef(accountSid: string) {
+    return admin.database().ref(`/twilio/${accountSid}/createdAt`);
+}
+
+export function ensureAccountCreated(accountSid: string): Observable<void> {
+    const now = Date.now();
+    return from(createdAtRef(accountSid).transaction((current) => current ?? now)).pipe(map(() => undefined));
+}
+
 function upsertSubscription(accountSid: string, fields: Partial<SubscriptionRecord>): Promise<void> {
     return subscriptionRef(accountSid).update({ ...fields, lastVerifiedAt: Date.now() });
 }
