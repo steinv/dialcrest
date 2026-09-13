@@ -281,7 +281,7 @@
   "modeTitle": "Mode",
   "@modeTitle": {},
 
-  "modeSubtitleVacation": "This device will not ring for incoming calls. Other people using this Twilio account are unaffected.",
+  "modeSubtitleVacation": "This device will not ring for incoming calls or notify you of new texts. Other people using this Twilio account are unaffected.",
   "@modeSubtitleVacation": {},
 
   "modeSubtitleOnline": "This device rings for incoming calls as normal.",

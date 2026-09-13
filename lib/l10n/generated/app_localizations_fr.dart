@@ -306,7 +306,7 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get modeSubtitleVacation =>
-      'Cet appareil ne sonnera pas pour les appels entrants. Les autres personnes utilisant ce compte Twilio ne sont pas concernées.';
+      'Cet appareil ne sonnera pas pour les appels entrants et ne vous avertira pas des nouveaux messages. Les autres personnes utilisant ce compte Twilio ne sont pas concernées.';
 
   @override
   String get modeSubtitleOnline =>

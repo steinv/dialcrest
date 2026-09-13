@@ -81,7 +81,7 @@
   "perYearSuffix": "/año",
   "yearlyDiscountNote": "Con la suscripción anual obtienes 2 meses gratis. Las suscripciones se renuevan automáticamente hasta que se cancelen.",
   "modeTitle": "Modo",
-  "modeSubtitleVacation": "Este dispositivo no sonará con las llamadas entrantes. Esto no afecta a otras personas que usen esta cuenta de Twilio.",
+  "modeSubtitleVacation": "Este dispositivo no sonará con las llamadas entrantes ni te avisará de nuevos mensajes. Esto no afecta a otras personas que usen esta cuenta de Twilio.",
   "modeSubtitleOnline": "Este dispositivo suena con normalidad con las llamadas entrantes.",
   "onlineMode": "Modo en línea",
   "vacationMode": "Modo vacaciones",

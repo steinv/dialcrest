@@ -304,7 +304,7 @@ class AppLocalizationsNl extends AppLocalizations {
 
   @override
   String get modeSubtitleVacation =>
-      'Dit apparaat gaat niet over bij inkomende oproepen. Andere gebruikers van dit Twilio-account worden hierdoor niet beïnvloed.';
+      'Dit apparaat gaat niet over bij inkomende oproepen en meldt geen nieuwe berichten. Andere gebruikers van dit Twilio-account worden hierdoor niet beïnvloed.';
 
   @override
   String get modeSubtitleOnline =>

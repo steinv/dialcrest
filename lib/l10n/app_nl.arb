@@ -81,7 +81,7 @@
   "perYearSuffix": "/jaar",
   "yearlyDiscountNote": "Bij een jaarabonnement krijgt u 2 maanden gratis. Abonnementen worden automatisch verlengd totdat u opzegt.",
   "modeTitle": "Modus",
-  "modeSubtitleVacation": "Dit apparaat gaat niet over bij inkomende oproepen. Andere gebruikers van dit Twilio-account worden hierdoor niet beïnvloed.",
+  "modeSubtitleVacation": "Dit apparaat gaat niet over bij inkomende oproepen en meldt geen nieuwe berichten. Andere gebruikers van dit Twilio-account worden hierdoor niet beïnvloed.",
   "modeSubtitleOnline": "Dit apparaat gaat normaal over bij inkomende oproepen.",
   "onlineMode": "Online modus",
   "vacationMode": "Vakantiemodus",

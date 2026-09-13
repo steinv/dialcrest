@@ -81,7 +81,7 @@
   "perYearSuffix": "/Jahr",
   "yearlyDiscountNote": "Mit dem Jahresabo erhalten Sie 2 Monate kostenlos. Abonnements verlängern sich automatisch bis zur Kündigung.",
   "modeTitle": "Modus",
-  "modeSubtitleVacation": "Dieses Gerät klingelt nicht bei eingehenden Anrufen. Andere Nutzer dieses Twilio-Kontos sind davon nicht betroffen.",
+  "modeSubtitleVacation": "Dieses Gerät klingelt nicht bei eingehenden Anrufen und benachrichtigt nicht über neue Nachrichten. Andere Nutzer dieses Twilio-Kontos sind davon nicht betroffen.",
   "modeSubtitleOnline": "Dieses Gerät klingelt wie gewohnt bei eingehenden Anrufen.",
   "onlineMode": "Online-Modus",
   "vacationMode": "Urlaubsmodus",

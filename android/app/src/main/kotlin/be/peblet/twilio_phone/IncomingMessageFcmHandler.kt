@@ -16,12 +16,20 @@ import androidx.core.app.NotificationManagerCompat
  *
  * Always shows the notification, whether the app is foregrounded or not —
  * simpler than branching on process state, and Android already surfaces a
- * heads-up notification fine even while the app is open.
+ * heads-up notification fine even while the app is open. The one exception is
+ * this device being in vacation mode for the message's tenant (accountSid),
+ * checked directly against the SharedPreferences file Flutter's
+ * shared_preferences plugin writes to — this runs natively, with no Flutter
+ * engine around to ask. Purely a per-device/per-install check: it never
+ * touches Twilio account config, so other devices on the same account keep
+ * getting notified as normal, and the message itself is still delivered/
+ * stored server-side regardless.
  */
 object IncomingMessageFcmHandler {
     private const val CHANNEL_ID = "dialcrest_messages"
     private const val DATA_TYPE_KEY = "dialcrest_type"
     private const val DATA_TYPE_INCOMING_MESSAGE = "incoming_message"
+    private const val PREFS_NAME = "FlutterSharedPreferences"
 
     const val EXTRA_FROM = "dialcrest_message_from"
     const val EXTRA_BODY = "dialcrest_message_body"
@@ -32,8 +40,12 @@ object IncomingMessageFcmHandler {
         val from = data["from"] ?: return
         val body = data["body"] ?: ""
         val messageSid = data["messageSid"] ?: ""
+        val accountSid = data["accountSid"]
 
         val appContext = context.applicationContext
+
+        if (accountSid != null && isVacationMode(appContext, accountSid)) return
+
         ensureChannel(appContext)
 
         val launchIntent = appContext.packageManager
@@ -66,6 +78,16 @@ object IncomingMessageFcmHandler {
         // NotificationManagerCompat.notify a silent no-op rather than a crash,
         // so no permission check is needed here.
         NotificationManagerCompat.from(appContext).notify(messageSid.hashCode(), notification)
+    }
+
+    /**
+     * Mirrors TwilioService.isVacationMode (Dart) / StorageService.getVacationMode
+     * — same key, same "FlutterSharedPreferences" file the shared_preferences
+     * plugin's legacy API writes to on Android, with its "flutter." key prefix.
+     */
+    private fun isVacationMode(context: Context, accountSid: String): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getBoolean("flutter.vacation_mode_$accountSid", false)
     }
 
     private fun ensureChannel(context: Context) {

@@ -312,8 +312,11 @@ export function callbackCallStatusChanges(request: Request, response: express.Re
  * in-app banner (foreground) or an OS notification (background/terminated) —
  * sent directly via the Firebase Admin SDK rather than through Twilio's
  * Conversations/Notify push-credential system, which is Voice-specific (see
- * the TODO on createOrUpdatePushCredentials). No reply is sent back to the
- * sender, so the response is an empty MessagingResponse.
+ * the TODO on createOrUpdatePushCredentials). accountSid rides along in the
+ * payload so a device in vacation mode can recognize its own tenant and skip
+ * displaying the notification (still delivered — vacation mode never touches
+ * this registration/fan-out, only client-side display). No reply is sent
+ * back to the sender, so the response is an empty MessagingResponse.
  */
 export async function callbackIncomingMessage(request: Request, response: express.Response) {
     const accountSid = request.body.AccountSid;
@@ -328,7 +331,7 @@ export async function callbackIncomingMessage(request: Request, response: expres
     if (tokens.length > 0) {
         const results = await Promise.allSettled(tokens.map((token) => admin.messaging().send({
             token,
-            data: { dialcrest_type: 'incoming_message', from, to, body, messageSid },
+            data: { dialcrest_type: 'incoming_message', accountSid, from, to, body, messageSid },
             android: { priority: 'high' },
             apns: { headers: { 'apns-priority': '10' }, payload: { aps: { 'content-available': 1 } } },
         })));

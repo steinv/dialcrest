@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'firebase_options.dart';
 import 'l10n/generated/app_localizations.dart';
 import 'screens/home_screen.dart';
@@ -33,6 +34,17 @@ import 'services/contacts_service.dart';
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   if (message.data['dialcrest_type'] != 'incoming_message') return;
+
+  // Fresh isolate, no TwilioService instance around to ask — read this
+  // device's vacation-mode flag for the message's tenant directly. Mirrors
+  // the per-device/per-account suppression TwilioService.isVacationMode does
+  // elsewhere; other devices on the same Twilio account are unaffected since
+  // this only ever reads local storage.
+  final accountSid = message.data['accountSid'];
+  if (accountSid != null) {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('vacation_mode_$accountSid') ?? false) return;
+  }
 
   final from = message.data['from'] ?? '';
   final body = message.data['body'] ?? '';

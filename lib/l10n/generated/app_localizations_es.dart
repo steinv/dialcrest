@@ -306,7 +306,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get modeSubtitleVacation =>
-      'Este dispositivo no sonará con las llamadas entrantes. Esto no afecta a otras personas que usen esta cuenta de Twilio.';
+      'Este dispositivo no sonará con las llamadas entrantes ni te avisará de nuevos mensajes. Esto no afecta a otras personas que usen esta cuenta de Twilio.';
 
   @override
   String get modeSubtitleOnline =>

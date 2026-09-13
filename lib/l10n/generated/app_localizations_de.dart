@@ -305,7 +305,7 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get modeSubtitleVacation =>
-      'Dieses Gerät klingelt nicht bei eingehenden Anrufen. Andere Nutzer dieses Twilio-Kontos sind davon nicht betroffen.';
+      'Dieses Gerät klingelt nicht bei eingehenden Anrufen und benachrichtigt nicht über neue Nachrichten. Andere Nutzer dieses Twilio-Kontos sind davon nicht betroffen.';
 
   @override
   String get modeSubtitleOnline =>

@@ -169,6 +169,7 @@ class TwilioService {
 
   void _handleForegroundMessage(RemoteMessage message) {
     if (message.data['dialcrest_type'] != 'incoming_message') return;
+    if (isVacationMode) return;
     onIncomingMessage?.call(message.data['from'] ?? '', message.data['body'] ?? '');
   }
 
@@ -356,10 +357,12 @@ class TwilioService {
   /// so it can receive incoming-call pushes (and place outgoing calls).
   ///
   /// Skips the device-token registration step while [isVacationMode] is on —
-  /// that's a per-device pause (this device stops ringing) that must survive
-  /// restarts and FCM token refreshes, not just the moment the switch is
-  /// flipped. It never touches account-level Twilio config, so every other
-  /// client sharing this Twilio account keeps ringing as normal.
+  /// that's a per-device pause (this device stops ringing, and — see
+  /// _handleForegroundMessage and the native/background handlers — stops
+  /// showing incoming-message notifications too) that must survive restarts
+  /// and FCM token refreshes, not just the moment the switch is flipped. It
+  /// never touches account-level Twilio config, so every other client
+  /// sharing this Twilio account keeps ringing and getting notified as normal.
   Future<void> _registerVoice() async {
     try {
       await _registerIfNeeded();
@@ -378,11 +381,15 @@ class TwilioService {
   bool get isVacationMode => _storageService.getVacationMode(accountSid);
 
   /// Turns "vacation mode" on or off for this device. On: unregisters this
-  /// device's push binding, so it stops ringing for incoming calls. Off:
-  /// re-registers it. Either way, this only affects this device/install —
-  /// no Twilio account or phone-number configuration is touched, so other
-  /// clients sharing this Twilio account are never affected. Outgoing calls
-  /// and texts from this device are unaffected too.
+  /// device's push binding, so it stops ringing for incoming calls, and
+  /// incoming-message notifications on this device are suppressed too (see
+  /// _handleForegroundMessage, _firebaseMessagingBackgroundHandler in
+  /// main.dart, and IncomingMessageFcmHandler.kt). Off: re-registers it and
+  /// notifications resume. Either way, this only affects this device/install
+  /// — no Twilio account or phone-number configuration is touched, so other
+  /// clients sharing this Twilio account are never affected, and messages are
+  /// still delivered/stored server-side (visible when the conversation is
+  /// opened). Outgoing calls and texts from this device are unaffected too.
   Future<void> setVacationMode(bool vacationMode) async {
     await _storageService.setVacationMode(accountSid, vacationMode);
     if (vacationMode) {

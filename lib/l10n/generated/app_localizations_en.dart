@@ -304,7 +304,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get modeSubtitleVacation =>
-      'This device will not ring for incoming calls. Other people using this Twilio account are unaffected.';
+      'This device will not ring for incoming calls or notify you of new texts. Other people using this Twilio account are unaffected.';
 
   @override
   String get modeSubtitleOnline =>

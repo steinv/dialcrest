@@ -563,7 +563,7 @@ abstract class AppLocalizations {
   /// No description provided for @modeSubtitleVacation.
   ///
   /// In en, this message translates to:
-  /// **'This device will not ring for incoming calls. Other people using this Twilio account are unaffected.'**
+  /// **'This device will not ring for incoming calls or notify you of new texts. Other people using this Twilio account are unaffected.'**
   String get modeSubtitleVacation;
 
   /// No description provided for @modeSubtitleOnline.
