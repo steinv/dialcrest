@@ -43,6 +43,43 @@ class SubscriptionExpiredException implements Exception {
       'Your Dialcrest subscription has expired. Open Settings to renew.';
 }
 
+/// Wraps an already-clean, user-presentable message (typically the output of
+/// [describeTwilioError]) without [Exception]'s own "Exception: " prefix, so
+/// callers that already add their own "Failed to ..." wrapper don't end up
+/// with a doubled-up message.
+class _TwilioApiException implements Exception {
+  final String _message;
+  _TwilioApiException(this._message);
+  @override
+  String toString() => _message;
+}
+
+/// A short, user-presentable description of [error] for the "Failed to ..."
+/// messages surfaced in the UI. [DioException.toString] dumps the request
+/// options and the raw response object, and [FirebaseFunctionsException]
+/// (like every [FirebaseException]) appends its full stack trace when one is
+/// attached — both read like a stack trace once shown on-screen. This
+/// extracts just the actual error message: Twilio's own JSON error body
+/// `message` field for a Dio failure (e.g. "Authentication Error - invalid
+/// username" for a suspended/expired Twilio account) plus the HTTP status, or
+/// the "[plugin/code] message" prefix for a Firebase exception.
+String describeTwilioError(Object error) {
+  if (error is DioException) {
+    final status = error.response?.statusCode;
+    final body = error.response?.data;
+    final twilioMessage = body is Map ? body['message'] as String? : null;
+    if (twilioMessage != null) {
+      return status != null ? '$twilioMessage (HTTP $status)' : twilioMessage;
+    }
+    if (status != null) return 'HTTP $status';
+    return error.message ?? 'network error';
+  }
+  if (error is FirebaseFunctionsException) {
+    return '[${error.code}] ${error.message}';
+  }
+  return error.toString();
+}
+
 class TwilioService {
   final String accountSid;
   final String authToken;
@@ -253,8 +290,16 @@ class TwilioService {
     // enabled" warning goes away). Runs independently of the network calls below.
     _ensurePhoneAccount();
 
-    // Resolve the caller-id number, then register this device with Twilio Voice
-    // so it can place outgoing calls and receive incoming-call pushes.
+    // Register this device with Twilio Voice independently of caller-id
+    // resolution below: this is what runs twilioRegister server-side, which
+    // starts the account's 30-day trial (see ensureTrialStarted) on first
+    // launch — that must happen even if the phone-number fetch below fails,
+    // otherwise a new account looks like its trial already expired (Settings
+    // reads no subscription record and reports "expired" rather than "never
+    // registered" — see SubscriptionService.fetchStatus).
+    _registerVoice();
+
+    // Resolve the caller-id number used for outgoing calls/access-token minting.
     _currentPhoneNumberResolved = _resolveCurrentPhoneNumber();
   }
 
@@ -268,12 +313,11 @@ class TwilioService {
       currentPhoneNumber = (selected != null && phoneNumbers.contains(selected))
           ? selected
           : phoneNumbers.first;
-      await _registerVoice();
     } catch (e) {
       // A transient connectivity failure (e.g. no DNS for api.twilio.com) must
-      // not become an unhandled exception during startup; voice registration is
-      // retried before each call in makeCall().
-      debugPrint('Skipping voice registration, phone-number fetch failed: $e');
+      // not become an unhandled exception during startup; the user can still
+      // pick a caller id later from Settings once the account is reachable.
+      debugPrint('Skipping caller-id resolution, phone-number fetch failed: $e');
     }
   }
 
@@ -503,7 +547,7 @@ class TwilioService {
       return phoneNumberStrings;
     } catch (e) {
       debugPrint('Error fetching phoneNumbers: $e');
-      throw Exception('Failed to make call: ${e.toString()}');
+      throw Exception('Failed to make call: ${describeTwilioError(e)}');
     }
   }
 
@@ -515,28 +559,42 @@ class TwilioService {
       return await _fetchIncomingPhoneNumbers();
     } catch (e) {
       debugPrint('Error fetching incoming numbers: $e');
-      throw Exception('Failed to fetch phone numbers: ${e.toString()}');
+      throw Exception('Failed to fetch phone numbers: ${describeTwilioError(e)}');
     }
   }
 
   /// The tenant's incoming TwiML App SID (created on first use). A number is
   /// configured for this app iff its voice_application_sid equals this.
   Future<String> getIncomingAppSid() async {
-    final response = await _firebaseFunctions
-        .httpsCallable('twilioGetIncomingAppSid')
-        .call({'accountSid': accountSid, 'authToken': authToken});
-    return response.data as String;
+    try {
+      final response = await _firebaseFunctions
+          .httpsCallable('twilioGetIncomingAppSid')
+          .call({'accountSid': accountSid, 'authToken': authToken});
+      return response.data as String;
+    } catch (e) {
+      debugPrint('Error fetching incoming app sid: $e');
+      // No "Failed to ..." prefix here: the caller (Settings) already adds
+      // its own "Could not load phone numbers: ..." wrapper around this.
+      throw _TwilioApiException(describeTwilioError(e));
+    }
   }
 
   /// Configures exactly [selectedSids] to ring this app; any previously
   /// configured number not in the list is restored to its pre-app webhook
   /// config. Runs server-side (functions/src/twilio.ts configureSelectedNumbers).
   Future<void> configureNumbers(List<String> selectedSids) async {
-    await _firebaseFunctions.httpsCallable('twilioConfigureNumbers').call({
-      'accountSid': accountSid,
-      'authToken': authToken,
-      'selectedSids': selectedSids,
-    });
+    try {
+      await _firebaseFunctions.httpsCallable('twilioConfigureNumbers').call({
+        'accountSid': accountSid,
+        'authToken': authToken,
+        'selectedSids': selectedSids,
+      });
+    } catch (e) {
+      debugPrint('Error configuring numbers: $e');
+      // No "Failed to ..." prefix here: the caller (Settings) already adds
+      // its own "Failed to update number configuration: ..." wrapper.
+      throw _TwilioApiException(describeTwilioError(e));
+    }
   }
 
   Future<void> _reregisterForNewNumbers(List<String> numbers) async {
@@ -605,7 +663,7 @@ class TwilioService {
       return CallHistoryPage(calls: calls, nextPageUrl: nextPageUrl);
     } catch (e) {
       debugPrint('Error fetching call history: $e');
-      throw Exception('Failed to fetch call history: ${e.toString()}');
+      throw Exception('Failed to fetch call history: ${describeTwilioError(e)}');
     }
   }
 
@@ -766,7 +824,7 @@ class TwilioService {
     } catch (e, stackTrace) {
       debugPrint('Error making call: $e');
       debugPrintStack(stackTrace: stackTrace);
-      throw Exception('Failed to make call: ${e.toString()}');
+      throw Exception('Failed to make call: ${describeTwilioError(e)}');
     }
   }
 
@@ -793,7 +851,7 @@ class TwilioService {
       );
     } catch (e) {
       debugPrint('Error sending message: $e');
-      throw Exception('Failed to send message: ${e.toString()}');
+      throw Exception('Failed to send message: ${describeTwilioError(e)}');
     }
   }
 
@@ -828,7 +886,7 @@ class TwilioService {
       return MessagePage(messages: messages, nextPageUrl: nextPageUrl);
     } catch (e) {
       debugPrint('Error fetching messages: $e');
-      throw Exception('Failed to fetch messages: ${e.toString()}');
+      throw Exception('Failed to fetch messages: ${describeTwilioError(e)}');
     }
   }
 
