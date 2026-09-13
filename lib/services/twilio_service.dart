@@ -75,6 +75,17 @@ String describeTwilioError(Object error) {
     return error.message ?? 'network error';
   }
   if (error is FirebaseFunctionsException) {
+    // Callable functions collapse any error that isn't explicitly thrown as an
+    // HttpsError (e.g. an unhandled Twilio API error inside twilio.ts) into
+    // code 'internal'/message 'INTERNAL' before it reaches the client, so the
+    // actual cause never makes it here — "[internal] INTERNAL" would just
+    // confuse the user. Since that almost always means the underlying Twilio
+    // call failed (bad/revoked credentials, suspended or trial-restricted
+    // account, etc.), point them at the Twilio account instead.
+    if (error.code == 'internal') {
+      return 'Twilio account error — check your Twilio account for issues '
+          '(suspended, trial restrictions, invalid credentials).';
+    }
     return '[${error.code}] ${error.message}';
   }
   return error.toString();
