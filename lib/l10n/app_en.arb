@@ -227,6 +227,9 @@
     "placeholders": { "error": {} }
   },
 
+  "twilioAccountError": "Check your Twilio account for issues (suspended, trial restrictions, invalid credentials).",
+  "@twilioAccountError": {},
+
   "logOut": "Log out",
   "@logOut": {},
 

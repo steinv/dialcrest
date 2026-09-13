@@ -65,6 +65,7 @@
   "failedToUpdateMode": "Bijwerken van modus mislukt: {error}",
   "couldNotLoadPhoneNumbers": "Kan telefoonnummers niet laden: {error}",
   "failedToUpdateNumberConfig": "Bijwerken van nummerconfiguratie mislukt: {error}",
+  "twilioAccountError": "Controleer je Twilio-account op problemen (geschorst, proefbeperkingen, ongeldige inloggegevens).",
   "logOut": "Uitloggen",
   "logOutConfirmMessage": "Hiermee worden uw Twilio Account SID en Auth Token van dit apparaat verwijderd. U kunt op elk moment opnieuw verbinden.",
   "licenseTitle": "Licentie",

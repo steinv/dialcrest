@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui' as ui;
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:dio/dio.dart';
@@ -12,7 +13,20 @@ import 'package:dialcrest/models/PhoneNumber.dart';
 import 'package:twilio_voice/twilio_voice.dart' hide Call;
 import '../../models/call.dart';
 import '../../models/message.dart';
+import '../l10n/generated/app_localizations.dart';
+import '../l10n/generated/app_localizations_en.dart';
 import 'storage_service.dart';
+
+/// Looks up the localized strings for the device's current locale without a
+/// [BuildContext] (this file is a plain service, not a widget) — falls back
+/// to English if the device locale isn't one [AppLocalizations] supports.
+AppLocalizations _l10n() {
+  try {
+    return lookupAppLocalizations(ui.PlatformDispatcher.instance.locale);
+  } on FlutterError {
+    return AppLocalizationsEn();
+  }
+}
 
 /// One page of call history from Twilio, plus the URL to fetch the next page
 /// (null when there are no more pages).
@@ -83,8 +97,7 @@ String describeTwilioError(Object error) {
     // call failed (bad/revoked credentials, suspended or trial-restricted
     // account, etc.), point them at the Twilio account instead.
     if (error.code == 'internal') {
-      return 'Twilio account error — check your Twilio account for issues '
-          '(suspended, trial restrictions, invalid credentials).';
+      return _l10n().twilioAccountError;
     }
     return '[${error.code}] ${error.message}';
   }

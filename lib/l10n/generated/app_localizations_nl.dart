@@ -239,6 +239,10 @@ class AppLocalizationsNl extends AppLocalizations {
   }
 
   @override
+  String get twilioAccountError =>
+      'Controleer je Twilio-account op problemen (geschorst, proefbeperkingen, ongeldige inloggegevens).';
+
+  @override
   String get logOut => 'Uitloggen';
 
   @override

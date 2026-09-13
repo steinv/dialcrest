@@ -464,6 +464,12 @@ abstract class AppLocalizations {
   /// **'Failed to update number configuration: {error}'**
   String failedToUpdateNumberConfig(Object error);
 
+  /// No description provided for @twilioAccountError.
+  ///
+  /// In en, this message translates to:
+  /// **'Check your Twilio account for issues (suspended, trial restrictions, invalid credentials).'**
+  String get twilioAccountError;
+
   /// No description provided for @logOut.
   ///
   /// In en, this message translates to:

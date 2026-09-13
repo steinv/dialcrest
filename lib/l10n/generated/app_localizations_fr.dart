@@ -241,6 +241,10 @@ class AppLocalizationsFr extends AppLocalizations {
   }
 
   @override
+  String get twilioAccountError =>
+      'Vérifiez votre compte Twilio (suspension, restrictions d\'essai, identifiants invalides).';
+
+  @override
   String get logOut => 'Se déconnecter';
 
   @override

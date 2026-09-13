@@ -240,6 +240,10 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
+  String get twilioAccountError =>
+      'Überprüfen Sie Ihr Twilio-Konto auf Probleme (Sperrung, Testphase-Einschränkungen, ungültige Anmeldedaten).';
+
+  @override
   String get logOut => 'Abmelden';
 
   @override
