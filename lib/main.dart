@@ -51,13 +51,13 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
   final localNotifications = FlutterLocalNotificationsPlugin();
   await localNotifications.initialize(
-    const InitializationSettings(iOS: DarwinInitializationSettings()),
+    settings: const InitializationSettings(iOS: DarwinInitializationSettings()),
   );
   await localNotifications.show(
-    (message.data['messageSid'] ?? from).hashCode,
-    from,
-    body,
-    const NotificationDetails(
+    id: (message.data['messageSid'] ?? from).hashCode,
+    title: from,
+    body: body,
+    notificationDetails: const NotificationDetails(
       iOS: DarwinNotificationDetails(presentAlert: true, presentBadge: true, presentSound: true),
     ),
     payload: jsonEncode({'from': from, 'body': body}),
@@ -79,12 +79,12 @@ void main() async {
   // — pass --dart-define=appCheckDebugProvider=true when building those.
   final useDebugAppCheckProvider = kDebugMode || const bool.fromEnvironment('appCheckDebugProvider');
   await FirebaseAppCheck.instance.activate(
-    androidProvider: useDebugAppCheckProvider
-        ? AndroidProvider.debug
-        : AndroidProvider.playIntegrity,
-    appleProvider: useDebugAppCheckProvider
-        ? AppleProvider.debug
-        : AppleProvider.appAttestWithDeviceCheckFallback,
+    providerAndroid: useDebugAppCheckProvider
+        ? const AndroidDebugProvider()
+        : const AndroidPlayIntegrityProvider(),
+    providerApple: useDebugAppCheckProvider
+        ? const AppleDebugProvider()
+        : const AppleAppAttestWithDeviceCheckFallbackProvider(),
   );
   final storageService = StorageService();
   await storageService.init();

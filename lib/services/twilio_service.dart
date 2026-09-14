@@ -205,7 +205,7 @@ class TwilioService {
       await _registerMessagingDevice();
 
       await _localNotifications.initialize(
-        const InitializationSettings(iOS: DarwinInitializationSettings()),
+        settings: const InitializationSettings(iOS: DarwinInitializationSettings()),
         onDidReceiveNotificationResponse: (details) =>
             _handleNotificationPayload(details.payload),
       );
