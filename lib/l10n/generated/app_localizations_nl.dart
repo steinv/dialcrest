@@ -224,6 +224,9 @@ class AppLocalizationsNl extends AppLocalizations {
   }
 
   @override
+  String get purchaseCanceled => 'Aankoop geannuleerd';
+
+  @override
   String failedToUpdateMode(Object error) {
     return 'Bijwerken van modus mislukt: $error';
   }

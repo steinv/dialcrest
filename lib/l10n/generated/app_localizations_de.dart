@@ -225,6 +225,9 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
+  String get purchaseCanceled => 'Kauf abgebrochen';
+
+  @override
   String failedToUpdateMode(Object error) {
     return 'Aktualisieren des Modus fehlgeschlagen: $error';
   }

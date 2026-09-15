@@ -211,6 +211,8 @@
   "@purchaseFailed": {
     "placeholders": { "error": {} }
   },
+  "purchaseCanceled": "Purchase canceled",
+  "@purchaseCanceled": {},
 
   "failedToUpdateMode": "Failed to update mode: {error}",
   "@failedToUpdateMode": {

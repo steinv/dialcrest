@@ -62,6 +62,7 @@
   "planUnavailableError": "Het abonnement {plan} is momenteel niet beschikbaar in de store. Probeer het later opnieuw.",
   "couldNotLoadSubscription": "Kan abonnementsstatus niet laden: {error}",
   "purchaseFailed": "Aankoop mislukt: {error}",
+  "purchaseCanceled": "Aankoop geannuleerd",
   "failedToUpdateMode": "Bijwerken van modus mislukt: {error}",
   "couldNotLoadPhoneNumbers": "Kan telefoonnummers niet laden: {error}",
   "failedToUpdateNumberConfig": "Bijwerken van nummerconfiguratie mislukt: {error}",

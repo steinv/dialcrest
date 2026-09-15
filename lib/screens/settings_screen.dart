@@ -117,6 +117,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _subscriptionStatus = status;
         _isPurchasing = false;
       });
+    } on PurchaseCanceledException {
+      if (!mounted) return;
+      setState(() => _isPurchasing = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(AppLocalizations.of(context)!.purchaseCanceled),
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() => _isPurchasing = false);

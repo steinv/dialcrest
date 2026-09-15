@@ -226,6 +226,9 @@ class AppLocalizationsFr extends AppLocalizations {
   }
 
   @override
+  String get purchaseCanceled => 'Achat annulé';
+
+  @override
   String failedToUpdateMode(Object error) {
     return 'Échec de la mise à jour du mode : $error';
   }

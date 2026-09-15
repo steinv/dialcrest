@@ -62,6 +62,7 @@
   "planUnavailableError": "El plan {plan} no está disponible en la tienda en este momento. Inténtalo de nuevo más tarde.",
   "couldNotLoadSubscription": "No se pudo cargar el estado de la suscripción: {error}",
   "purchaseFailed": "Error en la compra: {error}",
+  "purchaseCanceled": "Compra cancelada",
   "failedToUpdateMode": "Error al actualizar el modo: {error}",
   "couldNotLoadPhoneNumbers": "No se pudieron cargar los números de teléfono: {error}",
   "failedToUpdateNumberConfig": "Error al actualizar la configuración del número: {error}",

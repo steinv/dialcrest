@@ -10,6 +10,13 @@ import 'package:in_app_purchase_android/in_app_purchase_android.dart';
 
 import '../models/subscription_status.dart';
 
+/// Thrown by [SubscriptionService.purchase] when the user cancels the store's
+/// purchase flow rather than the purchase failing outright, so callers can
+/// show a plain "canceled" message instead of an error.
+class PurchaseCanceledException implements Exception {
+  const PurchaseCanceledException();
+}
+
 /// Per-accountSid subscription: a 30-day trial (started server-side the first
 /// time this account registers — see functions/src/subscription.ts
 /// ensureTrialStarted), then an auto-renewing purchase of one of
@@ -219,7 +226,7 @@ class SubscriptionService {
           return;
         case PurchaseStatus.canceled:
           _pendingPurchase = null;
-          completer?.completeError(Exception('Purchase canceled'));
+          completer?.completeError(const PurchaseCanceledException());
           return;
         case PurchaseStatus.purchased:
         case PurchaseStatus.restored:

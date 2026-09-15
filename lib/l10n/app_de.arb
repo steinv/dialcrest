@@ -62,6 +62,7 @@
   "planUnavailableError": "Der Tarif {plan} ist im Store derzeit nicht verfügbar. Bitte versuchen Sie es später erneut.",
   "couldNotLoadSubscription": "Abonnementstatus konnte nicht geladen werden: {error}",
   "purchaseFailed": "Kauf fehlgeschlagen: {error}",
+  "purchaseCanceled": "Kauf abgebrochen",
   "failedToUpdateMode": "Aktualisieren des Modus fehlgeschlagen: {error}",
   "couldNotLoadPhoneNumbers": "Telefonnummern konnten nicht geladen werden: {error}",
   "failedToUpdateNumberConfig": "Aktualisieren der Nummernkonfiguration fehlgeschlagen: {error}",

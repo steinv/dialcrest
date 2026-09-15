@@ -446,6 +446,12 @@ abstract class AppLocalizations {
   /// **'Purchase failed: {error}'**
   String purchaseFailed(Object error);
 
+  /// No description provided for @purchaseCanceled.
+  ///
+  /// In en, this message translates to:
+  /// **'Purchase canceled'**
+  String get purchaseCanceled;
+
   /// No description provided for @failedToUpdateMode.
   ///
   /// In en, this message translates to:
