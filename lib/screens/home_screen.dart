@@ -41,6 +41,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   StreamSubscription<CallEvent>? _callEventsSub;
   Timer? _connectTimeout;
 
+  /// The number of the call currently being connected, so a connect-failure
+  /// event (which carries no number) can name it in the error message.
+  String? _connectingNumber;
+
   /// Lets the app bar's refresh button drive the call-history screen's reload.
   final GlobalKey<CallHistoryScreenState> _callHistoryKey = GlobalKey();
 
@@ -92,7 +96,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// Resolves the connecting state from Twilio call-state events. The spinner
   /// keeps running through `ringing`, and clears once the call goes active
   /// (`connected`/`reconnected`) or terminates (`callEnded`/`declined`/
-  /// `missedCall`).
+  /// `missedCall`/`connectFailure`).
   void _onCallEvent(CallEvent event) {
     if (!_isConnecting) return;
     switch (event) {
@@ -105,7 +109,30 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       case CallEvent.missedCall:
         _clearConnecting();
         break;
+      case CallEvent.connectFailure:
+        // The connection attempt failed before it could ever ring — e.g. the
+        // Android ConnectionService can't route the call on a device with no
+        // SIM. Nothing more is coming, so drop the spinner instead of leaving
+        // it hanging until the 60s safety timeout, and say why.
+        final number = _connectingNumber;
+        _clearConnecting();
+        if (mounted && number != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                AppLocalizations.of(context)!.couldNotStartCall(number),
+              ),
+            ),
+          );
+        }
+        break;
       default:
+        // Any event that arrives while still connecting but isn't one we treat
+        // as terminal. Logged so an unexpected failure mode (e.g. a plugin
+        // build that surfaces connect failures under a different event) is
+        // visible instead of only manifesting as a spinner that hangs until
+        // the safety timeout.
+        debugPrint('Unhandled call event while connecting: $event');
         break;
     }
   }
@@ -113,6 +140,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _clearConnecting() {
     _connectTimeout?.cancel();
     _connectTimeout = null;
+    _connectingNumber = null;
     if (mounted && _isConnecting) {
       setState(() => _isConnecting = false);
     }
@@ -312,6 +340,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // Ignore taps while a call is already being connected.
     if (_isConnecting) return;
 
+    _connectingNumber = number;
     setState(() => _isConnecting = true);
     // Safety net: if no call-state event ever arrives (e.g. the platform fails
     // silently), stop showing the spinner instead of hanging forever.
