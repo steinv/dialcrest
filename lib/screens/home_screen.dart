@@ -109,23 +109,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       case CallEvent.missedCall:
         _clearConnecting();
         break;
-      case CallEvent.connectFailure:
-        // The connection attempt failed before it could ever ring — e.g. the
-        // Android ConnectionService can't route the call on a device with no
-        // SIM. Nothing more is coming, so drop the spinner instead of leaving
-        // it hanging until the 60s safety timeout, and say why.
-        final number = _connectingNumber;
-        _clearConnecting();
-        if (mounted && number != null) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                AppLocalizations.of(context)!.couldNotStartCall(number),
-              ),
-            ),
-          );
-        }
-        break;
       default:
         // Any event that arrives while still connecting but isn't one we treat
         // as terminal. Logged so an unexpected failure mode (e.g. a plugin
