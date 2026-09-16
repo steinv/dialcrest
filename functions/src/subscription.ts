@@ -112,13 +112,28 @@ function applePaidRef(originalTransactionId: string) {
 }
 
 /**
- * Paid axis, keyed on the Google purchase token. Auto-renewals keep the same
- * token, so a renewal updates this same record; a resubscribe after a lapse
- * issues a new token (linked to the old via linkedPurchaseToken) and gets its
- * own record, which is fine — the old one has already expired.
+ * Paid axis, keyed on the Google purchase token. Auto-renewals normally keep
+ * the same token, but some events (upgrade/downgrade, resubscribe) rotate it
+ * and link the new token to the old one via `linkedPurchaseToken` — see
+ * resolveGooglePaidKey, which chases that link so the record stays keyed on
+ * the chain root instead of forking a new record per rotation.
  */
-function googlePaidRef(purchaseToken: string) {
-    return admin.database().ref(`/subscriptions/google/${encodeURIComponent(purchaseToken)}`);
+function googlePaidRef(key: string) {
+    return admin.database().ref(`/subscriptions/google/${encodeURIComponent(key)}`);
+}
+
+/**
+ * Resolves the DB key to write a Google paid record under. If this purchase
+ * links to a previous token and a record already exists there, reuse that
+ * key instead of forking a new record at the new token — since every write
+ * goes through this same resolution, whatever key is found there is already
+ * the chain root, so one hop back is always enough.
+ */
+function resolveGooglePaidKey(purchaseToken: string, linkedPurchaseToken: string | null): Observable<string> {
+    if (!linkedPurchaseToken) return of(purchaseToken);
+    return from(googlePaidRef(linkedPurchaseToken).once('value')).pipe(
+        map((snapshot) => (snapshot.exists() ? linkedPurchaseToken : purchaseToken)),
+    );
 }
 
 function createdAtRef(accountSid: string) {
@@ -136,6 +151,23 @@ function toStatus(state: { expiresAt: number; autoRenew: boolean; productId: str
         expiresAt: state.expiresAt,
         autoRenew: state.autoRenew,
         isActive: state.expiresAt > Date.now(),
+    };
+}
+
+/** Builds a PaidRecord from re-verified store state plus the store-specific identifiers. */
+function buildPaidRecord(
+    accountSid: string | null,
+    state: { expiresAt: number; autoRenew: boolean; productId: string },
+    storeFields: Pick<PaidRecord, 'store' | 'originalTransactionId' | 'purchaseToken' | 'linkedPurchaseToken'>,
+): PaidRecord {
+    return {
+        plan: planFromId(state.productId),
+        expiresAt: state.expiresAt,
+        autoRenew: state.autoRenew,
+        productId: state.productId,
+        lastAccountSid: accountSid,
+        lastVerifiedAt: Date.now(),
+        ...storeFields,
     };
 }
 
@@ -330,18 +362,12 @@ function refreshAppleSubscription(
     return from(fetchAppleSubscriptionStatuses(originalTransactionId, config)).pipe(
         map((body) => extractAppleSubscriptionState(body, productIdHint)),
         switchMap((state) => {
-            const record: PaidRecord = {
-                plan: planFromId(state.productId),
-                expiresAt: state.expiresAt,
-                autoRenew: state.autoRenew,
+            const record = buildPaidRecord(accountSid, state, {
                 store: 'app_store',
-                productId: state.productId,
                 originalTransactionId,
                 purchaseToken: null,
                 linkedPurchaseToken: null,
-                lastAccountSid: accountSid,
-                lastVerifiedAt: Date.now(),
-            };
+            });
             return from(applePaidRef(originalTransactionId).update(record)).pipe(map(() => state));
         }),
     );
@@ -446,20 +472,16 @@ function refreshGoogleSubscription(
                     packageName, subscriptionId: lineItem.productId ?? ANDROID_PRODUCT_ID, token: purchaseToken, requestBody: {},
                 })) :
                 of(null);
-            const record: PaidRecord = {
-                plan: planFromId(state.productId),
-                expiresAt: state.expiresAt,
-                autoRenew: state.autoRenew,
+            const linkedPurchaseToken = purchase.linkedPurchaseToken ?? null;
+            const record = buildPaidRecord(accountSid, state, {
                 store: 'play_store',
-                productId: state.productId,
                 originalTransactionId: null,
                 purchaseToken,
-                linkedPurchaseToken: purchase.linkedPurchaseToken ?? null,
-                lastAccountSid: accountSid,
-                lastVerifiedAt: Date.now(),
-            };
+                linkedPurchaseToken,
+            });
             return acknowledge$.pipe(
-                switchMap(() => from(googlePaidRef(purchaseToken).update(record))),
+                switchMap(() => resolveGooglePaidKey(purchaseToken, linkedPurchaseToken)),
+                switchMap((key) => from(googlePaidRef(key).update(record))),
                 map(() => state),
             );
         }),

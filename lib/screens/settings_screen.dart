@@ -148,16 +148,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
     } catch (e) {
       // A purchase can fail because the store considers the user already
-      // subscribed (e.g. it auto-renewed but the app hadn't noticed). Rather
-      // than surface that as an error, re-verify the existing entitlement — if
-      // it's active, this is really a success.
+      // subscribed to the SAME plan (e.g. it auto-renewed but the app hadn't
+      // noticed). Rather than surface that as an error, re-verify the existing
+      // entitlement — if it's active for the plan just attempted, this is
+      // really a success. Only checking the plan match keeps an unrelated
+      // failure (e.g. a failed upgrade from monthly to yearly) from being
+      // masked by the still-active old plan.
       final recovered = await _recoverExistingSubscription();
+      final expectedPlan =
+          productId == SubscriptionService.yearlyProductId ? 'yearly' : 'monthly';
       if (!mounted) return;
-      setState(() {
-        if (recovered != null) _subscriptionStatus = recovered;
-        _isPurchasing = false;
-      });
-      if (recovered != null) return;
+      if (recovered != null && recovered.plan == expectedPlan) {
+        setState(() {
+          _subscriptionStatus = recovered;
+          _isPurchasing = false;
+        });
+        return;
+      }
+      setState(() => _isPurchasing = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -543,8 +551,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       await widget.subscriptionService.restorePurchases();
       // restorePurchases replays purchases through the stream asynchronously;
-      // give it a moment to persist the entitlement before re-verifying.
-      await Future.delayed(const Duration(seconds: 2));
+      // poll the cheap local cache until it lands rather than guessing a fixed
+      // delay (~3s max — mirrors SubscriptionService.recoverEntitlement).
+      for (
+        var i = 0;
+        i < 10 && widget.subscriptionService.currentEntitlement.isEmpty;
+        i++
+      ) {
+        await Future.delayed(const Duration(milliseconds: 300));
+      }
       final recovered = await _recoverExistingSubscription();
       if (!mounted) return;
       setState(() {

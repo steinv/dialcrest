@@ -65,6 +65,18 @@ class SubscriptionService {
   /// key to map purchase updates back to a specific pending purchase.
   Completer<SubscriptionStatus>? _pendingPurchase;
 
+  /// The startup restore kicked off below, while it's still the one
+  /// [recoverEntitlement] should join instead of starting a redundant one.
+  /// Consumed (set to null) the first time it's joined.
+  Future<void>? _startupRestore;
+
+  /// Set once [recoverEntitlement] has tried and found nothing. Nothing about
+  /// the answer changes without either a successful [purchase] or an explicit
+  /// "Restore purchases" tap — both populate [currentEntitlement] directly, on
+  /// a path this flag doesn't gate — so there's no value in retrying the
+  /// automatic mid-dial recovery again this session once it's failed once.
+  bool _entitlementRecoveryExhausted = false;
+
   bool get isSupported => Platform.isAndroid || Platform.isIOS;
 
   SubscriptionService({
@@ -83,7 +95,7 @@ class SubscriptionService {
     // left to the explicit Restore button (and the StoreKit 2 path in
     // APPLE_TODO.md) because its restore can prompt for sign-in.
     if (Platform.isAndroid) {
-      _inAppPurchase.restorePurchases().catchError(
+      _startupRestore = _inAppPurchase.restorePurchases().catchError(
         (e) => debugPrint('Startup entitlement restore failed: $e'),
       );
     }
@@ -345,15 +357,24 @@ class SubscriptionService {
   /// Attempts to silently recover a paid entitlement this device owns but
   /// hasn't cached (fresh install / new device), returning whether one is now
   /// available. Used by the enforcement retry when a dial is blocked as
-  /// "subscription expired". Android only: restorePurchases() there is a silent
+  /// "subscription expired" — covering the race where a dial happens before
+  /// the fire-and-forget startup restore (above) has populated
+  /// [currentEntitlement]. Android only: restorePurchases() there is a silent
   /// local query, so it's safe mid-dial. iOS returns whatever is already cached
   /// without triggering a (potentially prompting) restore — its silent path is
   /// the StoreKit 2 currentEntitlements work in APPLE_TODO.md.
+  ///
+  /// Joins the startup restore instead of starting a second one, and gives up
+  /// for the rest of the session once a check finds nothing — see
+  /// [_entitlementRecoveryExhausted] — so a device with no subscription pays
+  /// this cost at most once, not on every blocked dial.
   Future<bool> recoverEntitlement() async {
     if (currentEntitlement.isNotEmpty) return true;
-    if (!Platform.isAndroid) return false;
+    if (!Platform.isAndroid || _entitlementRecoveryExhausted) return false;
+    final startupRestore = _startupRestore;
+    _startupRestore = null;
     try {
-      await _inAppPurchase.restorePurchases();
+      await (startupRestore ?? _inAppPurchase.restorePurchases());
       // restorePurchases delivers purchases through the stream asynchronously;
       // poll briefly until _handlePurchase has persisted one (~3s max).
       for (var i = 0; i < 10 && currentEntitlement.isEmpty; i++) {
@@ -362,6 +383,8 @@ class SubscriptionService {
     } catch (e) {
       debugPrint('Entitlement recovery failed: $e');
     }
-    return currentEntitlement.isNotEmpty;
+    final found = currentEntitlement.isNotEmpty;
+    if (!found) _entitlementRecoveryExhausted = true;
+    return found;
   }
 }
