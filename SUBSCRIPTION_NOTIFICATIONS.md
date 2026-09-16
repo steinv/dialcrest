@@ -27,12 +27,12 @@ Done:
   from Part 1 to be set up (topic `play-subscription-notifications`).
 
 Pending:
-- **Apple JWS signature verification** — the handler currently uses the
-  re-fetch-from-Apple trust model (see below); edge signature verification is a
-  documented hardening TODO, not yet implemented.
+- **All Apple-side work is parked** (no Apple Developer account yet) and tracked
+  in [`APPLE_TODO.md`](APPLE_TODO.md): App Store Connect notification URLs, the
+  `apple_iap_key` secret, JWS signature-verification hardening, iOS
+  `currentEntitlements` auto-recover, and sandbox testing. The Apple backend
+  code is written and compiles; it just can't be exercised without the account.
 - **Part 5** — migration of any existing per-`accountSid` paid records.
-- **iOS `currentEntitlements`** — auto-recover a paid entitlement after
-  reinstall without the Restore button (TODO in `SubscriptionService`).
 
 ## Why we're changing it
 
