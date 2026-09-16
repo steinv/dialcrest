@@ -257,6 +257,10 @@ class AppLocalizationsDe extends AppLocalizations {
       'Überprüfen Sie Ihr Twilio-Konto auf Probleme (Sperrung, Testphase-Einschränkungen, ungültige Anmeldedaten).';
 
   @override
+  String get noInternetConnection =>
+      'Keine Internetverbindung. Überprüfen Sie Ihr WLAN oder Ihre mobilen Daten und versuchen Sie es erneut.';
+
+  @override
   String get logOut => 'Abmelden';
 
   @override

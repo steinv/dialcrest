@@ -70,6 +70,7 @@
   "couldNotLoadPhoneNumbers": "Kan telefoonnummers niet laden: {error}",
   "failedToUpdateNumberConfig": "Bijwerken van nummerconfiguratie mislukt: {error}",
   "twilioAccountError": "Controleer je Twilio-account op problemen (geschorst, proefbeperkingen, ongeldige inloggegevens).",
+  "noInternetConnection": "Geen internetverbinding. Controleer je wifi of mobiele data en probeer het opnieuw.",
   "logOut": "Uitloggen",
   "logOutConfirmMessage": "Hiermee worden uw Twilio Account SID en Auth Token van dit apparaat verwijderd. U kunt op elk moment opnieuw verbinden.",
   "licenseTitle": "Licentie",

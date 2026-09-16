@@ -258,6 +258,10 @@ class AppLocalizationsEs extends AppLocalizations {
       'Revisa tu cuenta de Twilio por si hay problemas (suspensión, restricciones de prueba, credenciales no válidas).';
 
   @override
+  String get noInternetConnection =>
+      'Sin conexión a internet. Revisa tu wifi o tus datos móviles e inténtalo de nuevo.';
+
+  @override
   String get logOut => 'Cerrar sesión';
 
   @override

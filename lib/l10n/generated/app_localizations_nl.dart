@@ -256,6 +256,10 @@ class AppLocalizationsNl extends AppLocalizations {
       'Controleer je Twilio-account op problemen (geschorst, proefbeperkingen, ongeldige inloggegevens).';
 
   @override
+  String get noInternetConnection =>
+      'Geen internetverbinding. Controleer je wifi of mobiele data en probeer het opnieuw.';
+
+  @override
   String get logOut => 'Uitloggen';
 
   @override

@@ -94,8 +94,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _subscriptionError =
-            AppLocalizations.of(context)!.couldNotLoadSubscription(e.toString());
+        _subscriptionError = AppLocalizations.of(context)!
+            .couldNotLoadSubscription(describeTwilioError(e));
         _isLoadingSubscription = false;
       });
     }

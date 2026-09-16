@@ -70,6 +70,7 @@
   "couldNotLoadPhoneNumbers": "Impossible de charger les numéros de téléphone : {error}",
   "failedToUpdateNumberConfig": "Échec de la mise à jour de la configuration du numéro : {error}",
   "twilioAccountError": "Vérifiez votre compte Twilio (suspension, restrictions d'essai, identifiants invalides).",
+  "noInternetConnection": "Pas de connexion Internet. Vérifiez votre Wi-Fi ou vos données mobiles, puis réessayez.",
   "logOut": "Se déconnecter",
   "logOutConfirmMessage": "Cette action supprime votre Account SID et votre Auth Token Twilio de cet appareil. Vous pouvez vous reconnecter à tout moment.",
   "licenseTitle": "Licence",

@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -68,6 +70,40 @@ class _TwilioApiException implements Exception {
   String toString() => _message;
 }
 
+/// Whether [error] is a "you're offline / the network is unreachable" failure
+/// rather than a real server- or account-side problem — no Wi-Fi and no mobile
+/// data, a dropped connection, or a request that timed out before it got a
+/// response. These all deserve the same friendly "check your connection"
+/// message instead of a raw `SocketException` / `[unavailable]` / DioException
+/// dump. Every transport we use is covered: Twilio REST via Dio, Firebase
+/// callable functions, and Realtime Database (subscription status).
+bool isOfflineError(Object error) {
+  if (error is SocketException) return true;
+  if (error is DioException) {
+    switch (error.type) {
+      case DioExceptionType.connectionError:
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.receiveTimeout:
+        return true;
+      default:
+        // Some platforms surface an offline device as an unknown-type
+        // DioException wrapping the underlying SocketException.
+        return error.error is SocketException;
+    }
+  }
+  // FirebaseFunctionsException is itself a FirebaseException, so this covers
+  // callable functions and Realtime Database alike: an unreachable backend
+  // comes back as 'unavailable' (and occasionally 'deadline-exceeded').
+  if (error is FirebaseException) {
+    final code = error.code.toLowerCase();
+    return code.contains('unavailable') ||
+        code.contains('deadline') ||
+        code.contains('network');
+  }
+  return false;
+}
+
 /// A short, user-presentable description of [error] for the "Failed to ..."
 /// messages surfaced in the UI. [DioException.toString] dumps the request
 /// options and the raw response object, and [FirebaseFunctionsException]
@@ -78,6 +114,10 @@ class _TwilioApiException implements Exception {
 /// username" for a suspended/expired Twilio account) plus the HTTP status, or
 /// the "[plugin/code] message" prefix for a Firebase exception.
 String describeTwilioError(Object error) {
+  // Offline is the common case (Wi-Fi off, no mobile data) and has nothing to
+  // do with Twilio or the account, so give it a plain "check your connection"
+  // message before any transport-specific unwrapping below.
+  if (isOfflineError(error)) return _l10n().noInternetConnection;
   if (error is DioException) {
     final status = error.response?.statusCode;
     final body = error.response?.data;
@@ -101,7 +141,14 @@ String describeTwilioError(Object error) {
     }
     return '[${error.code}] ${error.message}';
   }
-  return error.toString();
+  // A plain `Exception('...')` stringifies as "Exception: ...". Some of these
+  // carry a genuinely user-facing message (e.g. the permission prompts in
+  // makeCall), so keep the text but drop the leaked "Exception: " prefix.
+  final text = error.toString();
+  const exceptionPrefix = 'Exception: ';
+  return text.startsWith(exceptionPrefix)
+      ? text.substring(exceptionPrefix.length)
+      : text;
 }
 
 class TwilioService {
@@ -604,7 +651,7 @@ class TwilioService {
       return phoneNumberStrings;
     } catch (e) {
       debugPrint('Error fetching phoneNumbers: $e');
-      throw Exception('Failed to make call: ${describeTwilioError(e)}');
+      throw _TwilioApiException(describeTwilioError(e));
     }
   }
 
@@ -616,7 +663,9 @@ class TwilioService {
       return await _fetchIncomingPhoneNumbers();
     } catch (e) {
       debugPrint('Error fetching incoming numbers: $e');
-      throw Exception('Failed to fetch phone numbers: ${describeTwilioError(e)}');
+      // No "Failed to ..." prefix here: the caller (Settings) already adds its
+      // own "Could not load phone numbers: ..." wrapper around this.
+      throw _TwilioApiException(describeTwilioError(e));
     }
   }
 
@@ -720,7 +769,9 @@ class TwilioService {
       return CallHistoryPage(calls: calls, nextPageUrl: nextPageUrl);
     } catch (e) {
       debugPrint('Error fetching call history: $e');
-      throw Exception('Failed to fetch call history: ${describeTwilioError(e)}');
+      // No "Failed to ..." prefix here: the caller (Call history) already adds
+      // its own "Failed to load call history: ..." wrapper around this.
+      throw _TwilioApiException(describeTwilioError(e));
     }
   }
 
@@ -881,7 +932,9 @@ class TwilioService {
     } catch (e, stackTrace) {
       debugPrint('Error making call: $e');
       debugPrintStack(stackTrace: stackTrace);
-      throw Exception('Failed to make call: ${describeTwilioError(e)}');
+      // No "Failed to ..." prefix here: the caller (Home) already adds its own
+      // "Failed to make call: ..." wrapper around this.
+      throw _TwilioApiException(describeTwilioError(e));
     }
   }
 
@@ -908,7 +961,9 @@ class TwilioService {
       );
     } catch (e) {
       debugPrint('Error sending message: $e');
-      throw Exception('Failed to send message: ${describeTwilioError(e)}');
+      // No "Failed to ..." prefix here: the caller (Messages) already adds its
+      // own "Failed to send message: ..." wrapper around this.
+      throw _TwilioApiException(describeTwilioError(e));
     }
   }
 
@@ -943,7 +998,9 @@ class TwilioService {
       return MessagePage(messages: messages, nextPageUrl: nextPageUrl);
     } catch (e) {
       debugPrint('Error fetching messages: $e');
-      throw Exception('Failed to fetch messages: ${describeTwilioError(e)}');
+      // No "Failed to ..." prefix here: the caller (Messages) already adds its
+      // own "Failed to load messages: ..." wrapper around this.
+      throw _TwilioApiException(describeTwilioError(e));
     }
   }
 
