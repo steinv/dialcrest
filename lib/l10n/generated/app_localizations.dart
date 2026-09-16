@@ -452,6 +452,24 @@ abstract class AppLocalizations {
   /// **'Purchase canceled'**
   String get purchaseCanceled;
 
+  /// No description provided for @restorePurchases.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore purchases'**
+  String get restorePurchases;
+
+  /// No description provided for @purchasesRestored.
+  ///
+  /// In en, this message translates to:
+  /// **'Subscription restored'**
+  String get purchasesRestored;
+
+  /// No description provided for @noPurchasesToRestore.
+  ///
+  /// In en, this message translates to:
+  /// **'No active subscription found to restore'**
+  String get noPurchasesToRestore;
+
   /// No description provided for @failedToUpdateMode.
   ///
   /// In en, this message translates to:

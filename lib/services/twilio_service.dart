@@ -175,10 +175,17 @@ class TwilioService {
   // pushes, so re-register whenever it fires instead of only at app startup.
   StreamSubscription<String>? _tokenRefreshSubscription;
 
+  /// Returns the store entitlement fields to attach to twilioAccessToken (empty
+  /// for a trial-only device). Injected rather than reaching into
+  /// SubscriptionService directly, to keep the two services decoupled. See
+  /// SubscriptionService.currentEntitlement.
+  final Map<String, String> Function()? entitlementProvider;
+
   TwilioService({
     required this.accountSid,
     required this.authToken,
     required StorageService storageService,
+    this.entitlementProvider,
   }) : _storageService = storageService {
     _initializeClient();
     _tokenRefreshSubscription = FirebaseMessaging.instance.onTokenRefresh.listen((_) {
@@ -513,6 +520,10 @@ class TwilioService {
         'accountSid': accountSid,
         'authToken': authToken,
         'callerId': currentPhoneNumber ?? '',
+        // Attach the device's paid store entitlement, if any, so the backend's
+        // OR gate can grant access on an active subscription once the trial has
+        // lapsed. Empty for trial-only devices.
+        ...?entitlementProvider?.call(),
       });
       final token = response.data as String;
       _cachedAccessToken = token;

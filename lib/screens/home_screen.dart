@@ -180,13 +180,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final storageService = Provider.of<StorageService>(context, listen: false);
 
     if (storageService.accountSid != null && storageService.authToken != null) {
+      _subscriptionService = SubscriptionService(
+        accountSid: storageService.accountSid!,
+        storageService: storageService,
+      );
       _twilioService = TwilioService(
         accountSid: storageService.accountSid!,
         authToken: storageService.authToken!,
         storageService: storageService,
-      );
-      _subscriptionService = SubscriptionService(
-        accountSid: storageService.accountSid!,
+        entitlementProvider: () => _subscriptionService.currentEntitlement,
       );
 
       // Set up callbacks for incoming communications

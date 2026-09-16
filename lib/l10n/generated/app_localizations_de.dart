@@ -228,6 +228,16 @@ class AppLocalizationsDe extends AppLocalizations {
   String get purchaseCanceled => 'Kauf abgebrochen';
 
   @override
+  String get restorePurchases => 'Käufe wiederherstellen';
+
+  @override
+  String get purchasesRestored => 'Abo wiederhergestellt';
+
+  @override
+  String get noPurchasesToRestore =>
+      'Kein aktives Abo zum Wiederherstellen gefunden';
+
+  @override
   String failedToUpdateMode(Object error) {
     return 'Aktualisieren des Modus fehlgeschlagen: $error';
   }

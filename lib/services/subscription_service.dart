@@ -9,6 +9,7 @@ import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:in_app_purchase_android/in_app_purchase_android.dart';
 
 import '../models/subscription_status.dart';
+import 'storage_service.dart';
 
 /// Thrown by [SubscriptionService.purchase] when the user cancels the store's
 /// purchase flow rather than the purchase failing outright, so callers can
@@ -42,6 +43,7 @@ class SubscriptionService {
   static const String _androidProductId = 'dialcrest';
 
   final String accountSid;
+  final StorageService _storageService;
   final FirebaseFunctions _firebaseFunctions = FirebaseFunctions.instanceFor(
     region: 'europe-west1',
   );
@@ -65,12 +67,37 @@ class SubscriptionService {
 
   bool get isSupported => Platform.isAndroid || Platform.isIOS;
 
-  SubscriptionService({required this.accountSid}) {
+  SubscriptionService({
+    required this.accountSid,
+    required StorageService storageService,
+  }) : _storageService = storageService {
     if (!isSupported) return;
     _purchaseSubscription = _inAppPurchase.purchaseStream.listen(
       _onPurchaseUpdate,
       onError: (e) => debugPrint('Subscription purchase stream error: $e'),
     );
+  }
+
+  /// The store entitlement to attach to a gated backend call (twilioAccessToken
+  /// / twilioRefreshSubscription), or null if this device has only ever
+  /// trialed. The backend re-verifies whatever token this returns against the
+  /// store, so a persisted-but-stale token is fine — it names the subscription,
+  /// the store reports its current state. Deliberately does not query the store
+  /// (which can prompt for sign-in), so trialing users hit no store friction.
+  ///
+  /// TODO(ios): on iOS, StoreKit 2's Transaction.currentEntitlements could
+  /// recover a paid entitlement after a reinstall WITHOUT a sign-in prompt
+  /// (unlike restorePurchases), letting us auto-detect it here instead of
+  /// requiring the explicit "Restore purchases" button. The current design
+  /// doesn't use that path — it relies on the button — so a reinstalled iOS
+  /// subscriber still has to tap Restore until this is wired up.
+  Map<String, String> get currentEntitlement {
+    final store = _storageService.paidEntitlementStore;
+    final token = _storageService.paidEntitlementToken;
+    if (store == null || token == null) return const {};
+    return store == 'app_store'
+        ? {'signedTransactionInfo': token}
+        : {'purchaseToken': token};
   }
 
   void dispose() {
@@ -259,6 +286,13 @@ class SubscriptionService {
   Future<SubscriptionStatus> _verifyPurchase(PurchaseDetails purchase) async {
     final verificationData =
         purchase.verificationData.serverVerificationData;
+    // Persist first so the entitlement survives even if verification fails
+    // transiently — later token requests re-present it and the backend
+    // re-verifies against the store.
+    await _storageService.setPaidEntitlement(
+      Platform.isIOS ? 'app_store' : 'play_store',
+      verificationData,
+    );
     final callable = Platform.isIOS
         ? 'twilioVerifyApplePurchase'
         : 'twilioVerifyGooglePurchase';
@@ -271,5 +305,29 @@ class SubscriptionService {
     return SubscriptionStatus.fromJson(
       Map<String, dynamic>.from(response.data as Map),
     );
+  }
+
+  /// Re-verifies this device's stored paid entitlement against the store and
+  /// returns its current status, or null if the device has no paid entitlement
+  /// (trial-only). Used by Settings so paid state self-heals after a renewal
+  /// instead of relying on a stale cached expiry.
+  Future<SubscriptionStatus?> refreshPaidStatus() async {
+    final entitlement = currentEntitlement;
+    if (entitlement.isEmpty) return null;
+    final response = await _firebaseFunctions
+        .httpsCallable('twilioRefreshSubscription')
+        .call({'accountSid': accountSid, ...entitlement});
+    return SubscriptionStatus.fromJson(
+      Map<String, dynamic>.from(response.data as Map),
+    );
+  }
+
+  /// Asks the store to re-deliver past purchases through the purchase stream,
+  /// so a paid user who reinstalled (losing the locally stored entitlement) can
+  /// recover it. This can prompt for store sign-in, so it's an explicit
+  /// user-initiated action (a "Restore purchases" button), never automatic.
+  Future<void> restorePurchases() async {
+    if (!isSupported) return;
+    await _inAppPurchase.restorePurchases();
   }
 }

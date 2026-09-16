@@ -227,6 +227,16 @@ class AppLocalizationsNl extends AppLocalizations {
   String get purchaseCanceled => 'Aankoop geannuleerd';
 
   @override
+  String get restorePurchases => 'Aankopen herstellen';
+
+  @override
+  String get purchasesRestored => 'Abonnement hersteld';
+
+  @override
+  String get noPurchasesToRestore =>
+      'Geen actief abonnement gevonden om te herstellen';
+
+  @override
   String failedToUpdateMode(Object error) {
     return 'Bijwerken van modus mislukt: $error';
   }

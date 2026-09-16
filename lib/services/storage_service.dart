@@ -118,6 +118,25 @@ class StorageService extends ChangeNotifier {
     await _prefs.setStringList('known_phone_numbers_$accountSid', numbers);
   }
 
+  /// The store entitlement (paid subscription) this device last verified, if
+  /// any. Deliberately NOT keyed by accountSid: a paid subscription belongs to
+  /// the person's store account, not the Twilio line, so it follows them across
+  /// whatever Twilio account they sign into. `store` is 'app_store'/'play_store'
+  /// and `token` is the StoreKit signedTransactionInfo / Play purchaseToken the
+  /// backend re-verifies. Both null for a device that has only ever trialed.
+  String? get paidEntitlementStore => _prefs.getString('paid_entitlement_store');
+  String? get paidEntitlementToken => _prefs.getString('paid_entitlement_token');
+
+  Future<void> setPaidEntitlement(String store, String token) async {
+    await _prefs.setString('paid_entitlement_store', store);
+    await _prefs.setString('paid_entitlement_token', token);
+  }
+
+  Future<void> clearPaidEntitlement() async {
+    await _prefs.remove('paid_entitlement_store');
+    await _prefs.remove('paid_entitlement_token');
+  }
+
   // Call history management
   Future<void> _loadCalls() async {
     final callsJson = _prefs.getStringList('calls') ?? [];

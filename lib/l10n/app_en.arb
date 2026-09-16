@@ -214,6 +214,13 @@
   "purchaseCanceled": "Purchase canceled",
   "@purchaseCanceled": {},
 
+  "restorePurchases": "Restore purchases",
+  "@restorePurchases": {},
+  "purchasesRestored": "Subscription restored",
+  "@purchasesRestored": {},
+  "noPurchasesToRestore": "No active subscription found to restore",
+  "@noPurchasesToRestore": {},
+
   "failedToUpdateMode": "Failed to update mode: {error}",
   "@failedToUpdateMode": {
     "placeholders": { "error": {} }

@@ -227,6 +227,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get purchaseCanceled => 'Purchase canceled';
 
   @override
+  String get restorePurchases => 'Restore purchases';
+
+  @override
+  String get purchasesRestored => 'Subscription restored';
+
+  @override
+  String get noPurchasesToRestore => 'No active subscription found to restore';
+
+  @override
   String failedToUpdateMode(Object error) {
     return 'Failed to update mode: $error';
   }

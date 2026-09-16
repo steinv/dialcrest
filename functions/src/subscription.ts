@@ -4,24 +4,59 @@ import { catchError, from, map, Observable, of, switchMap } from 'rxjs';
 import admin from 'firebase-admin';
 
 /**
- * Per-accountSid subscription record, stored at /twilio/{accountSid}/subscription.
- * `expiresAt` is the single field enforcement reads (see isSubscriptionActive);
- * everything else is bookkeeping for re-verification and the Settings UI.
+ * Subscriptions live on TWO independent axes (see SUBSCRIPTION_NOTIFICATIONS.md):
+ *
+ *  - Trial axis, keyed on accountSid at /twilio/{accountSid}/subscription.
+ *    Auto-started on registration (ensureTrialStarted), no store interaction.
+ *    A trial is a per-LINE grant: everyone sharing a Twilio account shares it.
+ *
+ *  - Paid axis, keyed on the STORE identity at /subscriptions/{store}/{id}
+ *    (Apple originalTransactionId / Google purchaseToken). A paid subscription
+ *    belongs to the PERSON (their Apple ID / Google account), not the line, so
+ *    it works on any Twilio account they sign into and two store accounts can
+ *    never overwrite each other's record.
+ *
+ * Enforcement (isSubscriptionActive) is an OR gate: an account can mint a token
+ * if its trial is still live OR the device presents an active store entitlement.
  */
 type Plan = 'trial' | 'monthly' | 'yearly';
 type Store = 'app_store' | 'play_store';
 
-interface SubscriptionRecord {
-    plan: Plan;
-    expiresAt: number;
+/**
+ * Trial record at /twilio/{accountSid}/subscription. Store fields no longer
+ * live here — paid state moved to the store-keyed PaidRecord.
+ */
+interface TrialRecord {
+    plan: 'trial';
     trialStartedAt: number;
-    autoRenew: boolean;
-    store: Store | null;
-    productId: string | null; // Apple product id, or Android base plan id — see planFromId
-    originalTransactionId: string | null; // Apple
-    purchaseToken: string | null; // Google
+    expiresAt: number;
     lastVerifiedAt: number;
 }
+
+/**
+ * Paid record at /subscriptions/{store}/{id}. `expiresAt` is the single field
+ * enforcement reads; the rest is bookkeeping for re-verification, notifications,
+ * and the Settings UI. This IS the primary record — because App Store Server
+ * Notifications / Play RTDN arrive keyed by exactly these store identifiers,
+ * no separate reverse index is needed.
+ */
+interface PaidRecord {
+    plan: 'monthly' | 'yearly';
+    expiresAt: number;
+    autoRenew: boolean;
+    store: Store;
+    productId: string; // Apple product id, or Android base plan id — see planFromId
+    originalTransactionId: string | null; // Apple
+    purchaseToken: string | null; // Google
+    linkedPurchaseToken: string | null; // Google — previous token this one renewed/replaced
+    lastAccountSid: string | null; // last Twilio account that presented this entitlement (informational)
+    lastVerifiedAt: number;
+}
+
+/** The store entitlement a device presents on a gated request, if it has one. */
+export type PresentedEntitlement =
+    | { store: 'app_store'; signedTransactionInfo: string }
+    | { store: 'play_store'; purchaseToken: string };
 
 export interface SubscriptionStatus {
     plan: Plan;
@@ -58,12 +93,32 @@ const YEARLY_PLAN_ID = 'yearly-dialcrest-license';
 /** The single Play Console product both Android base plans live under. */
 const ANDROID_PRODUCT_ID = 'dialcrest';
 
-function planFromId(id: string): Plan {
+function planFromId(id: string): 'monthly' | 'yearly' {
     return id === YEARLY_PLAN_ID ? 'yearly' : 'monthly';
 }
 
-function subscriptionRef(accountSid: string) {
+// ---------------------------------------------------------------------------
+// Database refs
+// ---------------------------------------------------------------------------
+
+/** Trial axis, keyed on accountSid. Read directly by the app (database.rules.json). */
+function trialRef(accountSid: string) {
     return admin.database().ref(`/twilio/${accountSid}/subscription`);
+}
+
+/** Paid axis, keyed on the Apple original transaction id. */
+function applePaidRef(originalTransactionId: string) {
+    return admin.database().ref(`/subscriptions/apple/${originalTransactionId}`);
+}
+
+/**
+ * Paid axis, keyed on the Google purchase token. Auto-renewals keep the same
+ * token, so a renewal updates this same record; a resubscribe after a lapse
+ * issues a new token (linked to the old via linkedPurchaseToken) and gets its
+ * own record, which is fine — the old one has already expired.
+ */
+function googlePaidRef(purchaseToken: string) {
+    return admin.database().ref(`/subscriptions/google/${encodeURIComponent(purchaseToken)}`);
 }
 
 function createdAtRef(accountSid: string) {
@@ -75,10 +130,6 @@ export function ensureAccountCreated(accountSid: string): Observable<void> {
     return from(createdAtRef(accountSid).transaction((current) => current ?? now)).pipe(map(() => undefined));
 }
 
-function upsertSubscription(accountSid: string, fields: Partial<SubscriptionRecord>): Promise<void> {
-    return subscriptionRef(accountSid).update({ ...fields, lastVerifiedAt: Date.now() });
-}
-
 function toStatus(state: { expiresAt: number; autoRenew: boolean; productId: string }): SubscriptionStatus {
     return {
         plan: planFromId(state.productId),
@@ -88,69 +139,89 @@ function toStatus(state: { expiresAt: number; autoRenew: boolean; productId: str
     };
 }
 
+// ---------------------------------------------------------------------------
+// Trial axis
+// ---------------------------------------------------------------------------
+
 /**
  * Starts a 30-day trial for `accountSid` the first time it's seen — a no-op if
- * a subscription record already exists. Called from twilioRegister, the
- * existing de-facto "account onboarded" hook (see index.ts), guarded by an
- * RTDB transaction so calling it concurrently/repeatedly never resets an
- * existing trial or overwrites a paid subscription.
+ * a trial record already exists. Called from twilioRegister, the existing
+ * de-facto "account onboarded" hook (see index.ts), guarded by an RTDB
+ * transaction so calling it concurrently/repeatedly never resets an existing
+ * trial.
  */
 export function ensureTrialStarted(accountSid: string): Observable<void> {
     const now = Date.now();
-    const trial: SubscriptionRecord = {
+    const trial: TrialRecord = {
         plan: 'trial',
         trialStartedAt: now,
         expiresAt: now + THIRTY_DAYS_MS,
-        autoRenew: false,
-        store: null,
-        productId: null,
-        originalTransactionId: null,
-        purchaseToken: null,
         lastVerifiedAt: now,
     };
-    return from(subscriptionRef(accountSid).transaction((current) => current ?? trial)).pipe(map(() => undefined));
+    return from(trialRef(accountSid).transaction((current) => current ?? trial)).pipe(map(() => undefined));
 }
 
 /**
- * True if `accountSid`'s cached expiry is still in the future. If it's in the
- * past but the record has store purchase identifiers, re-verifies against the
- * Apple/Google server APIs once before answering — so a renewal that already
- * happened but hasn't been polled yet doesn't wrongly lock the user out. A
- * bare trial (no store) just expires with no re-check.
- *
- * A missing record backfills a fresh trial rather than failing closed: normally
- * twilioRegister (see ensureTrialStarted) creates it first, but an account that
- * registered before the subscription system existed would otherwise never get
- * one and would be locked out permanently.
+ * True if `accountSid`'s trial is still live. A missing record backfills a
+ * fresh trial rather than failing closed: normally twilioRegister creates it
+ * first, but an account that registered before the subscription system existed
+ * would otherwise be locked out permanently.
  */
-export function isSubscriptionActive(accountSid: string, config: ReverificationConfig): Observable<boolean> {
-    return from(subscriptionRef(accountSid).once('value')).pipe(
+function trialActive(accountSid: string): Observable<boolean> {
+    return from(trialRef(accountSid).once('value')).pipe(
         switchMap((snapshot) => {
-            const record = snapshot.val() as SubscriptionRecord | null;
+            const record = snapshot.val() as TrialRecord | null;
             if (!record) return ensureTrialStarted(accountSid).pipe(map(() => true));
-            if (record.expiresAt > Date.now()) return of(true);
-
-            if (record.store === 'app_store' && record.originalTransactionId) {
-                return refreshAppleSubscription(accountSid, record.originalTransactionId, record.productId ?? '', config.apple).pipe(
-                    map((state) => state.expiresAt > Date.now()),
-                    catchError((e) => {
-                        console.error('Apple subscription re-verification failed', e); return of(false);
-                    }),
-                );
-            }
-            if (record.store === 'play_store' && record.purchaseToken) {
-                return refreshGoogleSubscription(
-                    accountSid, record.purchaseToken, config.googlePackageName, config.googleServiceAccountJson,
-                ).pipe(
-                    map((state) => state.expiresAt > Date.now()),
-                    catchError((e) => {
-                        console.error('Google subscription re-verification failed', e); return of(false);
-                    }),
-                );
-            }
-            return of(false);
+            return of(record.expiresAt > Date.now());
         }),
     );
+}
+
+// ---------------------------------------------------------------------------
+// Enforcement — the OR gate
+// ---------------------------------------------------------------------------
+
+/**
+ * True if the account may mint a Voice token: its trial is still live, OR the
+ * device presented a store entitlement that re-verifies as active. The trial
+ * check is a cheap cached read and runs first, so a trialing user (who has no
+ * entitlement to present) never triggers a store round-trip. Re-verifying the
+ * presented entitlement also refreshes the paid record, so a renewal that
+ * already happened but wasn't yet pushed by a notification still counts.
+ */
+export function isSubscriptionActive(
+    accountSid: string, entitlement: PresentedEntitlement | null, config: ReverificationConfig,
+): Observable<boolean> {
+    return trialActive(accountSid).pipe(
+        switchMap((active) => {
+            if (active) return of(true);
+            if (!entitlement) return of(false);
+            return verifyEntitlement(accountSid, entitlement, config).pipe(
+                map((status) => status.isActive),
+                catchError((e) => {
+                    console.error('Store entitlement re-verification failed', e); return of(false);
+                }),
+            );
+        }),
+    );
+}
+
+/**
+ * Re-verifies a presented store entitlement against the store's server API
+ * (the source of truth), updates the paid record, and returns its status.
+ * Shared by enforcement and the Settings refresh callable.
+ */
+export function verifyEntitlement(
+    accountSid: string, entitlement: PresentedEntitlement, config: ReverificationConfig,
+): Observable<SubscriptionStatus> {
+    if (entitlement.store === 'app_store') {
+        const { originalTransactionId, productId } =
+            decodeAppleSignedPayload<AppleTransactionInfo>(entitlement.signedTransactionInfo);
+        return refreshAppleSubscription(accountSid, originalTransactionId, productId, config.apple).pipe(map(toStatus));
+    }
+    return refreshGoogleSubscription(
+        accountSid, entitlement.purchaseToken, config.googlePackageName, config.googleServiceAccountJson,
+    ).pipe(map(toStatus));
 }
 
 // ---------------------------------------------------------------------------
@@ -184,6 +255,11 @@ function signAppleServerJwt(config: AppleConfig): string {
  * comes from the transport: this is only ever called on values we fetched
  * ourselves directly from Apple's server API over an authenticated HTTPS
  * call, not on anything the client hands us — see refreshAppleSubscription.
+ *
+ * NOTE: the client-presented entitlement in verifyEntitlement is decoded here
+ * only to read the originalTransactionId; the actual subscription state is then
+ * re-fetched from Apple by originalTransactionId, so a forged JWS can't grant
+ * access — the worst it can do is name a transaction Apple then reports on.
  */
 function decodeAppleSignedPayload<T>(signedPayload: string): T {
     const [, payload] = signedPayload.split('.');
@@ -243,20 +319,80 @@ function extractAppleSubscriptionState(body: AppleSubscriptionStatusesResponse, 
     return { productId: match.tx.productId, expiresAt: match.tx.expiresDate, autoRenew: match.renewal.autoRenewStatus === 1 };
 }
 
+/**
+ * Fetches authoritative state for an Apple subscription and writes it to the
+ * store-keyed paid record. `accountSid` is recorded only informationally (which
+ * account last presented this entitlement); it is not part of the key.
+ */
 function refreshAppleSubscription(
-    accountSid: string, originalTransactionId: string, productIdHint: string, config: AppleConfig,
+    accountSid: string | null, originalTransactionId: string, productIdHint: string, config: AppleConfig,
 ): Observable<{ expiresAt: number; autoRenew: boolean; productId: string }> {
     return from(fetchAppleSubscriptionStatuses(originalTransactionId, config)).pipe(
         map((body) => extractAppleSubscriptionState(body, productIdHint)),
-        switchMap((state) => from(upsertSubscription(accountSid, {
-            plan: planFromId(state.productId),
-            expiresAt: state.expiresAt,
-            autoRenew: state.autoRenew,
-            store: 'app_store',
-            productId: state.productId,
-            originalTransactionId,
-            purchaseToken: null,
-        })).pipe(map(() => state))),
+        switchMap((state) => {
+            const record: PaidRecord = {
+                plan: planFromId(state.productId),
+                expiresAt: state.expiresAt,
+                autoRenew: state.autoRenew,
+                store: 'app_store',
+                productId: state.productId,
+                originalTransactionId,
+                purchaseToken: null,
+                linkedPurchaseToken: null,
+                lastAccountSid: accountSid,
+                lastVerifiedAt: Date.now(),
+            };
+            return from(applePaidRef(originalTransactionId).update(record)).pipe(map(() => state));
+        }),
+    );
+}
+
+/**
+ * Re-verifies an Apple subscription by original transaction id — used by the
+ * App Store Server Notifications handler, which receives the id but no
+ * account/product context.
+ */
+export function refreshAppleByOriginalTransactionId(
+    originalTransactionId: string, config: AppleConfig,
+): Observable<SubscriptionStatus> {
+    // Empty product hint → extractAppleSubscriptionState falls back to the
+    // furthest-future transaction, which is the currently-active plan.
+    return refreshAppleSubscription(null, originalTransactionId, '', config).pipe(map(toStatus));
+}
+
+interface AppleNotificationPayload {
+    notificationType: string;
+    subtype?: string;
+    data?: { signedTransactionInfo?: string; signedRenewalInfo?: string };
+}
+
+/**
+ * Handles one App Store Server Notification V2 (its decoded `signedPayload`).
+ *
+ * TRUST MODEL: this only reads the `originalTransactionId` out of the
+ * notification and then re-fetches authoritative state from Apple's Server API
+ * (authenticated with our own key) — it never trusts the expiry/renewal values
+ * the notification carries. So a forged notification cannot inject subscription
+ * state; at worst it names a real transaction (which we'd refresh accurately)
+ * or a bogus one (which 404s). The remaining reason to verify the JWS signature
+ * is to reject spam/DoS at the edge — see the note in index.ts and
+ * SUBSCRIPTION_NOTIFICATIONS.md for adding app-store-server-library-based
+ * signature verification as hardening.
+ */
+export function handleAppleNotification(signedPayload: string, config: AppleConfig): Observable<void> {
+    const payload = decodeAppleSignedPayload<AppleNotificationPayload>(signedPayload);
+    const signedTx = payload.data?.signedTransactionInfo;
+    if (!signedTx) {
+        console.log(`Apple notification ${payload.notificationType} carries no transaction info; ignoring`);
+        return of(undefined);
+    }
+    const { originalTransactionId } = decodeAppleSignedPayload<AppleTransactionInfo>(signedTx);
+    return refreshAppleByOriginalTransactionId(originalTransactionId, config).pipe(
+        map(() => undefined),
+        catchError((e) => {
+            console.error(`Apple notification ${payload.notificationType} refresh failed`, e);
+            return of(undefined);
+        }),
     );
 }
 
@@ -280,8 +416,12 @@ function androidPublisherClient(serviceAccountJson: string) {
     return google.androidpublisher({ version: 'v3', auth });
 }
 
+/**
+ * Fetches authoritative state for a Google subscription and writes it to the
+ * store-keyed paid record. `accountSid` is recorded only informationally.
+ */
 function refreshGoogleSubscription(
-    accountSid: string, purchaseToken: string, packageName: string, serviceAccountJson: string,
+    accountSid: string | null, purchaseToken: string, packageName: string, serviceAccountJson: string,
 ): Observable<{ expiresAt: number; autoRenew: boolean; productId: string }> {
     const client = androidPublisherClient(serviceAccountJson);
     return from(client.purchases.subscriptionsv2.get({ packageName, token: purchaseToken })).pipe(
@@ -306,20 +446,34 @@ function refreshGoogleSubscription(
                     packageName, subscriptionId: lineItem.productId ?? ANDROID_PRODUCT_ID, token: purchaseToken, requestBody: {},
                 })) :
                 of(null);
+            const record: PaidRecord = {
+                plan: planFromId(state.productId),
+                expiresAt: state.expiresAt,
+                autoRenew: state.autoRenew,
+                store: 'play_store',
+                productId: state.productId,
+                originalTransactionId: null,
+                purchaseToken,
+                linkedPurchaseToken: purchase.linkedPurchaseToken ?? null,
+                lastAccountSid: accountSid,
+                lastVerifiedAt: Date.now(),
+            };
             return acknowledge$.pipe(
-                switchMap(() => from(upsertSubscription(accountSid, {
-                    plan: planFromId(state.productId),
-                    expiresAt: state.expiresAt,
-                    autoRenew: state.autoRenew,
-                    store: 'play_store',
-                    productId: state.productId,
-                    originalTransactionId: null,
-                    purchaseToken,
-                }))),
+                switchMap(() => from(googlePaidRef(purchaseToken).update(record))),
                 map(() => state),
             );
         }),
     );
+}
+
+/**
+ * Re-verifies a Google subscription by purchase token — used by the Play RTDN
+ * handler, which receives the token but no account context.
+ */
+export function refreshGoogleByPurchaseToken(
+    purchaseToken: string, packageName: string, serviceAccountJson: string,
+): Observable<SubscriptionStatus> {
+    return refreshGoogleSubscription(null, purchaseToken, packageName, serviceAccountJson).pipe(map(toStatus));
 }
 
 /**

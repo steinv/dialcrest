@@ -229,6 +229,15 @@ class AppLocalizationsFr extends AppLocalizations {
   String get purchaseCanceled => 'Achat annulé';
 
   @override
+  String get restorePurchases => 'Restaurer les achats';
+
+  @override
+  String get purchasesRestored => 'Abonnement restauré';
+
+  @override
+  String get noPurchasesToRestore => 'Aucun abonnement actif à restaurer';
+
+  @override
   String failedToUpdateMode(Object error) {
     return 'Échec de la mise à jour du mode : $error';
   }

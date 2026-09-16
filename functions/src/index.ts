@@ -37,11 +37,14 @@ import {
 } from './twilio';
 import {
     AppleConfig,
+    PresentedEntitlement,
     ReverificationConfig,
     ensureAccountCreated,
     ensureTrialStarted,
+    handleAppleNotification,
     isSubscriptionActive,
     verifyApplePurchase,
+    verifyEntitlement,
     verifyGooglePurchase,
 } from './subscription';
 import * as admin from 'firebase-admin';
@@ -67,6 +70,22 @@ function pebletSecrets(): PebletSecrets {
 
 function appleConfig(): AppleConfig {
     return pebletSecrets().apple_iap_key ?? ({} as AppleConfig);
+}
+
+/**
+ * Reads the optional store entitlement a device attaches to a gated request
+ * (twilioAccessToken) or a status refresh. iOS sends `signedTransactionInfo`
+ * (a StoreKit JWS), Android sends `purchaseToken`; a trialing device that has
+ * never purchased sends neither, and gets null.
+ */
+function presentedEntitlement(data: Record<string, unknown>): PresentedEntitlement | null {
+    if (typeof data['signedTransactionInfo'] === 'string' && data['signedTransactionInfo']) {
+        return { store: 'app_store', signedTransactionInfo: data['signedTransactionInfo'] };
+    }
+    if (typeof data['purchaseToken'] === 'string' && data['purchaseToken']) {
+        return { store: 'play_store', purchaseToken: data['purchaseToken'] };
+    }
+    return null;
 }
 
 function subscriptionReverificationConfig(): ReverificationConfig {
@@ -154,7 +173,7 @@ exports.twilioAccessToken = onCall(
     (req) => {
         const accountSid = req.data['accountSid'];
         return lastValueFrom(
-            isSubscriptionActive(accountSid, subscriptionReverificationConfig()).pipe(
+            isSubscriptionActive(accountSid, presentedEntitlement(req.data), subscriptionReverificationConfig()).pipe(
                 switchMap((active) => active ?
                     accessToken(accountSid, req.data['authToken'], req.data['callerId']) :
                     throwError(() => new HttpsError('failed-precondition', 'subscription-expired'))),
@@ -183,6 +202,54 @@ exports.twilioVerifyGooglePurchase = onCall(
         req.data['accountSid'], req.data['purchaseToken'], androidPackageName.value(),
         JSON.stringify(pebletSecrets().android_fcm ?? {}),
     ))
+);
+
+/**
+ * App Store Server Notifications V2 webhook. Apple POSTs `{ signedPayload }`
+ * for every subscription lifecycle event (renew, expire, refund, renewal-status
+ * change, …). Set the Production and Sandbox notification URLs to this function
+ * in App Store Connect — the Sandbox stream is what makes fast-renewing test
+ * licenses update without opening the app.
+ *
+ * No enforceAppCheck (Apple can't send an App Check token). The handler doesn't
+ * trust the payload's values — it re-fetches authoritative state from Apple by
+ * transaction id (see handleAppleNotification). HARDENING TODO: verify the JWS
+ * signature chain (app-store-server-library) to reject spam at the edge; see
+ * SUBSCRIPTION_NOTIFICATIONS.md.
+ */
+exports.twilioAppleNotifications = onRequest(
+    { region: REGION, timeoutSeconds: 30, secrets: [twilioPebletSecret] },
+    (req, res) => {
+        const signedPayload = req.body?.signedPayload;
+        if (typeof signedPayload !== 'string') {
+            res.status(400).send('missing signedPayload');
+            return;
+        }
+        lastValueFrom(handleAppleNotification(signedPayload, appleConfig()))
+            .then(() => res.status(200).send('ok'))
+            // 500 lets Apple retry a transient failure; handleAppleNotification
+            // already swallows per-transaction refresh errors, so this only
+            // fires on an unexpected/decoding failure.
+            .catch((e) => {
+                console.error('Apple notification handler error', e);
+                res.status(500).send('error');
+            });
+    }
+);
+
+/**
+ * Re-verifies the store entitlement a device presents and returns its current
+ * status, for the Settings screen to show accurate paid state (the trial side
+ * is read straight from RTDB). Same re-verification enforcement uses, so
+ * Settings self-heals after a renewal instead of showing a stale expiry.
+ */
+exports.twilioRefreshSubscription = onCall(
+    { enforceAppCheck: true, region: REGION, cors: true, timeoutSeconds: 30, secrets: [twilioPebletSecret] },
+    (req) => {
+        const entitlement = presentedEntitlement(req.data);
+        if (!entitlement) throw new HttpsError('invalid-argument', 'no-entitlement-presented');
+        return lastValueFrom(verifyEntitlement(req.data['accountSid'], entitlement, subscriptionReverificationConfig()));
+    }
 );
 
 /**
