@@ -174,16 +174,34 @@ class _DialerState extends State<Dialer> {
       child: LayoutBuilder(
         builder: (context, constraints) {
           // The portrait-tuned ratio below can ask for more vertical space than
-          // is actually available (e.g. landscape, where the Scaffold's AppBar
-          // and BottomNavigationBar eat a much bigger share of the short screen
-          // height), which overflows the Column. Derive a second estimate from
-          // the real height this widget was given — text padding (40) + text
-          // (sizeFactor/2) + 4 key rows + 3 inter-row gaps (12 each) + the extra
-          // gap (15) before the call/backspace row (sizeFactor) — and use
-          // whichever is smaller so buttons shrink to fit when space is tight.
+          // is actually available (e.g. landscape, a short phone, or a large
+          // system font, where the AppBar and BottomNavigationBar eat a bigger
+          // share of the height), which overflows the Column and pushes the
+          // call button off the bottom under the nav bar. Derive a second
+          // estimate from the real height this widget was given and use
+          // whichever is smaller, so the buttons shrink to always fit without
+          // scrolling.
+          //
+          // The Column's height is fixedOverhead + sizeFactor * scalingUnits:
+          //  - fixedOverhead: the parts that don't scale with button size —
+          //    the number's 20+20 padding, the always-reserved two-row matches
+          //    area (_matchTileHeight * 2), the 16 gap below it, a 12 gap after
+          //    each of the 4 keypad rows, the 15 gap before the call row, and
+          //    the 20 bottom gap.
+          //  - scalingUnits: the parts proportional to sizeFactor — the number
+          //    text (~0.6 of a unit tall once line height is counted), the 4
+          //    keypad rows (1 each) and the call/backspace row (1) = 5.6.
+          const fixedOverhead =
+              (20 + 20) + (_matchTileHeight * 2) + 16 + (4 * 12) + 15 + 20;
+          const scalingUnits = 0.6 + 4 + 1;
           var sizeFactor = screenSize.height * 0.09852217;
           if (constraints.maxHeight.isFinite) {
-            final fitted = (constraints.maxHeight - 40 - 3 * 12 - 15) / 5.5;
+            // Floor at 0 so an extremely short body (overhead alone exceeding
+            // the height) yields 0 rather than a negative upper bound, which
+            // would make the clamp below throw.
+            final fitted =
+                ((constraints.maxHeight - fixedOverhead) / scalingUnits)
+                    .clamp(0.0, double.infinity);
             sizeFactor = sizeFactor.clamp(0, fitted);
           }
 
