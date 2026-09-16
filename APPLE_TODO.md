@@ -60,10 +60,25 @@ To close it:
 Marked `TODO(ios)` in `lib/services/subscription_service.dart` (the
 `currentEntitlement` getter). On iOS, StoreKit 2's
 `Transaction.currentEntitlements` can recover a paid subscription after a
-reinstall **without** a sign-in prompt, unlike `restorePurchases()`. Until this
-is wired up, a reinstalled iOS subscriber must tap the "Restore purchases"
-button (which can prompt for sign-in). Android has the same reinstall gap but no
-prompt-free equivalent, so the button stays the fallback for both.
+reinstall **without** a sign-in prompt, unlike `restorePurchases()`.
+
+**Android is done** — `SubscriptionService` now calls `restorePurchases()`
+(a silent local query on Android) at startup, and `recoverEntitlement()` retries
+it silently when a dial is blocked as `subscription-expired`
+(`TwilioService._accessToken`). So an Android device that owns a subscription but
+hasn't cached it passes the enforcement gate on its first dial, before opening
+Settings.
+
+**iOS half to do:** give `recoverEntitlement()` / the startup path an iOS branch
+that reads StoreKit 2 `Transaction.currentEntitlements` (prompt-free) and
+persists the entitlement, mirroring the Android behavior. Until then:
+- iOS startup does **not** auto-restore (the plugin's `restorePurchases()` can
+  prompt), and `recoverEntitlement()` returns only what's already cached without
+  restoring — so the on-block dial retry is a no-op on iOS.
+- A reinstalled iOS subscriber must tap the "Restore purchases" button in
+  Settings (which may prompt for sign-in) before dialing works.
+
+This closes the "dials before opening Settings" gap on iOS, matching Android.
 
 ## 5. Testing (needs the account + a sandbox tester)
 

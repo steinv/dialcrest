@@ -76,6 +76,17 @@ class SubscriptionService {
       _onPurchaseUpdate,
       onError: (e) => debugPrint('Subscription purchase stream error: $e'),
     );
+    // On Android, restorePurchases() is a silent local query (no prompt), so
+    // populate the cached entitlement at startup. This lets a device that owns
+    // a subscription but hasn't cached it (fresh install / new device) pass the
+    // enforcement gate on its first dial, before ever opening Settings. iOS is
+    // left to the explicit Restore button (and the StoreKit 2 path in
+    // APPLE_TODO.md) because its restore can prompt for sign-in.
+    if (Platform.isAndroid) {
+      _inAppPurchase.restorePurchases().catchError(
+        (e) => debugPrint('Startup entitlement restore failed: $e'),
+      );
+    }
   }
 
   /// The store entitlement to attach to a gated backend call (twilioAccessToken
@@ -329,5 +340,28 @@ class SubscriptionService {
   Future<void> restorePurchases() async {
     if (!isSupported) return;
     await _inAppPurchase.restorePurchases();
+  }
+
+  /// Attempts to silently recover a paid entitlement this device owns but
+  /// hasn't cached (fresh install / new device), returning whether one is now
+  /// available. Used by the enforcement retry when a dial is blocked as
+  /// "subscription expired". Android only: restorePurchases() there is a silent
+  /// local query, so it's safe mid-dial. iOS returns whatever is already cached
+  /// without triggering a (potentially prompting) restore — its silent path is
+  /// the StoreKit 2 currentEntitlements work in APPLE_TODO.md.
+  Future<bool> recoverEntitlement() async {
+    if (currentEntitlement.isNotEmpty) return true;
+    if (!Platform.isAndroid) return false;
+    try {
+      await _inAppPurchase.restorePurchases();
+      // restorePurchases delivers purchases through the stream asynchronously;
+      // poll briefly until _handlePurchase has persisted one (~3s max).
+      for (var i = 0; i < 10 && currentEntitlement.isEmpty; i++) {
+        await Future.delayed(const Duration(milliseconds: 300));
+      }
+    } catch (e) {
+      debugPrint('Entitlement recovery failed: $e');
+    }
+    return currentEntitlement.isNotEmpty;
   }
 }

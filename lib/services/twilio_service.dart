@@ -181,11 +181,19 @@ class TwilioService {
   /// SubscriptionService.currentEntitlement.
   final Map<String, String> Function()? entitlementProvider;
 
+  /// Attempts to silently recover a paid entitlement this device owns but
+  /// hasn't cached, returning whether one is now available. Called once when a
+  /// token request is refused as subscription-expired, to cover a paid device
+  /// that dials before the startup restore finished (or before opening
+  /// Settings). See SubscriptionService.recoverEntitlement.
+  final Future<bool> Function()? entitlementRecovery;
+
   TwilioService({
     required this.accountSid,
     required this.authToken,
     required StorageService storageService,
     this.entitlementProvider,
+    this.entitlementRecovery,
   }) : _storageService = storageService {
     _initializeClient();
     _tokenRefreshSubscription = FirebaseMessaging.instance.onTokenRefresh.listen((_) {
@@ -515,6 +523,20 @@ class TwilioService {
       return cachedToken;
     }
 
+    try {
+      return await _mintAccessToken();
+    } on SubscriptionExpiredException {
+      // The trial has lapsed and we presented no active entitlement. On a device
+      // that owns a subscription but hasn't cached it yet (fresh install / new
+      // device, dialing before the startup restore finished), try to recover it
+      // silently once, then retry before surfacing the expiry to the user.
+      final recover = entitlementRecovery;
+      if (recover == null || !await recover()) rethrow;
+      return await _mintAccessToken();
+    }
+  }
+
+  Future<String> _mintAccessToken() async {
     try {
       final response = await _firebaseFunctions.httpsCallable('twilioAccessToken').call({
         'accountSid': accountSid,

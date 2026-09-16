@@ -189,6 +189,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         authToken: storageService.authToken!,
         storageService: storageService,
         entitlementProvider: () => _subscriptionService.currentEntitlement,
+        entitlementRecovery: _subscriptionService.recoverEntitlement,
       );
 
       // Set up callbacks for incoming communications
