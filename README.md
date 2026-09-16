@@ -50,6 +50,37 @@ Localized strings live in `lib/l10n/*.arb` (English, German, French, Spanish,
 Dutch) — run `flutter gen-l10n` after editing them to regenerate
 `lib/l10n/generated/`.
 
+## Cloud Functions
+
+All functions are defined in `functions/src/index.ts` (region `europe-west1`,
+project `twilio-phone-peblet`), with business logic split out into
+`functions/src/twilio.ts` (Twilio) and `functions/src/subscription.ts`
+(Apple/Google subscription verification).
+
+### Callable (invoked from the app via `FirebaseFunctions`/`httpsCallable`)
+
+| Function | What it does | Called from |
+| --- | --- | --- |
+| `twilioRegister` | Creates/updates the device's Twilio Voice push credential; also runs the "account onboarded" hook that records account creation and starts the 30-day trial. | `lib/services/twilio_service.dart` (`_register()`) |
+| `twilioAccessToken` | Mints a Twilio Voice access token, gated on an active trial/subscription. | `lib/services/twilio_service.dart` (`_mintAccessToken()`) |
+| `twilioVerifyApplePurchase` | Verifies an App Store transaction and persists the resulting entitlement/expiry. | `lib/services/subscription_service.dart` (`_verifyPurchase()`, iOS) |
+| `twilioVerifyGooglePurchase` | Verifies a Play purchase token and persists the resulting entitlement/expiry. | `lib/services/subscription_service.dart` (`_verifyPurchase()`, Android) |
+| `twilioRefreshSubscription` | Re-checks the stored entitlement and returns current subscription status (keeps Settings accurate). | `lib/services/subscription_service.dart` (`refreshPaidStatus()`) |
+| `twilioGetIncomingAppSid` | Resolves (creating if needed) the tenant's incoming TwiML App SID. | `lib/services/twilio_service.dart` (`getIncomingAppSid()`) |
+| `twilioConfigureNumbers` | Wires the given number SIDs to ring this app, restoring any deselected number's original webhook config. | `lib/services/twilio_service.dart` (`configureNumbers()`) |
+| `twilioRegisterMessagingDevice` | Registers/refreshes the device's FCM token so incoming SMS can be pushed to it. | `lib/services/twilio_service.dart` (`_registerMessagingDevice()`) |
+
+### Webhook/trigger (invoked by Twilio, Apple, or Google — never called from the app)
+
+| Function | What it does | Invoked by |
+| --- | --- | --- |
+| `twilioIncomingCall` | TwiML for an inbound PSTN call; dials the registered `<Client>` (the app) or says "temporarily unavailable" if the subscription lapsed. | Twilio, as the number's voice URL |
+| `twilioOutgoingCall` | TwiML for an outgoing call placed from the SDK; dials the destination using the account number as caller ID. | Twilio, as the TwiML App's outgoing voice URL |
+| `twilioCallStatusChanges` | Status-callback webhook that logs call lifecycle events. | Twilio, as a status callback |
+| `twilioIncomingMessage` | TwiML for inbound SMS/MMS; pushes an FCM notification to registered devices. | Twilio, as the number's SMS URL |
+| `twilioAppleNotifications` | App Store Server Notifications V2 webhook; re-verifies subscription state from Apple on any lifecycle event. | Apple (see [Subscription renewal notifications](#subscription-renewal-notifications-app-store--play)) |
+| `onPlaySubscriptionNotification` | Pub/Sub-triggered; consumes Google Play Real-time Developer Notifications and re-verifies purchase-token state. | Google Play RTDN, via Pub/Sub (see below) |
+
 ## Secrets
 
 Every backend secret this project needs lives in **one** Secret Manager
