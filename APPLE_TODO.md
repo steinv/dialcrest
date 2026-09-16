@@ -80,7 +80,32 @@ persists the entitlement, mirroring the Android behavior. Until then:
 
 This closes the "dials before opening Settings" gap on iOS, matching Android.
 
-## 5. Testing (needs the account + a sandbox tester)
+## 5. Correctness: client-presented entitlement must be a JWS (code TODO)
+
+The backend decodes the client-presented `signedTransactionInfo` with
+`decodeAppleSignedPayload` (`functions/src/subscription.ts`), which does
+`split('.')` and base64url-decodes the payload segment — i.e. it assumes a JWS.
+It's decoded both at purchase time (`verifyApplePurchase`) and on **every**
+gated call (`verifyEntitlement`, to read the `originalTransactionId`).
+
+But the Flutter client sends `purchase.verificationData.serverVerificationData`
+(`lib/services/subscription_service.dart` — `_verifyPurchase` and the
+`currentEntitlement` getter), and `in_app_purchase_storekit` defaults to
+**StoreKit 1**, whose `serverVerificationData` is the base64 **app receipt** — a
+single opaque blob with no `.`-separated segments. `decodeAppleSignedPayload`
+would throw on it, failing verification and enforcement. This is **not just a
+post-trial problem** — it breaks the initial purchase verify too; it's only
+masked today because the whole Apple path is parked (no secret/account, §2), so
+nothing runs.
+
+Resolve before un-parking iOS. Preferred fix: enable **StoreKit 2** in the
+plugin so `serverVerificationData` is the transaction's JWS — this also lines up
+with §4 (StoreKit 2 `currentEntitlements` for prompt-free recovery), so do both
+together. Alternative: keep StoreKit 1 and validate the receipt server-side via
+the App Store Server API receipt path instead of JWS-decoding it. Whichever is
+chosen, add a sandbox test that a real device-issued entitlement decodes.
+
+## 6. Testing (needs the account + a sandbox tester)
 
 - Sandbox subscription renews every ~5 min, ~6 times, then stops.
 - Confirm `twilioAppleNotifications` receives `DID_RENEW` and the store-keyed

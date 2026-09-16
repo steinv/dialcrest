@@ -123,16 +123,59 @@ function googlePaidRef(key: string) {
 }
 
 /**
- * Resolves the DB key to write a Google paid record under. If this purchase
- * links to a previous token and a record already exists there, reuse that
- * key instead of forking a new record at the new token — since every write
- * goes through this same resolution, whatever key is found there is already
- * the chain root, so one hop back is always enough.
+ * A redirect node left at a superseded purchase token, naming the chain root
+ * where the real record lives. Distinct in shape from a PaidRecord (which has
+ * no `redirectTo`), so a single read tells the two apart — see
+ * resolveGooglePaidKey / writeGooglePaidRecord.
+ */
+interface GooglePaidRedirect {
+    redirectTo: string;
+}
+
+function isGooglePaidRedirect(value: unknown): value is GooglePaidRedirect {
+    return typeof value === 'object' && value !== null &&
+        typeof (value as GooglePaidRedirect).redirectTo === 'string';
+}
+
+/**
+ * Resolves the DB key a Google paid record lives (or should live) under,
+ * following the linkedPurchaseToken chain to its root. Play rotates the token
+ * on upgrade/downgrade/resubscribe and sets the new token's linkedPurchaseToken
+ * to the token it *directly* replaced (not the chain root). The record stays at
+ * the chain root and writeGooglePaidRecord leaves a redirect at every superseded
+ * token pointing straight at that root, so one lookup of the linked token always
+ * resolves the whole chain, however long:
+ *   - no node        → the linked token is unknown; start a fresh chain here
+ *   - redirect node  → a superseded token; its record lives at `redirectTo`
+ *   - full record    → the linked token is itself the chain root
  */
 function resolveGooglePaidKey(purchaseToken: string, linkedPurchaseToken: string | null): Observable<string> {
     if (!linkedPurchaseToken) return of(purchaseToken);
     return from(googlePaidRef(linkedPurchaseToken).once('value')).pipe(
-        map((snapshot) => (snapshot.exists() ? linkedPurchaseToken : purchaseToken)),
+        map((snapshot) => {
+            if (!snapshot.exists()) return purchaseToken;
+            const value = snapshot.val();
+            return isGooglePaidRedirect(value) ? value.redirectTo : linkedPurchaseToken;
+        }),
+    );
+}
+
+/**
+ * Writes a Google paid record at its chain root and, when the active token has
+ * rotated away from that root, leaves a redirect at the active token's key so
+ * the *next* rotation — which will link back to this token — resolves to the
+ * root in one hop instead of forking a new record (see resolveGooglePaidKey).
+ * The redirect is written via a transaction so it can never clobber a full
+ * record that already happens to live at that key.
+ */
+function writeGooglePaidRecord(rootKey: string, purchaseToken: string, record: PaidRecord): Observable<void> {
+    const writeRecord$ = from(googlePaidRef(rootKey).update(record));
+    if (purchaseToken === rootKey) return writeRecord$.pipe(map(() => undefined));
+    return writeRecord$.pipe(
+        switchMap(() => from(googlePaidRef(purchaseToken).transaction(
+            (current) => (current && !isGooglePaidRedirect(current) ? current : { redirectTo: rootKey }),
+        ))),
+        map(() => undefined),
     );
 }
 
@@ -481,7 +524,7 @@ function refreshGoogleSubscription(
             });
             return acknowledge$.pipe(
                 switchMap(() => resolveGooglePaidKey(purchaseToken, linkedPurchaseToken)),
-                switchMap((key) => from(googlePaidRef(key).update(record))),
+                switchMap((key) => writeGooglePaidRecord(key, purchaseToken, record)),
                 map(() => state),
             );
         }),
