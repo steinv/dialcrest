@@ -22,6 +22,7 @@
  */
 
 import { HttpsError, onRequest, onCall } from 'firebase-functions/v2/https';
+import { onMessagePublished } from 'firebase-functions/v2/pubsub';
 import { defineSecret, defineString } from 'firebase-functions/params';
 import { lastValueFrom, switchMap, throwError } from 'rxjs';
 import {
@@ -42,6 +43,7 @@ import {
     ensureAccountCreated,
     ensureTrialStarted,
     handleAppleNotification,
+    handleGoogleNotification,
     isSubscriptionActive,
     verifyApplePurchase,
     verifyEntitlement,
@@ -234,6 +236,31 @@ exports.twilioAppleNotifications = onRequest(
                 console.error('Apple notification handler error', e);
                 res.status(500).send('error');
             });
+    }
+);
+
+/**
+ * Play Real-time Developer Notifications consumer. Google publishes
+ * subscription lifecycle events to the Pub/Sub topic set up in Play Console
+ * (see README / SUBSCRIPTION_NOTIFICATIONS.md); this re-fetches authoritative
+ * state for the affected purchase token so renewals/cancels/refunds update the
+ * record without the app being opened. Trust here is the Pub/Sub IAM grant, so
+ * there's nothing to sign-verify. The topic must match the one configured in
+ * Play Console.
+ */
+exports.onPlaySubscriptionNotification = onMessagePublished(
+    { topic: 'play-subscription-notifications', region: REGION, timeoutSeconds: 30, secrets: [twilioPebletSecret] },
+    (event) => {
+        let message: unknown;
+        try {
+            message = event.data.message.json;
+        } catch (e) {
+            console.error('Play RTDN message body was not valid JSON', e);
+            return;
+        }
+        return lastValueFrom(handleGoogleNotification(
+            message, androidPackageName.value(), JSON.stringify(pebletSecrets().android_fcm ?? {}),
+        ));
     }
 );
 

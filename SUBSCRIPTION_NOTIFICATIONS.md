@@ -22,12 +22,14 @@ Done:
   purchases" button (with l10n).
 - **Part 3 Apple** — `twilioAppleNotifications` `onRequest` webhook +
   `handleAppleNotification`.
+- **Part 3 Google** — `onPlaySubscriptionNotification` Pub/Sub consumer +
+  `handleGoogleNotification`. Requires the Play Console RTDN topic + IAM grant
+  from Part 1 to be set up (topic `play-subscription-notifications`).
 
 Pending:
 - **Apple JWS signature verification** — the handler currently uses the
   re-fetch-from-Apple trust model (see below); edge signature verification is a
   documented hardening TODO, not yet implemented.
-- **Part 3 Google** — RTDN Pub/Sub handler.
 - **Part 5** — migration of any existing per-`accountSid` paid records.
 - **iOS `currentEntitlements`** — auto-recover a paid entitlement after
   reinstall without the Restore button (TODO in `SubscriptionService`).

@@ -476,6 +476,39 @@ export function refreshGoogleByPurchaseToken(
     return refreshGoogleSubscription(null, purchaseToken, packageName, serviceAccountJson).pipe(map(toStatus));
 }
 
+interface GoogleRtdnMessage {
+    subscriptionNotification?: { notificationType: number; purchaseToken: string; subscriptionId: string };
+    voidedPurchaseNotification?: { purchaseToken: string; orderId: string };
+    testNotification?: { version: string };
+}
+
+/**
+ * Handles one Play Real-time Developer Notification (the decoded Pub/Sub
+ * message body). Both subscription events and refunds/voids carry a
+ * `purchaseToken`; we re-fetch authoritative state for it (see
+ * refreshGoogleByPurchaseToken) rather than trusting the notification's type,
+ * so any event just reconciles the record. Test notifications (Play Console's
+ * "Send test notification") carry no token and are ignored.
+ */
+export function handleGoogleNotification(
+    message: unknown, packageName: string, serviceAccountJson: string,
+): Observable<void> {
+    const rtdn = message as GoogleRtdnMessage;
+    const purchaseToken =
+        rtdn.subscriptionNotification?.purchaseToken ?? rtdn.voidedPurchaseNotification?.purchaseToken;
+    if (!purchaseToken) {
+        console.log('Google RTDN carries no subscription purchase token (test or unrelated notification); ignoring');
+        return of(undefined);
+    }
+    return refreshGoogleByPurchaseToken(purchaseToken, packageName, serviceAccountJson).pipe(
+        map(() => undefined),
+        catchError((e) => {
+            console.error('Google RTDN refresh failed', e);
+            return of(undefined);
+        }),
+    );
+}
+
 /**
  * Verifies a purchase the client just made, using the Google Play Developer
  * API (not the client-supplied purchase token alone) as the source of truth
