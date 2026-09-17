@@ -21,6 +21,9 @@
  *   firebase functions:secrets:prune                         # remove unreferenced
  */
 
+// Must be first: restores buffer.SlowBuffer (removed in Node 24+) before the
+// firebase-admin require chain below reads it at load time. See slowBufferShim.ts.
+import './slowBufferShim';
 import { HttpsError, onRequest, onCall } from 'firebase-functions/v2/https';
 import { onMessagePublished } from 'firebase-functions/v2/pubsub';
 import { defineSecret, defineString } from 'firebase-functions/params';
