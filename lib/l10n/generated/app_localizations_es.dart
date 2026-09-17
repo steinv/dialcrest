@@ -272,8 +272,11 @@ class AppLocalizationsEs extends AppLocalizations {
   String get licenseTitle => 'Licencia';
 
   @override
-  String get licenseSubtitle =>
-      'Tu suscripción de Dialcrest para esta cuenta de Twilio.';
+  String get licensePlanMonthly =>
+      'Licencia de Dialcrest — Suscripción mensual';
+
+  @override
+  String get licensePlanYearly => 'Licencia de Dialcrest — Suscripción anual';
 
   @override
   String get purchasingUnavailable =>
@@ -319,19 +322,15 @@ class AppLocalizationsEs extends AppLocalizations {
   String get perYearSuffix => '/año';
 
   @override
-  String get yearlyDiscountNote =>
-      'Con la suscripción anual obtienes 2 meses gratis. Las suscripciones se renuevan automáticamente hasta que se cancelen.';
-
-  @override
   String get modeTitle => 'Modo';
 
   @override
   String get modeSubtitleVacation =>
-      'Este dispositivo no sonará con las llamadas entrantes ni te avisará de nuevos mensajes. Esto no afecta a otras personas que usen esta cuenta de Twilio.';
+      'Este dispositivo no sonará con las llamadas entrantes ni te avisará de nuevos mensajes.';
 
   @override
   String get modeSubtitleOnline =>
-      'Este dispositivo suena con normalidad con las llamadas entrantes.';
+      'Este dispositivo suena con normalidad con las llamadas entrantes y te avisa de nuevos mensajes.';
 
   @override
   String get onlineMode => 'Modo en línea';

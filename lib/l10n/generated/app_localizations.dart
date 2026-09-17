@@ -518,11 +518,17 @@ abstract class AppLocalizations {
   /// **'License'**
   String get licenseTitle;
 
-  /// No description provided for @licenseSubtitle.
+  /// No description provided for @licensePlanMonthly.
   ///
   /// In en, this message translates to:
-  /// **'Your Dialcrest subscription for this Twilio account.'**
-  String get licenseSubtitle;
+  /// **'Dialcrest license — Monthly subscription'**
+  String get licensePlanMonthly;
+
+  /// No description provided for @licensePlanYearly.
+  ///
+  /// In en, this message translates to:
+  /// **'Dialcrest license — Yearly subscription'**
+  String get licensePlanYearly;
 
   /// No description provided for @purchasingUnavailable.
   ///
@@ -584,12 +590,6 @@ abstract class AppLocalizations {
   /// **'/year'**
   String get perYearSuffix;
 
-  /// No description provided for @yearlyDiscountNote.
-  ///
-  /// In en, this message translates to:
-  /// **'Purchasing for a year gives you 2 months free. Subscriptions renew automatically until canceled.'**
-  String get yearlyDiscountNote;
-
   /// No description provided for @modeTitle.
   ///
   /// In en, this message translates to:
@@ -599,13 +599,13 @@ abstract class AppLocalizations {
   /// No description provided for @modeSubtitleVacation.
   ///
   /// In en, this message translates to:
-  /// **'This device will not ring for incoming calls or notify you of new texts. Other people using this Twilio account are unaffected.'**
+  /// **'This device will not ring for incoming calls or notify you of new texts.'**
   String get modeSubtitleVacation;
 
   /// No description provided for @modeSubtitleOnline.
   ///
   /// In en, this message translates to:
-  /// **'This device rings for incoming calls as normal.'**
+  /// **'This device rings for incoming calls and notifies you of new texts, as normal.'**
   String get modeSubtitleOnline;
 
   /// No description provided for @onlineMode.

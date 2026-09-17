@@ -375,7 +375,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _buildSectionHeader({
     required IconData icon,
     required String title,
-    required String subtitle,
+    String? subtitle,
   }) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
@@ -392,11 +392,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   title,
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  style: const TextStyle(color: Colors.grey, fontSize: 13),
-                ),
+                if (subtitle != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(color: Colors.grey, fontSize: 13),
+                  ),
+                ],
               ],
             ),
           ),
@@ -409,11 +411,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// plus purchase buttons on platforms that support in-app purchase.
   List<Widget> _buildLicenseSection() {
     final l10n = AppLocalizations.of(context)!;
+    final status = _subscriptionStatus;
+    // Name the active paid plan in the header subtitle; a trial or lapsed
+    // subscription has no plan to show, so the header stays title-only.
+    final planSubtitle = (status != null && status.isActive && !status.isTrial)
+        ? (status.plan == 'yearly'
+              ? l10n.licensePlanYearly
+              : l10n.licensePlanMonthly)
+        : null;
     return [
       _buildSectionHeader(
         icon: Icons.workspace_premium,
         title: l10n.licenseTitle,
-        subtitle: l10n.licenseSubtitle,
+        subtitle: planSubtitle,
       ),
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -438,7 +448,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   _buildSubscriptionStatusText(_subscriptionStatus!),
                   if (!_subscriptionStatus!.isActive ||
-                      _subscriptionStatus!.isTrial) ...[
+                      _subscriptionStatus!.isTrial ||
+                      !_subscriptionStatus!.autoRenew) ...[
                     const SizedBox(height: 12),
                     if (widget.subscriptionService.isSupported)
                       _buildPurchaseButtons()
@@ -511,11 +522,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
           ],
-        ),
-        const SizedBox(height: 6),
-        Text(
-          l10n.yearlyDiscountNote,
-          style: const TextStyle(color: Colors.grey, fontSize: 12),
         ),
         if (_isPurchasing) ...[
           const SizedBox(height: 8),

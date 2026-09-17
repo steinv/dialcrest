@@ -8,7 +8,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # A version number is three numbers separated by dots, like 1.2.43
 # followed by an optional build number separated by a +.
 # Bump and build with `flutter build appbundle --release`
-version: 1.0.0+6
+version: 1.0.0+7
 
 environment:
   sdk: ^3.8.0-24.0.dev

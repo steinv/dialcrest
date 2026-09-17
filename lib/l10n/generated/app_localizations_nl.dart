@@ -270,8 +270,11 @@ class AppLocalizationsNl extends AppLocalizations {
   String get licenseTitle => 'Licentie';
 
   @override
-  String get licenseSubtitle =>
-      'Uw Dialcrest-abonnement voor dit Twilio-account.';
+  String get licensePlanMonthly =>
+      'Dialcrest-licentie — Maandelijks abonnement';
+
+  @override
+  String get licensePlanYearly => 'Dialcrest-licentie — Jaarlijks abonnement';
 
   @override
   String get purchasingUnavailable =>
@@ -317,19 +320,15 @@ class AppLocalizationsNl extends AppLocalizations {
   String get perYearSuffix => '/jaar';
 
   @override
-  String get yearlyDiscountNote =>
-      'Bij een jaarabonnement krijgt u 2 maanden gratis. Abonnementen worden automatisch verlengd totdat u opzegt.';
-
-  @override
   String get modeTitle => 'Modus';
 
   @override
   String get modeSubtitleVacation =>
-      'Dit apparaat gaat niet over bij inkomende oproepen en meldt geen nieuwe berichten. Andere gebruikers van dit Twilio-account worden hierdoor niet beïnvloed.';
+      'Dit apparaat gaat niet over bij inkomende oproepen en meldt geen nieuwe berichten.';
 
   @override
   String get modeSubtitleOnline =>
-      'Dit apparaat gaat normaal over bij inkomende oproepen.';
+      'Dit apparaat gaat normaal over bij inkomende oproepen en meldt nieuwe berichten.';
 
   @override
   String get onlineMode => 'Online modus';
