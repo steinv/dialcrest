@@ -108,7 +108,23 @@ function trialRef(accountSid: string) {
 
 /** Paid axis, keyed on the Apple original transaction id. */
 function applePaidRef(originalTransactionId: string) {
-    return admin.database().ref(`/subscriptions/apple/${originalTransactionId}`);
+    return admin.database().ref(`/subscriptions/apple/${encodeDbKey(originalTransactionId)}`);
+}
+
+/**
+ * Escapes a store identifier for use as a single Realtime Database key.
+ * `encodeURIComponent` covers every RTDB-forbidden character (`/`, `#`, `$`,
+ * `[`, `]`, and control chars) EXCEPT `.`, which it leaves untouched — so a
+ * Google purchase token containing a `.` (they do occur) would otherwise reach
+ * `.ref()` unescaped and throw "invalid path". We escape `.` explicitly
+ * afterwards; since `%` is itself percent-encoded (to `%25`), `%2E` can never
+ * collide with an escaped literal `.`, so the mapping stays injective (distinct
+ * identifiers → distinct keys). Backward compatible: an identifier with no
+ * forbidden character (e.g. Apple's numeric originalTransactionId, or a
+ * dot-free purchase token) encodes to itself.
+ */
+function encodeDbKey(key: string): string {
+    return encodeURIComponent(key).replace(/\./g, '%2E');
 }
 
 /**
@@ -119,7 +135,7 @@ function applePaidRef(originalTransactionId: string) {
  * the chain root instead of forking a new record per rotation.
  */
 function googlePaidRef(key: string) {
-    return admin.database().ref(`/subscriptions/google/${encodeURIComponent(key)}`);
+    return admin.database().ref(`/subscriptions/google/${encodeDbKey(key)}`);
 }
 
 /**

@@ -15,7 +15,16 @@ type Tree = Record<string, unknown>;
 let store: Tree = {};
 
 function segments(path: string): string[] {
-    return path.split('/').filter((s) => s.length > 0);
+    const segs = path.split('/').filter((s) => s.length > 0);
+    // Mirror real RTDB path validation so tests catch keys that were escaped for
+    // the URL but not for RTDB's own forbidden set (`.`, `#`, `$`, `[`, `]`).
+    for (const seg of segs) {
+        if (/[.#$[\]]/.test(seg)) {
+            throw new Error(`path argument was an invalid path = "${path}". ` +
+                'Paths must be non-empty strings and can\'t contain ".", "#", "$", "[", or "]"');
+        }
+    }
+    return segs;
 }
 
 function getAtPath(path: string): unknown {

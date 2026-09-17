@@ -359,6 +359,22 @@ describe('Google RTDN handling and purchase-token rotation', () => {
         expect(dbTree().subscriptions.google['never-seen-token']).toBeUndefined();
     });
 
+    it('stores a record for a purchase token containing a "." (RTDB-forbidden char)', async () => {
+        // Real Google purchase tokens can contain a "." — which encodeURIComponent
+        // leaves unescaped, so it used to reach RTDB's ref() unescaped and throw
+        // "invalid path". The record must persist and be findable under the token.
+        const dottedToken = 'gmbfmblojgdiagpldacpahno.AO-J1OwMHhWyTy6A';
+        googleMocks().subscriptionsV2Get.mockResolvedValueOnce(googleSubscriptionV2Response({
+            expiryTime: new Date(1000).toISOString(), autoRenewEnabled: true, basePlanId: 'monthly-dialcrest-license',
+        }));
+        await lastValueFrom(verifyGooglePurchase('AC1', dottedToken, 'pkg', '{}'));
+        const googleTree = dbTree().subscriptions.google as Record<string, { plan?: string }>;
+        const record = Object.values(googleTree).find((v) => v.plan === 'monthly');
+        expect(record).toBeDefined();
+        // The stored key must not contain a literal "." (the mock would have thrown otherwise).
+        expect(Object.keys(googleTree).every((k) => !k.includes('.'))).toBe(true);
+    });
+
     it('follows a chain of rotated purchase tokens back to the original record instead of forking new ones', async () => {
         // Original purchase: token A.
         googleMocks().subscriptionsV2Get.mockResolvedValueOnce(googleSubscriptionV2Response({
