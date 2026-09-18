@@ -65,27 +65,27 @@ class AppLocalizationsFr extends AppLocalizations {
   String get callTypeOutgoing => 'Sortant';
 
   @override
-  String get missedSuffix => ' (Manqué)';
-
-  @override
   String get addToContacts => 'Ajouter aux contacts';
 
   @override
-  String get callBack => 'Rappeler';
+  String get message => 'Message';
 
   @override
-  String callDetailsType(Object type) {
-    return 'Type : $type';
-  }
+  String get call => 'Appeler';
 
   @override
-  String callDetailsTime(Object time) {
-    return 'Heure : $time';
-  }
+  String get deleteFromHistory => 'Supprimer de l\'historique';
 
   @override
-  String callDetailsDuration(Object duration) {
-    return 'Durée : $duration';
+  String get deleteCallConfirm =>
+      'Supprimer définitivement cet appel de Twilio ? Cette action est irréversible.';
+
+  @override
+  String get callDeleted => 'Appel supprimé';
+
+  @override
+  String failedToDeleteCall(Object error) {
+    return 'Échec de la suppression de l\'appel : $error';
   }
 
   @override

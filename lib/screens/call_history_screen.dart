@@ -7,16 +7,21 @@ import '../services/storage_service.dart';
 import '../services/contacts_service.dart';
 import '../services/twilio_service.dart';
 
+/// The actions offered by the long-press/tap sheet on a call-history row.
+enum _CallAction { addContact, message, call, delete }
+
 /// Call history pulled page-by-page from the Twilio REST API, with infinite
 /// scroll (loads the next page as the user nears the bottom) and pull-to-refresh.
 class CallHistoryScreen extends StatefulWidget {
   final TwilioService twilioService;
   final void Function(String number) onCall;
+  final void Function(String number) onMessage;
 
   const CallHistoryScreen({
     super.key,
     required this.twilioService,
     required this.onCall,
+    required this.onMessage,
   });
 
   @override
@@ -248,54 +253,123 @@ class CallHistoryScreenState extends State<CallHistoryScreen> {
         icon: Icon(Icons.call, color: Theme.of(context).colorScheme.secondary),
         onPressed: () => widget.onCall(call.phoneNumber),
       ),
-      onTap: () =>
-          _showCallDetails(call, contactName, formattedDate, durationText),
+      onTap: () => _showCallActions(call, contactName, subtitle),
     );
   }
 
-  void _showCallDetails(
+  /// Tapping a call opens this action sheet (mirrors the message-bubble one):
+  /// Add contact (only when the number isn't already a contact), Message, Call,
+  /// and Delete from history. Delete is the only action that then asks for
+  /// confirmation, since it permanently removes the call from Twilio.
+  Future<void> _showCallActions(
     PhoneCall call,
     String? contactName,
-    String formattedDate,
-    String durationText,
-  ) {
+    String subtitle,
+  ) async {
     final l10n = AppLocalizations.of(context)!;
-    final typeText =
-        '${call.isIncoming ? l10n.callTypeIncoming : l10n.callTypeOutgoing}${call.isMissed ? l10n.missedSuffix : ""}';
-    showDialog(
+    final colorScheme = Theme.of(context).colorScheme;
+    final action = await showModalBottomSheet<_CallAction>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(contactName ?? call.phoneNumber),
-        content: Column(
+      builder: (context) => SafeArea(
+        child: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(l10n.callDetailsType(typeText)),
-            Text(l10n.callDetailsTime(formattedDate)),
-            if (durationText.isNotEmpty)
-              Text(l10n.callDetailsDuration(durationText)),
+            ListTile(
+              title: Text(contactName ?? call.phoneNumber),
+              subtitle: Text(subtitle),
+            ),
+            const Divider(height: 1),
+            if (contactName == null)
+              ListTile(
+                leading: const Icon(Icons.person_add_alt_1_outlined),
+                title: Text(l10n.addToContacts),
+                onTap: () => Navigator.of(context).pop(_CallAction.addContact),
+              ),
+            ListTile(
+              leading: const Icon(Icons.message_outlined),
+              title: Text(l10n.message),
+              onTap: () => Navigator.of(context).pop(_CallAction.message),
+            ),
+            ListTile(
+              leading: const Icon(Icons.call_outlined),
+              title: Text(l10n.call),
+              onTap: () => Navigator.of(context).pop(_CallAction.call),
+            ),
+            ListTile(
+              leading: Icon(Icons.delete_outline, color: colorScheme.error),
+              title: Text(
+                l10n.deleteFromHistory,
+                style: TextStyle(color: colorScheme.error),
+              ),
+              onTap: () => Navigator.of(context).pop(_CallAction.delete),
+            ),
           ],
         ),
+      ),
+    );
+    if (action == null || !mounted) return;
+    switch (action) {
+      case _CallAction.addContact:
+        Provider.of<ContactsService>(context, listen: false)
+            .openAddContact(call.phoneNumber);
+      case _CallAction.message:
+        widget.onMessage(call.phoneNumber);
+      case _CallAction.call:
+        widget.onCall(call.phoneNumber);
+      case _CallAction.delete:
+        // Only here does the destructive-delete warning appear.
+        await _deleteCall(call);
+    }
+  }
+
+  /// Confirmation gate for the permanent delete. Deletion goes straight to
+  /// Twilio and can't be undone (see [TwilioService.deleteCall]), so it's
+  /// always gated behind this. Returns whether the user confirmed.
+  Future<bool> _confirmDelete(String title, String message) async {
+    final l10n = AppLocalizations.of(context)!;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
         actions: [
-          if (contactName == null)
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-                Provider.of<ContactsService>(context, listen: false)
-                    .openAddContact(call.phoneNumber);
-              },
-              child: Text(l10n.addToContacts),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(l10n.cancel),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
             ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              widget.onCall(call.phoneNumber);
-            },
-            child: Text(l10n.callBack),
+            child: Text(l10n.delete),
           ),
         ],
       ),
     );
+    return confirmed ?? false;
   }
 
+  /// Permanently deletes a call from Twilio (after confirmation), then removes
+  /// it from the in-memory list and the offline cache.
+  Future<void> _deleteCall(PhoneCall call) async {
+    final l10n = AppLocalizations.of(context)!;
+    if (!await _confirmDelete(l10n.deleteFromHistory, l10n.deleteCallConfirm)) {
+      return;
+    }
+    try {
+      await widget.twilioService.deleteCall(call.id);
+      if (!mounted) return;
+      setState(() => _calls.removeWhere((c) => c.id == call.id));
+      await Provider.of<StorageService>(context, listen: false).setCalls(_calls);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(l10n.callDeleted)));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.failedToDeleteCall(e.toString()))),
+      );
+    }
+  }
 }

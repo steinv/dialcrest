@@ -741,6 +741,27 @@ class TwilioService {
   /// [pageSize] calls even when more pages remain — same tradeoff as the
   /// existing client-leg filtering below.
   /// https://www.twilio.com/docs/voice/api/call-resource#read-multiple-call-resources
+
+  /// Permanently deletes a call record from Twilio via `DELETE /Calls/{Sid}.json`,
+  /// removing it from call history. Like [deleteMessage], this is irreversible
+  /// and account-wide (it also disappears from the Twilio console/logs). Twilio
+  /// only allows deleting calls in a terminal state (completed/busy/failed/
+  /// no-answer/canceled); an in-progress call is rejected, surfaced here like
+  /// any other Twilio error. Only this call's PSTN leg (the one history shows)
+  /// is deleted — its paired `<Client>` leg is filtered out of history anyway
+  /// (see [getCallHistory]), so the call stops appearing.
+  /// https://www.twilio.com/docs/voice/api/call-resource#delete-a-call-resource
+  Future<void> deleteCall(String sid) async {
+    try {
+      await _dio.delete('/Calls/$sid.json');
+    } catch (e) {
+      debugPrint('Error deleting call $sid: $e');
+      // No "Failed to ..." prefix here: the caller (Call history) already adds
+      // its own "Failed to delete call: ..." wrapper around this.
+      throw _TwilioApiException(describeTwilioError(e));
+    }
+  }
+
   Future<CallHistoryPage> getCallHistory({int pageSize = 50, String? pageUrl}) async {
     try {
       final response = pageUrl != null
