@@ -1,7 +1,7 @@
 import * as express from 'express';
 import twilio, { Twilio, twiml } from 'twilio';
 import { Request } from 'firebase-functions/https';
-import { forkJoin, from, map, Observable, of, switchMap, tap } from 'rxjs';
+import { catchError, forkJoin, from, map, Observable, of, switchMap, tap } from 'rxjs';
 import { CredentialInstance, CredentialPushType } from 'twilio/lib/rest/conversations/v1/credential';
 import { IncomingPhoneNumberInstance } from 'twilio/lib/rest/api/v2010/account/incomingPhoneNumber';
 import AccessToken, { AccessTokenOptions } from 'twilio/lib/jwt/AccessToken';
@@ -32,17 +32,29 @@ function clientIdentity(accountSid: string): string {
     return accountSid;
 }
 
+function twimlAppSidRef(accountSid: string, direction: 'outgoing' | 'incoming') {
+    return admin.database().ref(`/twilio/${accountSid}/twiml-app-sid/${direction}`);
+}
+
 /**
  * Find (or create) one of the tenant's two TwiML Apps (outgoing/incoming) and
  * cache its SID in RTDB under /twilio/{accountSid}/twiml-app-sid/{direction}.
  * The app's voice URL points at the matching webhook; the SID is used as
  * outgoingApplicationSid in the grant (outgoing) or voiceApplicationSid on
  * each phone number (incoming).
+ *
+ * The cached SID is trusted without re-checking it against Twilio on every
+ * call — the app is long-lived and this runs on hot paths (e.g. every voice
+ * token mint). If a tenant deletes the app directly in the Twilio console the
+ * cache goes stale, but that surfaces at the point of use: configureNumber's
+ * update fails with error 22108 (Invalid Application SID), which clears the
+ * cache (see configureSelectedNumbers). An empty cache then lands here and
+ * find-or-create repoints it at a live app.
  */
 function getOrCreateTwimlApp(
     client: Twilio, accountSid: string, direction: 'outgoing' | 'incoming', friendlyName: string, voiceUrl: string,
 ): Observable<string> {
-    const ref = admin.database().ref(`/twilio/${accountSid}/twiml-app-sid/${direction}`);
+    const ref = twimlAppSidRef(accountSid, direction);
     return from(ref.once('value')).pipe(
         switchMap((snapshot) => {
             const cached = snapshot.val() as string | null;
@@ -192,33 +204,47 @@ export function configureSelectedNumbers(
     const db = admin.database();
     const selected = new Set(selectedSids);
 
-    return getOrCreateTwimlApp(client, accountSid, 'incoming', TWIML_APP_FRIENDLY_NAME_INCOMING, INCOMING_CALL_URL).pipe(
-        switchMap((incomingAppSid) => from(client.incomingPhoneNumbers.list({ limit: 1000 })).pipe(
-            switchMap((numbers) => {
-                const changes = numbers.map((number) => {
-                    // Both webhooks must match: a number voice-configured by an older build
-                    // that predates SMS support has the right voiceApplicationSid but no
-                    // smsUrl, and must be re-run through configureNumber to gain it.
-                    const isConfigured = number.voiceApplicationSid === incomingAppSid &&
-                        number.smsUrl === INCOMING_MESSAGE_URL;
-                    const shouldBeConfigured = selected.has(number.sid);
-                    if (shouldBeConfigured && !isConfigured) {
-                        return configureNumber(client, db, accountSid, number, incomingAppSid)
-                            .pipe(map(() => ({ sid: number.sid, action: 'configured' as const })));
-                    }
-                    if (!shouldBeConfigured && isConfigured) {
-                        return restoreNumber(client, db, accountSid, number.sid)
-                            .pipe(map(() => ({ sid: number.sid, action: 'restored' as const })));
-                    }
-                    return of({ sid: number.sid, action: 'unchanged' as const });
-                });
-                return changes.length === 0 ? of([]) : forkJoin(changes);
-            }),
-        )),
-        map((results) => ({
-            configured: results.filter((r) => r.action === 'configured').map((r) => r.sid),
-            restored: results.filter((r) => r.action === 'restored').map((r) => r.sid),
-        })),
+    const attempt = (): Observable<{ configured: string[]; restored: string[] }> =>
+        getOrCreateTwimlApp(client, accountSid, 'incoming', TWIML_APP_FRIENDLY_NAME_INCOMING, INCOMING_CALL_URL).pipe(
+            switchMap((incomingAppSid) => from(client.incomingPhoneNumbers.list({ limit: 1000 })).pipe(
+                switchMap((numbers) => {
+                    const changes = numbers.map((number) => {
+                        // Both webhooks must match: a number voice-configured by an older build
+                        // that predates SMS support has the right voiceApplicationSid but no
+                        // smsUrl, and must be re-run through configureNumber to gain it.
+                        const isConfigured = number.voiceApplicationSid === incomingAppSid &&
+                            number.smsUrl === INCOMING_MESSAGE_URL;
+                        const shouldBeConfigured = selected.has(number.sid);
+                        if (shouldBeConfigured && !isConfigured) {
+                            return configureNumber(client, db, accountSid, number, incomingAppSid)
+                                .pipe(map(() => ({ sid: number.sid, action: 'configured' as const })));
+                        }
+                        if (!shouldBeConfigured && isConfigured) {
+                            return restoreNumber(client, db, accountSid, number.sid)
+                                .pipe(map(() => ({ sid: number.sid, action: 'restored' as const })));
+                        }
+                        return of({ sid: number.sid, action: 'unchanged' as const });
+                    });
+                    return changes.length === 0 ? of([]) : forkJoin(changes);
+                }),
+            )),
+            map((results) => ({
+                configured: results.filter((r) => r.action === 'configured').map((r) => r.sid),
+                restored: results.filter((r) => r.action === 'restored').map((r) => r.sid),
+            })),
+        );
+
+    // A cached incoming app SID whose app the tenant deleted in the Twilio
+    // console makes configureNumber fail with 22108 (Invalid Application SID) —
+    // the one point where Twilio tells us the cache is wrong. Drop the stale
+    // cache and retry once: getOrCreateTwimlApp then finds an empty cache and
+    // recreates the app before we re-point the numbers.
+    return attempt().pipe(
+        catchError((e: { code?: number }) => {
+            if (e?.code !== 22108) throw e;
+            console.warn(`Incoming TwiML App for ${accountSid} invalid (22108), clearing cache and retrying`);
+            return from(twimlAppSidRef(accountSid, 'incoming').remove()).pipe(switchMap(() => attempt()));
+        }),
     );
 }
 
