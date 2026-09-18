@@ -197,6 +197,44 @@ class AppLocalizationsNl extends AppLocalizations {
   }
 
   @override
+  String get delete => 'Verwijderen';
+
+  @override
+  String get share => 'Delen';
+
+  @override
+  String get copy => 'Kopiëren';
+
+  @override
+  String get copiedToClipboard => 'Gekopieerd naar klembord';
+
+  @override
+  String get deleteMessage => 'Bericht verwijderen';
+
+  @override
+  String get deleteConversation => 'Gesprek verwijderen';
+
+  @override
+  String get deleteMessageConfirm =>
+      'Dit bericht definitief verwijderen uit Twilio? Dit kan niet ongedaan worden gemaakt.';
+
+  @override
+  String deleteConversationConfirm(Object count) {
+    return 'Dit hele gesprek ($count berichten) definitief verwijderen uit Twilio? Dit kan niet ongedaan worden gemaakt.';
+  }
+
+  @override
+  String get messageDeleted => 'Bericht verwijderd';
+
+  @override
+  String get conversationDeleted => 'Gesprek verwijderd';
+
+  @override
+  String failedToDeleteMessage(Object error) {
+    return 'Verwijderen van bericht mislukt: $error';
+  }
+
+  @override
   String get noMessagesYet => 'Nog geen berichten';
 
   @override

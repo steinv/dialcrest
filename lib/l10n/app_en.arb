@@ -185,6 +185,43 @@
     "placeholders": { "error": {} }
   },
 
+  "delete": "Delete",
+  "@delete": {},
+
+  "share": "Share",
+  "@share": {},
+
+  "copy": "Copy",
+  "@copy": {},
+
+  "copiedToClipboard": "Copied to clipboard",
+  "@copiedToClipboard": {},
+
+  "deleteMessage": "Delete message",
+  "@deleteMessage": {},
+
+  "deleteConversation": "Delete conversation",
+  "@deleteConversation": {},
+
+  "deleteMessageConfirm": "Permanently delete this message from Twilio? This can't be undone.",
+  "@deleteMessageConfirm": {},
+
+  "deleteConversationConfirm": "Permanently delete this whole conversation ({count} messages) from Twilio? This can't be undone.",
+  "@deleteConversationConfirm": {
+    "placeholders": { "count": {} }
+  },
+
+  "messageDeleted": "Message deleted",
+  "@messageDeleted": {},
+
+  "conversationDeleted": "Conversation deleted",
+  "@conversationDeleted": {},
+
+  "failedToDeleteMessage": "Failed to delete message: {error}",
+  "@failedToDeleteMessage": {
+    "placeholders": { "error": {} }
+  },
+
   "noMessagesYet": "No messages yet",
   "@noMessagesYet": {},
 

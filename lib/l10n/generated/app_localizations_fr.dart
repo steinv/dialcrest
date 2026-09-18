@@ -199,6 +199,44 @@ class AppLocalizationsFr extends AppLocalizations {
   }
 
   @override
+  String get delete => 'Supprimer';
+
+  @override
+  String get share => 'Partager';
+
+  @override
+  String get copy => 'Copier';
+
+  @override
+  String get copiedToClipboard => 'Copié dans le presse-papiers';
+
+  @override
+  String get deleteMessage => 'Supprimer le message';
+
+  @override
+  String get deleteConversation => 'Supprimer la conversation';
+
+  @override
+  String get deleteMessageConfirm =>
+      'Supprimer définitivement ce message de Twilio ? Cette action est irréversible.';
+
+  @override
+  String deleteConversationConfirm(Object count) {
+    return 'Supprimer définitivement toute cette conversation ($count messages) de Twilio ? Cette action est irréversible.';
+  }
+
+  @override
+  String get messageDeleted => 'Message supprimé';
+
+  @override
+  String get conversationDeleted => 'Conversation supprimée';
+
+  @override
+  String failedToDeleteMessage(Object error) {
+    return 'Échec de la suppression du message : $error';
+  }
+
+  @override
   String get noMessagesYet => 'Pas encore de messages';
 
   @override

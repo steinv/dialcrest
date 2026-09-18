@@ -404,6 +404,72 @@ abstract class AppLocalizations {
   /// **'Failed to send message: {error}'**
   String failedToSendMessage(Object error);
 
+  /// No description provided for @delete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get delete;
+
+  /// No description provided for @share.
+  ///
+  /// In en, this message translates to:
+  /// **'Share'**
+  String get share;
+
+  /// No description provided for @copy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy'**
+  String get copy;
+
+  /// No description provided for @copiedToClipboard.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied to clipboard'**
+  String get copiedToClipboard;
+
+  /// No description provided for @deleteMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete message'**
+  String get deleteMessage;
+
+  /// No description provided for @deleteConversation.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete conversation'**
+  String get deleteConversation;
+
+  /// No description provided for @deleteMessageConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Permanently delete this message from Twilio? This can\'t be undone.'**
+  String get deleteMessageConfirm;
+
+  /// No description provided for @deleteConversationConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Permanently delete this whole conversation ({count} messages) from Twilio? This can\'t be undone.'**
+  String deleteConversationConfirm(Object count);
+
+  /// No description provided for @messageDeleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Message deleted'**
+  String get messageDeleted;
+
+  /// No description provided for @conversationDeleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Conversation deleted'**
+  String get conversationDeleted;
+
+  /// No description provided for @failedToDeleteMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to delete message: {error}'**
+  String failedToDeleteMessage(Object error);
+
   /// No description provided for @noMessagesYet.
   ///
   /// In en, this message translates to:

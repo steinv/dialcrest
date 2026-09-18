@@ -95,22 +95,35 @@ function originalConfigRef(db: Database, accountSid: string, numberSid: string) 
  * setup with some other TwiML App would otherwise silently never reach
  * twilioIncomingCall. Routing through our own App sidesteps that precedence
  * fight entirely instead of just clearing voiceUrl.
+ *
+ * The snapshot is written only when one doesn't already exist. configureNumber
+ * can run again on a number we've partially configured before (e.g. an older
+ * build set voiceApplicationSid but not smsUrl, and the broadened isConfigured
+ * check now re-runs it to repair the SMS webhook). Re-snapshotting there would
+ * capture our OWN values as the "original", corrupting a later restoreNumber.
  */
 function configureNumber(
     client: Twilio, db: Database, accountSid: string, number: IncomingPhoneNumberInstance, incomingAppSid: string,
 ): Observable<void> {
-    const original: OriginalNumberConfig = {
-        voiceUrl: number.voiceUrl ?? '',
-        voiceMethod: number.voiceMethod ?? 'POST',
-        voiceApplicationSid: number.voiceApplicationSid ?? '',
-        voiceFallbackUrl: number.voiceFallbackUrl ?? '',
-        voiceFallbackMethod: number.voiceFallbackMethod ?? 'POST',
-        statusCallback: number.statusCallback ?? '',
-        statusCallbackMethod: number.statusCallbackMethod ?? 'POST',
-        smsUrl: number.smsUrl ?? '',
-        smsMethod: number.smsMethod ?? 'POST',
-    };
-    return from(originalConfigRef(db, accountSid, number.sid).set(original)).pipe(
+    const ref = originalConfigRef(db, accountSid, number.sid);
+    const snapshot$ = from(ref.once('value')).pipe(
+        switchMap((snapshot) => {
+            if (snapshot.exists()) return of(undefined);
+            const original: OriginalNumberConfig = {
+                voiceUrl: number.voiceUrl ?? '',
+                voiceMethod: number.voiceMethod ?? 'POST',
+                voiceApplicationSid: number.voiceApplicationSid ?? '',
+                voiceFallbackUrl: number.voiceFallbackUrl ?? '',
+                voiceFallbackMethod: number.voiceFallbackMethod ?? 'POST',
+                statusCallback: number.statusCallback ?? '',
+                statusCallbackMethod: number.statusCallbackMethod ?? 'POST',
+                smsUrl: number.smsUrl ?? '',
+                smsMethod: number.smsMethod ?? 'POST',
+            };
+            return from(ref.set(original));
+        }),
+    );
+    return snapshot$.pipe(
         switchMap(() => from(client.incomingPhoneNumbers(number.sid).update({
             voiceApplicationSid: incomingAppSid,
             voiceUrl: '',
@@ -164,7 +177,11 @@ export function configureSelectedNumbers(
         switchMap((incomingAppSid) => from(client.incomingPhoneNumbers.list({ limit: 1000 })).pipe(
             switchMap((numbers) => {
                 const changes = numbers.map((number) => {
-                    const isConfigured = number.voiceApplicationSid === incomingAppSid;
+                    // Both webhooks must match: a number voice-configured by an older build
+                    // that predates SMS support has the right voiceApplicationSid but no
+                    // smsUrl, and must be re-run through configureNumber to gain it.
+                    const isConfigured = number.voiceApplicationSid === incomingAppSid &&
+                        number.smsUrl === INCOMING_MESSAGE_URL;
                     const shouldBeConfigured = selected.has(number.sid);
                     if (shouldBeConfigured && !isConfigured) {
                         return configureNumber(client, db, accountSid, number, incomingAppSid)

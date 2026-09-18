@@ -198,6 +198,44 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
+  String get delete => 'Löschen';
+
+  @override
+  String get share => 'Teilen';
+
+  @override
+  String get copy => 'Kopieren';
+
+  @override
+  String get copiedToClipboard => 'In die Zwischenablage kopiert';
+
+  @override
+  String get deleteMessage => 'Nachricht löschen';
+
+  @override
+  String get deleteConversation => 'Unterhaltung löschen';
+
+  @override
+  String get deleteMessageConfirm =>
+      'Diese Nachricht endgültig aus Twilio löschen? Das kann nicht rückgängig gemacht werden.';
+
+  @override
+  String deleteConversationConfirm(Object count) {
+    return 'Diese gesamte Unterhaltung ($count Nachrichten) endgültig aus Twilio löschen? Das kann nicht rückgängig gemacht werden.';
+  }
+
+  @override
+  String get messageDeleted => 'Nachricht gelöscht';
+
+  @override
+  String get conversationDeleted => 'Unterhaltung gelöscht';
+
+  @override
+  String failedToDeleteMessage(Object error) {
+    return 'Löschen der Nachricht fehlgeschlagen: $error';
+  }
+
+  @override
   String get noMessagesYet => 'Noch keine Nachrichten';
 
   @override

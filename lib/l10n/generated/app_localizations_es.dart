@@ -199,6 +199,44 @@ class AppLocalizationsEs extends AppLocalizations {
   }
 
   @override
+  String get delete => 'Eliminar';
+
+  @override
+  String get share => 'Compartir';
+
+  @override
+  String get copy => 'Copiar';
+
+  @override
+  String get copiedToClipboard => 'Copiado al portapapeles';
+
+  @override
+  String get deleteMessage => 'Eliminar mensaje';
+
+  @override
+  String get deleteConversation => 'Eliminar conversación';
+
+  @override
+  String get deleteMessageConfirm =>
+      '¿Eliminar permanentemente este mensaje de Twilio? Esta acción no se puede deshacer.';
+
+  @override
+  String deleteConversationConfirm(Object count) {
+    return '¿Eliminar permanentemente toda esta conversación ($count mensajes) de Twilio? Esta acción no se puede deshacer.';
+  }
+
+  @override
+  String get messageDeleted => 'Mensaje eliminado';
+
+  @override
+  String get conversationDeleted => 'Conversación eliminada';
+
+  @override
+  String failedToDeleteMessage(Object error) {
+    return 'Error al eliminar el mensaje: $error';
+  }
+
+  @override
   String get noMessagesYet => 'Aún no hay mensajes';
 
   @override

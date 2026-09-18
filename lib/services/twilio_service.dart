@@ -48,6 +48,20 @@ class MessagePage {
   MessagePage({required this.messages, this.nextPageUrl});
 }
 
+/// Outcome of a bulk [TwilioService.deleteMessages] (e.g. deleting a whole
+/// spam conversation): the SIDs that were actually removed from Twilio, and
+/// the first error hit, if any. [deleted] is populated even when [error] is
+/// set, so the caller can still prune the messages that did get deleted from
+/// its cache before surfacing the failure.
+class BulkDeleteResult {
+  final List<String> deleted;
+  final String? error;
+
+  BulkDeleteResult({required this.deleted, this.error});
+
+  bool get hadError => error != null;
+}
+
 /// Thrown when twilioAccessToken refuses to mint a token because this
 /// account's trial/subscription has expired (functions/src/index.ts,
 /// 'failed-precondition' / 'subscription-expired'). Kept unwrapped by
@@ -1002,6 +1016,46 @@ class TwilioService {
       // own "Failed to load messages: ..." wrapper around this.
       throw _TwilioApiException(describeTwilioError(e));
     }
+  }
+
+  /// Permanently deletes a message from Twilio — its body and any MMS media —
+  /// via `DELETE /Messages/{Sid}.json`. This is irreversible and account-wide:
+  /// the message vanishes from every device sharing this Twilio account and
+  /// from the Twilio console/logs, not just this app's cache. Twilio only
+  /// allows deleting messages in a terminal state (delivered/received/failed/
+  /// undelivered); inbound spam always qualifies, but an outbound message
+  /// still in flight is rejected with a 409, surfaced here like any other
+  /// Twilio error.
+  /// https://www.twilio.com/docs/sms/api/message-resource#delete-a-message-resource
+  Future<void> deleteMessage(String sid) async {
+    try {
+      await _dio.delete('/Messages/$sid.json');
+    } catch (e) {
+      debugPrint('Error deleting message $sid: $e');
+      // No "Failed to ..." prefix here: the caller (Messages) already adds its
+      // own "Failed to delete message: ..." wrapper around this.
+      throw _TwilioApiException(describeTwilioError(e));
+    }
+  }
+
+  /// Deletes every message in [sids] from Twilio (see [deleteMessage]), used to
+  /// wipe a whole spam conversation at once. Runs the deletes sequentially so a
+  /// long thread doesn't fire a burst of concurrent DELETEs at the REST API,
+  /// and — unlike [deleteMessage] — never throws: it reports which SIDs were
+  /// removed alongside the first error, so the caller can prune the deleted
+  /// ones from its cache even on a partial failure.
+  Future<BulkDeleteResult> deleteMessages(Iterable<String> sids) async {
+    final deleted = <String>[];
+    for (final sid in sids) {
+      try {
+        await _dio.delete('/Messages/$sid.json');
+        deleted.add(sid);
+      } catch (e) {
+        debugPrint('Error deleting message $sid: $e');
+        return BulkDeleteResult(deleted: deleted, error: describeTwilioError(e));
+      }
+    }
+    return BulkDeleteResult(deleted: deleted);
   }
 
   Future<Message> _messageFromTwilio(Map<String, dynamic> json) async {
