@@ -168,8 +168,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       // RTDB reads/writes are authorized. Re-linking here (not just at first
       // startup) is what lets a user log out and into a different Twilio account.
       // Fire-and-forget: RTDB readers ensureLinked before their own access.
-      AccountAuthService.instance
-          .link(storageService.accountSid!, storageService.authToken!);
+      // Best-effort like the startup link in main.dart — swallow errors so a
+      // transient link failure (offline, functions error) doesn't escape as an
+      // uncaught async error; the recovery path in _runLink only handles
+      // FirebaseAuthException, not FirebaseFunctionsException.
+      unawaited(
+        AccountAuthService.instance
+            .link(storageService.accountSid!, storageService.authToken!)
+            .catchError(
+              (Object e) => debugPrint('Skipping account link on init: $e'),
+            ),
+      );
       _subscriptionService = SubscriptionService(
         accountSid: storageService.accountSid!,
         storageService: storageService,

@@ -41,8 +41,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isTogglingVacationMode = false;
   /// When false (the default), Settings shows a single dropdown that sets one
   /// number for both incoming and outgoing. When true, the incoming/outgoing
-  /// split is shown instead. Persisted per-device via StorageService.
+  /// split is shown instead. Account-level, stored in RTDB and read/written via
+  /// TwilioService.get/setAdvancedNumberConfig (not per-device).
   bool _advanced = false;
+  /// Whether [_loadAdvanced] has resolved. The toggle stays disabled until it
+  /// has, so a user can't flip it before the initial RTDB load completes — that
+  /// still-in-flight load would otherwise land afterwards and overwrite the
+  /// just-set value with the stale pre-toggle one.
+  bool _advancedLoaded = false;
   SubscriptionStatus? _subscriptionStatus;
   List<ProductDetails> _products = [];
   bool _isLoadingSubscription = true;
@@ -77,7 +83,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadAdvanced() async {
     final advanced = await widget.twilioService.getAdvancedNumberConfig();
     if (!mounted) return;
-    setState(() => _advanced = advanced);
+    setState(() {
+      _advanced = advanced;
+      _advancedLoaded = true;
+    });
   }
 
   Future<void> _loadSubscription() async {
@@ -895,8 +904,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               secondary: const Icon(Icons.tune),
               title: Text(l10n.advancedTitle),
               value: _advanced,
-              // Disabled mid-switch so a config apply can't race a toggle.
-              onChanged: _isSwitching ? null : _setAdvanced,
+              // Disabled mid-switch so a config apply can't race a toggle, and
+              // until the initial load resolves so a toggle can't precede (and
+              // then be clobbered by) that still-in-flight RTDB read.
+              onChanged: (_isSwitching || !_advancedLoaded) ? null : _setAdvanced,
             ),
           ],
           const Divider(height: 32),

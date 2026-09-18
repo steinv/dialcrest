@@ -71,8 +71,15 @@ class AccountAuthService {
     }
     _accountSid = accountSid;
     _authToken = authToken;
-    return _linkInFlight =
-        _runLink(accountSid, authToken).whenComplete(() => _linkInFlight = null);
+    late final Future<void> attempt;
+    // Only clear the guard if it still points at *this* attempt: a superseded
+    // link (e.g. an account switch replaced _linkInFlight) must not null out the
+    // newer attempt's guard when it completes, or dedupe/ensureLinked would stop
+    // riding out the in-flight link and fire a duplicate.
+    attempt = _runLink(accountSid, authToken).whenComplete(() {
+      if (identical(_linkInFlight, attempt)) _linkInFlight = null;
+    });
+    return _linkInFlight = attempt;
   }
 
   Future<void> _runLink(String accountSid, String authToken) async {
