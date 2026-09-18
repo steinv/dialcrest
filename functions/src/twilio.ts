@@ -295,7 +295,7 @@ export async function callbackIncomingCall(request: Request, response: express.R
     const accountSid = request.body.AccountSid;
     const voiceResponse = new twiml.VoiceResponse();
 
-    const expiresAtSnapshot = await admin.database().ref(`/twilio/${accountSid}/subscription/expiresAt`).once('value');
+    const expiresAtSnapshot = await admin.database().ref(`/twilio/${accountSid}/trial/expiresAt`).once('value');
     const expiresAt = expiresAtSnapshot.val() as number | null;
     if (expiresAt === null || expiresAt <= Date.now()) {
         voiceResponse.say('This number is temporarily unavailable.');

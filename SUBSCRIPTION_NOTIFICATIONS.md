@@ -12,7 +12,7 @@ decision everything else follows from.
 
 Done:
 - **Part 2** — two-axis backend: trial stays per-`accountSid`
-  (`/twilio/{accountSid}/subscription`), paid records moved to store-keyed
+  (`/twilio/{accountSid}/trial`), paid records moved to store-keyed
   `/subscriptions/{apple|google}/{id}`, `isSubscriptionActive` rewritten as the
   OR gate, plus a `twilioRefreshSubscription` callable for Settings.
 - **Part 4** — app persists the paid entitlement per device
@@ -144,10 +144,9 @@ File: `functions/src/subscription.ts` (plus `functions/src/index.ts` wiring).
 ### Trial axis (mostly unchanged)
 
 - Keep `ensureTrialStarted` and its call from `twilioRegister`
-  (`functions/src/index.ts`). It stays keyed at
-  `/twilio/{accountSid}/subscription` (optionally rename the node to
-  `/twilio/{accountSid}/trial` for clarity — if you rename, update
-  `database.rules.json` read access and `SubscriptionService.fetchStatus`).
+  (`functions/src/index.ts`). It's keyed at `/twilio/{accountSid}/trial`
+  (renamed from `subscription` for clarity — the node holds only trial state;
+  paid state lives under the store-keyed `/subscriptions/{apple|google}/{id}`).
 - The trial record only needs `plan: 'trial'`, `trialStartedAt`, `expiresAt`.
   Drop the store fields from the trial record — they now live on the paid axis.
 

@@ -9,7 +9,7 @@
            the twilioLinkAccount function once Twilio credentials are verified,
            so only a client that proved ownership of the account can read or
            write its data. */
-        "subscription": {
+        "trial": {
           ".read": "auth.token.accountSid === $accountSid"
         },
         "configuration": {

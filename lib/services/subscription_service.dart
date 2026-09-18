@@ -144,7 +144,7 @@ class SubscriptionService {
       app: Firebase.app(),
       databaseURL:
           'https://twilio-phone-peblet-default-rtdb.europe-west1.firebasedatabase.app',
-    ).ref('/twilio/$accountSid/subscription').get();
+    ).ref('/twilio/$accountSid/trial').get();
     final record = snapshot.value;
     if (record == null) {
       // twilioRegister hasn't run yet (e.g. first launch, still offline) —

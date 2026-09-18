@@ -25,7 +25,7 @@ class SubscriptionStatus {
     );
   }
 
-  /// Builds from the raw /twilio/{accountSid}/subscription RTDB record (read
+  /// Builds from the raw /twilio/{accountSid}/trial RTDB record (read
   /// directly by SubscriptionService.fetchStatus — see database.rules.json).
   /// That record has no `isActive` field, so it's derived here from
   /// `expiresAt` against the device's current time.

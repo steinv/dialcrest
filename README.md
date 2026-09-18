@@ -108,9 +108,10 @@ custom claim**:
    Auth Token it actually holds.
 3. The app force-refreshes its ID token so the claim is live, then reads/writes RTDB
    **directly** (no function on the hot path).
-4. **`database.rules.json`** authorizes every account-scoped node with
-   `auth.token.accountSid === $accountSid` — so possession of the verified claim,
-   and nothing else, grants access. There are no publicly readable/writable nodes.
+4. **`database.rules.json`** authorizes every account-scoped node (`trial`,
+   `configuration`) with `auth.token.accountSid === $accountSid` — so possession
+   of the verified claim, and nothing else, grants access. There are no publicly
+   readable/writable nodes.
 
 **Account switching** works because the claim is re-established on every login:
 logging into a different account re-runs `twilioLinkAccount` (re-verifying the new

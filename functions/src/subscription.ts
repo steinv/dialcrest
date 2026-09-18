@@ -6,7 +6,7 @@ import admin from 'firebase-admin';
 /**
  * Subscriptions live on TWO independent axes (see SUBSCRIPTION_NOTIFICATIONS.md):
  *
- *  - Trial axis, keyed on accountSid at /twilio/{accountSid}/subscription.
+ *  - Trial axis, keyed on accountSid at /twilio/{accountSid}/trial.
  *    Auto-started on registration (ensureTrialStarted), no store interaction.
  *    A trial is a per-LINE grant: everyone sharing a Twilio account shares it.
  *
@@ -23,7 +23,7 @@ type Plan = 'trial' | 'monthly' | 'yearly';
 type Store = 'app_store' | 'play_store';
 
 /**
- * Trial record at /twilio/{accountSid}/subscription. Store fields no longer
+ * Trial record at /twilio/{accountSid}/trial. Store fields no longer
  * live here — paid state moved to the store-keyed PaidRecord.
  */
 interface TrialRecord {
@@ -103,7 +103,7 @@ function planFromId(id: string): 'monthly' | 'yearly' {
 
 /** Trial axis, keyed on accountSid. Read directly by the app (database.rules.json). */
 function trialRef(accountSid: string) {
-    return admin.database().ref(`/twilio/${accountSid}/subscription`);
+    return admin.database().ref(`/twilio/${accountSid}/trial`);
 }
 
 /** Paid axis, keyed on the Apple original transaction id. */
