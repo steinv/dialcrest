@@ -155,6 +155,15 @@ class AppLocalizationsFr extends AppLocalizations {
   String get newConversationTooltip => 'Nouvelle conversation';
 
   @override
+  String get contactsTitle => 'Contacts';
+
+  @override
+  String get searchContactsHint => 'Rechercher des contacts';
+
+  @override
+  String get noContactsFound => 'Aucun contact trouvé';
+
+  @override
   String get dialerTabLabel => 'Clavier';
 
   @override

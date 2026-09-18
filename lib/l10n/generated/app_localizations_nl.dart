@@ -153,6 +153,15 @@ class AppLocalizationsNl extends AppLocalizations {
   String get newConversationTooltip => 'Nieuw gesprek';
 
   @override
+  String get contactsTitle => 'Contacten';
+
+  @override
+  String get searchContactsHint => 'Contacten zoeken';
+
+  @override
+  String get noContactsFound => 'Geen contacten gevonden';
+
+  @override
   String get dialerTabLabel => 'Kiezer';
 
   @override

@@ -153,6 +153,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get newConversationTooltip => 'New conversation';
 
   @override
+  String get contactsTitle => 'Contacts';
+
+  @override
+  String get searchContactsHint => 'Search contacts';
+
+  @override
+  String get noContactsFound => 'No contacts found';
+
+  @override
   String get dialerTabLabel => 'Dialer';
 
   @override

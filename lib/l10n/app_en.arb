@@ -140,6 +140,15 @@
   "newConversationTooltip": "New conversation",
   "@newConversationTooltip": {},
 
+  "contactsTitle": "Contacts",
+  "@contactsTitle": {},
+
+  "searchContactsHint": "Search contacts",
+  "@searchContactsHint": {},
+
+  "noContactsFound": "No contacts found",
+  "@noContactsFound": {},
+
   "dialerTabLabel": "Dialer",
   "@dialerTabLabel": {},
 

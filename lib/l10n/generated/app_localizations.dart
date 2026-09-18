@@ -338,6 +338,24 @@ abstract class AppLocalizations {
   /// **'New conversation'**
   String get newConversationTooltip;
 
+  /// No description provided for @contactsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Contacts'**
+  String get contactsTitle;
+
+  /// No description provided for @searchContactsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search contacts'**
+  String get searchContactsHint;
+
+  /// No description provided for @noContactsFound.
+  ///
+  /// In en, this message translates to:
+  /// **'No contacts found'**
+  String get noContactsFound;
+
   /// No description provided for @dialerTabLabel.
   ///
   /// In en, this message translates to:
