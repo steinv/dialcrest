@@ -5,8 +5,19 @@
     ".write": false,
     "twilio": {
       "$accountSid": {
+        /* Account-scoped access is gated on the `accountSid` custom claim set by
+           the twilioLinkAccount function once Twilio credentials are verified,
+           so only a client that proved ownership of the account can read or
+           write its data. */
         "subscription": {
-          ".read": true
+          ".read": "auth.token.accountSid === $accountSid"
+        },
+        "configuration": {
+          ".read": "auth.token.accountSid === $accountSid",
+          ".write": "auth.token.accountSid === $accountSid",
+          "advancedNumberConfig": {
+            ".validate": "newData.isBoolean()"
+          }
         }
       }
     }

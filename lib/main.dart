@@ -14,6 +14,7 @@ import 'firebase_options.dart';
 import 'l10n/generated/app_localizations.dart';
 import 'screens/home_screen.dart';
 import 'screens/auth_screen.dart';
+import 'services/account_auth_service.dart';
 import 'services/storage_service.dart';
 import 'services/twilio_service.dart';
 import 'services/contacts_service.dart';
@@ -86,6 +87,15 @@ void main() async {
         ? const AppleDebugProvider()
         : const AppleAppAttestWithDeviceCheckFallbackProvider(),
   );
+  // Establish the anonymous Firebase identity that authorizes account-scoped
+  // RTDB access (see AccountAuthService / database.rules.json) before anything
+  // reads RTDB. Best-effort: offline, RTDB reads simply fall back to defaults.
+  try {
+    await AccountAuthService.instance.ensureSignedIn();
+  } catch (e) {
+    debugPrint('Skipping startup anonymous sign-in: $e');
+  }
+
   final storageService = StorageService();
   await storageService.init();
 
@@ -102,6 +112,18 @@ void main() async {
       );
       if (!isValid) {
         await storageService.clearCredentials();
+      } else {
+        // Bind the identity to this account so RTDB reads/writes are authorized.
+        // Best-effort — TwilioService/SubscriptionService also ensureLinked
+        // before their own RTDB access, and offline falls back to defaults.
+        try {
+          await AccountAuthService.instance.link(
+            storageService.accountSid!,
+            storageService.authToken!,
+          );
+        } catch (e) {
+          debugPrint('Skipping startup account link: $e');
+        }
       }
     } catch (e) {
       debugPrint('Skipping startup credential validation: $e');

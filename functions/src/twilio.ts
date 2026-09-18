@@ -68,6 +68,25 @@ export function getIncomingAppSid(accountSid: string, authToken: string): Observ
     return getOrCreateTwimlApp(client, accountSid, 'incoming', TWIML_APP_FRIENDLY_NAME_INCOMING, INCOMING_CALL_URL);
 }
 
+/**
+ * Verifies that (accountSid, authToken) are valid credentials for that account,
+ * then stamps the caller's Firebase uid with an `accountSid` custom claim so
+ * RTDB rules can authorize per-account reads/writes (see database.rules.json).
+ *
+ * Ownership is proven the same way the client's validateCredentials does it —
+ * fetching the account resource succeeds only with a token that authenticates as
+ * THIS account — so a caller can never claim an account it doesn't hold the
+ * token for. The claim is overwritten on every call, so a user switching Twilio
+ * accounts on the same device just re-links the same anonymous uid.
+ */
+export function linkTwilioAccount(uid: string, accountSid: string, authToken: string): Observable<void> {
+    const client: Twilio = twilio(accountSid, authToken);
+    return from(client.api.v2010.accounts(accountSid).fetch()).pipe(
+        switchMap(() => from(admin.auth().setCustomUserClaims(uid, { accountSid }))),
+        map(() => undefined),
+    );
+}
+
 /** The subset of a number's webhook config we overwrite, and therefore snapshot/restore. */
 interface OriginalNumberConfig {
     voiceUrl: string;

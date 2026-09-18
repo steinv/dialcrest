@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -17,6 +18,7 @@ import '../../models/call.dart';
 import '../../models/message.dart';
 import '../l10n/generated/app_localizations.dart';
 import '../l10n/generated/app_localizations_en.dart';
+import 'account_auth_service.dart';
 import 'storage_service.dart';
 
 /// Looks up the localized strings for the device's current locale without a
@@ -182,6 +184,16 @@ class TwilioService {
     region: 'europe-west1',
   );
   final StorageService _storageService;
+
+  /// Account-level "advanced number config" flag, stored in RTDB (not per-device)
+  /// because it governs account-wide incoming/outgoing behavior — see
+  /// [advancedNumberConfig]. Cached here after the first read; defaults to false
+  /// (simple mode) until loaded, and stays false if RTDB is unreachable.
+  bool _advancedNumberConfig = false;
+
+  /// The one-time RTDB load of [_advancedNumberConfig], kicked off during
+  /// [_initializeClient] and awaited by any reader that needs an up-to-date value.
+  Future<void>? _advancedNumberConfigResolved;
 
   // Callbacks for incoming communications
   Function(String from)? onIncomingCall;
@@ -403,6 +415,10 @@ class TwilioService {
     // (and, on first launch, wire that same number for incoming — see
     // _resolveCurrentPhoneNumber).
     _currentPhoneNumberResolved = _resolveCurrentPhoneNumber();
+
+    // Pre-load the account-level advanced-config flag so Settings and the app
+    // bar's quick switcher have it ready without a first-use round-trip.
+    _advancedNumberConfigResolved = _loadAdvancedNumberConfig();
   }
 
   Future<void> _resolveCurrentPhoneNumber() async {
@@ -693,7 +709,7 @@ class TwilioService {
   /// (via [configureNumbers]) to keep that single-number guarantee — otherwise
   /// a quick switch would leave calls ringing on the previously selected number.
   Future<void> switchOutgoingNumber(String phoneNumber) async {
-    if (_storageService.getAdvancedNumberConfig()) {
+    if (await getAdvancedNumberConfig()) {
       await setCurrentPhoneNumber(phoneNumber);
       return;
     }
@@ -706,6 +722,47 @@ class TwilioService {
     await setCurrentPhoneNumber(phoneNumber);
     if (match.isEmpty) return;
     await configureNumbers([match.first.sid]);
+  }
+
+  DatabaseReference _advancedNumberConfigRef() => FirebaseDatabase.instanceFor(
+        app: Firebase.app(),
+        databaseURL:
+            'https://twilio-phone-peblet-default-rtdb.europe-west1.firebasedatabase.app',
+      ).ref('/twilio/$accountSid/configuration/advancedNumberConfig');
+
+  /// The account-level advanced-number-config flag: whether incoming and
+  /// outgoing numbers are configured independently (true) or share a single
+  /// number (false, the default). Stored in RTDB so the choice is consistent for
+  /// every device on the account — it governs account-wide Twilio routing, so a
+  /// per-device flag would let devices disagree about how the account behaves.
+  ///
+  /// Reads the cached value once loaded, otherwise performs the one-time RTDB
+  /// load. Defaults to false (simple mode) and stays false if RTDB is
+  /// unreachable (offline) — see the offline behavior decision in the design.
+  Future<bool> getAdvancedNumberConfig() async {
+    await (_advancedNumberConfigResolved ??= _loadAdvancedNumberConfig());
+    return _advancedNumberConfig;
+  }
+
+  Future<void> _loadAdvancedNumberConfig() async {
+    try {
+      await AccountAuthService.instance.ensureLinked(accountSid, authToken);
+      final snapshot = await _advancedNumberConfigRef().get();
+      _advancedNumberConfig = snapshot.value == true;
+    } catch (e) {
+      debugPrint('Could not read advanced number config, defaulting to simple: $e');
+      _advancedNumberConfig = false;
+    }
+  }
+
+  /// Persists the account-level advanced-number-config flag to RTDB and updates
+  /// the local cache. Requires the account claim (set at link time); the write
+  /// is authorized by database.rules.json's ownership check.
+  Future<void> setAdvancedNumberConfig(bool advanced) async {
+    await AccountAuthService.instance.ensureLinked(accountSid, authToken);
+    await _advancedNumberConfigRef().set(advanced);
+    _advancedNumberConfig = advanced;
+    _advancedNumberConfigResolved = Future.value();
   }
 
   /// Headers needed to fetch a Twilio Media resource URL directly (e.g. from

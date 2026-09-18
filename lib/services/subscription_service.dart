@@ -9,6 +9,7 @@ import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:in_app_purchase_android/in_app_purchase_android.dart';
 
 import '../models/subscription_status.dart';
+import 'account_auth_service.dart';
 import 'storage_service.dart';
 
 /// Thrown by [SubscriptionService.purchase] when the user cancels the store's
@@ -135,6 +136,10 @@ class SubscriptionService {
   /// purchase verification; the authoritative, re-verified check that
   /// actually gates calling still lives server-side in twilioAccessToken.
   Future<SubscriptionStatus> fetchStatus() async {
+    // The subscription node is account-scoped in RTDB rules, so authorize this
+    // read with the account claim first (see AccountAuthService).
+    await AccountAuthService.instance
+        .ensureLinked(accountSid, _storageService.authToken);
     final snapshot = await FirebaseDatabase.instanceFor(
       app: Firebase.app(),
       databaseURL:

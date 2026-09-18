@@ -38,6 +38,7 @@ import {
     getIncomingAppSid,
     configureSelectedNumbers,
     registerMessagingDevice,
+    linkTwilioAccount,
 } from './twilio';
 import {
     AppleConfig,
@@ -306,4 +307,19 @@ exports.twilioConfigureNumbers = onCall({ enforceAppCheck: true, region: REGION,
  */
 exports.twilioRegisterMessagingDevice = onCall({ enforceAppCheck: true, region: REGION, cors: true, timeoutSeconds: 30 },
     (req) => lastValueFrom(registerMessagingDevice(req.data['accountSid'], req.data['fcmToken']))
+);
+
+/**
+ * Verifies the caller's Twilio credentials and stamps their (anonymous) Firebase
+ * identity with an `accountSid` custom claim, which RTDB rules use to authorize
+ * per-account reads/writes (see linkTwilioAccount in twilio.ts and
+ * database.rules.json). Called at login and whenever the claim needs
+ * (re-)establishing.
+ */
+exports.twilioLinkAccount = onCall({ enforceAppCheck: true, region: REGION, cors: true, timeoutSeconds: 30 },
+    (req) => {
+        const uid = req.auth?.uid;
+        if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in to link a Twilio account.');
+        return lastValueFrom(linkTwilioAccount(uid, req.data['accountSid'], req.data['authToken']));
+    }
 );

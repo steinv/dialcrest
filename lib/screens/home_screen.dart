@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:twilio_voice/twilio_voice.dart';
 import '../l10n/generated/app_localizations.dart';
 import '../models/call.dart';
+import '../services/account_auth_service.dart';
 import '../services/storage_service.dart';
 import '../services/twilio_service.dart';
 import '../services/subscription_service.dart';
@@ -163,6 +164,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final storageService = Provider.of<StorageService>(context, listen: false);
 
     if (storageService.accountSid != null && storageService.authToken != null) {
+      // Bind the anonymous Firebase identity to this account so account-scoped
+      // RTDB reads/writes are authorized. Re-linking here (not just at first
+      // startup) is what lets a user log out and into a different Twilio account.
+      // Fire-and-forget: RTDB readers ensureLinked before their own access.
+      AccountAuthService.instance
+          .link(storageService.accountSid!, storageService.authToken!);
       _subscriptionService = SubscriptionService(
         accountSid: storageService.accountSid!,
         storageService: storageService,

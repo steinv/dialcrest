@@ -52,6 +52,7 @@ dependencies:
   in_app_purchase: ^3.2.1
   in_app_purchase_android: ^0.5.2
   share_plus: ^13.3.0
+  firebase_auth: ^6.7.0
 
 # Use a local fork of twilio_voice, rebased onto the published 0.4.0 (which already
 # includes the FlutterViewController fix from github.com/cybex-dev/twilio_voice/pull/311,

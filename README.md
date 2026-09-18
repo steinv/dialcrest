@@ -69,6 +69,7 @@ project `twilio-phone-peblet`), with business logic split out into
 | `twilioGetIncomingAppSid` | Resolves (creating if needed) the tenant's incoming TwiML App SID. | `lib/services/twilio_service.dart` (`getIncomingAppSid()`) |
 | `twilioConfigureNumbers` | Wires the given number SIDs to ring this app, restoring any deselected number's original webhook config. | `lib/services/twilio_service.dart` (`configureNumbers()`) |
 | `twilioRegisterMessagingDevice` | Registers/refreshes the device's FCM token so incoming SMS can be pushed to it. | `lib/services/twilio_service.dart` (`_registerMessagingDevice()`) |
+| `twilioLinkAccount` | Verifies the caller's Twilio credentials and stamps their anonymous Firebase identity with an `accountSid` custom claim, which the RTDB rules use to authorize account-scoped reads/writes (see [Security](#security)). | `lib/services/account_auth_service.dart` (`link()` / `ensureLinked()`) |
 
 ### Webhook/trigger (invoked by Twilio, Apple, or Google — never called from the app)
 
@@ -80,6 +81,52 @@ project `twilio-phone-peblet`), with business logic split out into
 | `twilioIncomingMessage` | TwiML for inbound SMS/MMS; pushes an FCM notification to registered devices. | Twilio, as the number's SMS URL |
 | `twilioAppleNotifications` | App Store Server Notifications V2 webhook; re-verifies subscription state from Apple on any lifecycle event. | Apple (see [Subscription renewal notifications](#subscription-renewal-notifications-app-store--play)) |
 | `onPlaySubscriptionNotification` | Pub/Sub-triggered; consumes Google Play Real-time Developer Notifications and re-verifies purchase-token state. | Google Play RTDN, via Pub/Sub (see below) |
+
+## Security
+
+### How a device proves it owns a Twilio account (RTDB access)
+
+The app has no username/password login of its own — a user "logs in" by entering
+a Twilio **Account SID + Auth Token**, which are stored on-device in secure
+storage and sent (over App Check-enforced callables) to the Cloud Functions,
+which act on Twilio on the user's behalf. Those credentials never identify the
+device to Firebase, though, so some Realtime Database data is stored per account
+(`/twilio/{accountSid}/…`) and needs a way to authorize "this device may read/write
+*this* account's data."
+
+We solve that with an **anonymous Firebase identity bound to the account SID via a
+custom claim**:
+
+1. On startup the app signs in **anonymously** (`AccountAuthService.ensureSignedIn`),
+   giving it a Firebase `uid`. This identity carries no personal data and is never
+   used as a data key.
+2. When the account is known (startup with stored creds, or a fresh login), the app
+   calls the **`twilioLinkAccount`** function. It verifies the `(accountSid, authToken)`
+   pair by fetching the account from Twilio — which succeeds only for a token that
+   authenticates *as that account* — then sets a custom claim `{ accountSid }` on the
+   caller's `uid`. So a device can only ever obtain a claim for an account whose
+   Auth Token it actually holds.
+3. The app force-refreshes its ID token so the claim is live, then reads/writes RTDB
+   **directly** (no function on the hot path).
+4. **`database.rules.json`** authorizes every account-scoped node with
+   `auth.token.accountSid === $accountSid` — so possession of the verified claim,
+   and nothing else, grants access. There are no publicly readable/writable nodes.
+
+**Account switching** works because the claim is re-established on every login:
+logging into a different account re-runs `twilioLinkAccount` (re-verifying the new
+creds) and overwrites the claim; logout (`AccountAuthService.signOut`) drops the
+anonymous identity so its claim can't be reused by the next user on the device.
+
+### Disposable identity & anonymous auto-cleanup
+
+The anonymous identity is deliberately disposable — **all data is keyed by
+`accountSid`, never by `uid`** — so it's safe to enable Firebase's
+[anonymous-account auto-cleanup](https://firebase.blog/posts/2023/07/best-practices-for-anonymous-authentication)
+(which deletes anonymous users ~30 days after creation, regardless of activity;
+setting a custom claim does **not** exempt an account — only linking a real
+sign-in provider would). If the account is deleted, `AccountAuthService` detects the
+now-invalid identity and transparently re-creates it and re-links using the stored
+Twilio credentials. The user never has to re-authenticate, and no data is lost.
 
 ## Secrets
 

@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../dto/IncomingPhoneNumbers.dart';
 import '../l10n/generated/app_localizations.dart';
 import '../models/subscription_status.dart';
+import '../services/account_auth_service.dart';
 import '../services/storage_service.dart';
 import '../services/subscription_service.dart';
 import '../services/twilio_service.dart';
@@ -66,10 +67,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     _selectedNumber = widget.twilioService.currentPhoneNumber;
     _vacationMode = widget.twilioService.isVacationMode;
-    _advanced = Provider.of<StorageService>(context, listen: false)
-        .getAdvancedNumberConfig();
+    _loadAdvanced();
     _loadData();
     _loadSubscription();
+  }
+
+  /// Loads the account-level advanced-config flag (RTDB, via TwilioService) into
+  /// local UI state. Defaults to false until it resolves.
+  Future<void> _loadAdvanced() async {
+    final advanced = await widget.twilioService.getAdvancedNumberConfig();
+    if (!mounted) return;
+    setState(() => _advanced = advanced);
   }
 
   Future<void> _loadSubscription() async {
@@ -419,8 +427,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// other number is reverted to its snapshot (see [_selectSimpleNumber]).
   Future<void> _setAdvanced(bool advanced) async {
     setState(() => _advanced = advanced);
-    await Provider.of<StorageService>(context, listen: false)
-        .setAdvancedNumberConfig(advanced);
+    await widget.twilioService.setAdvancedNumberConfig(advanced);
     if (!advanced) await _applySimpleConfig();
   }
 
@@ -461,6 +468,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     final storageService = Provider.of<StorageService>(context, listen: false);
     await storageService.clearCredentials();
+    // Drop the anonymous Firebase identity so its account claim can't be reused
+    // by whoever logs in next on this device.
+    await AccountAuthService.instance.signOut();
 
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(

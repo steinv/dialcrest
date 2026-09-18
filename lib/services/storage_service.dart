@@ -110,17 +110,6 @@ class StorageService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Whether Settings shows the advanced incoming/outgoing split (true) or the
-  /// simplified single-number dropdown (false, the default). A per-device UI
-  /// preference — not tied to a Twilio account — so it's stored unscoped.
-  bool getAdvancedNumberConfig() {
-    return _prefs.getBool('advanced_number_config') ?? false;
-  }
-
-  Future<void> setAdvancedNumberConfig(bool advanced) async {
-    await _prefs.setBool('advanced_number_config', advanced);
-  }
-
   /// Whether this device has already run the one-time "configure the caller-id
   /// number for incoming too" onboarding for [accountSid] (see
   /// TwilioService._ensureIncomingConfigured). Set once onboarding succeeds so
