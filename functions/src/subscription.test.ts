@@ -55,13 +55,13 @@ describe('trial axis', () => {
     it('starts a 30-day trial and never resets it on repeat calls', async () => {
         jest.useFakeTimers().setSystemTime(0);
         await lastValueFrom(ensureTrialStarted('AC1'));
-        expect(dbTree().twilio.AC1.subscription).toEqual({
+        expect(dbTree().twilio.AC1.trial).toEqual({
             plan: 'trial', trialStartedAt: 0, expiresAt: THIRTY_DAYS_MS, lastVerifiedAt: 0,
         });
         jest.setSystemTime(1000);
         await lastValueFrom(ensureTrialStarted('AC1'));
-        expect(dbTree().twilio.AC1.subscription.trialStartedAt).toBe(0);
-        expect(dbTree().twilio.AC1.subscription.expiresAt).toBe(THIRTY_DAYS_MS);
+        expect(dbTree().twilio.AC1.trial.trialStartedAt).toBe(0);
+        expect(dbTree().twilio.AC1.trial.expiresAt).toBe(THIRTY_DAYS_MS);
     });
 });
 
@@ -81,7 +81,7 @@ describe('isSubscriptionActive (the trial-OR-entitlement gate)', () => {
     it('backfills a trial (and stays active) for an account that predates the subscription system', async () => {
         const active = await lastValueFrom(isSubscriptionActive('AC-legacy', null, reverificationConfig));
         expect(active).toBe(true);
-        expect(dbTree().twilio['AC-legacy'].subscription.plan).toBe('trial');
+        expect(dbTree().twilio['AC-legacy'].trial.plan).toBe('trial');
     });
 
     it('is inactive once the trial has expired and no entitlement is presented', async () => {
