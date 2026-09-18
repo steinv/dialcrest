@@ -5,18 +5,9 @@
     ".write": false,
     "twilio": {
       "$accountSid": {
-        /* Account-scoped access is gated on the `accountSid` custom claim set by
-           the twilioLinkAccount function once Twilio credentials are verified,
-           so only a client that proved ownership of the account can read or
-           write its data. */
         "trial": {
           ".read": "auth.token.accountSid === $accountSid"
         },
-        /* SID of the account's incoming TwiML App, memoized server-side by
-           getOrCreateTwimlApp (functions/src/twilio.ts). Read-only for the
-           client — only the functions (admin SDK) ever create/write it — so
-           Settings can compare each number's voice_application_sid against it
-           without a Cloud Function round-trip on every open. */
         "twiml-app-sid": {
           ".read": "auth.token.accountSid === $accountSid"
         },
