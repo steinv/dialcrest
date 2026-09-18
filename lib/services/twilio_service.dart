@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -46,6 +48,20 @@ class MessagePage {
   MessagePage({required this.messages, this.nextPageUrl});
 }
 
+/// Outcome of a bulk [TwilioService.deleteMessages] (e.g. deleting a whole
+/// spam conversation): the SIDs that were actually removed from Twilio, and
+/// the first error hit, if any. [deleted] is populated even when [error] is
+/// set, so the caller can still prune the messages that did get deleted from
+/// its cache before surfacing the failure.
+class BulkDeleteResult {
+  final List<String> deleted;
+  final String? error;
+
+  BulkDeleteResult({required this.deleted, this.error});
+
+  bool get hadError => error != null;
+}
+
 /// Thrown when twilioAccessToken refuses to mint a token because this
 /// account's trial/subscription has expired (functions/src/index.ts,
 /// 'failed-precondition' / 'subscription-expired'). Kept unwrapped by
@@ -68,6 +84,40 @@ class _TwilioApiException implements Exception {
   String toString() => _message;
 }
 
+/// Whether [error] is a "you're offline / the network is unreachable" failure
+/// rather than a real server- or account-side problem — no Wi-Fi and no mobile
+/// data, a dropped connection, or a request that timed out before it got a
+/// response. These all deserve the same friendly "check your connection"
+/// message instead of a raw `SocketException` / `[unavailable]` / DioException
+/// dump. Every transport we use is covered: Twilio REST via Dio, Firebase
+/// callable functions, and Realtime Database (subscription status).
+bool isOfflineError(Object error) {
+  if (error is SocketException) return true;
+  if (error is DioException) {
+    switch (error.type) {
+      case DioExceptionType.connectionError:
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.receiveTimeout:
+        return true;
+      default:
+        // Some platforms surface an offline device as an unknown-type
+        // DioException wrapping the underlying SocketException.
+        return error.error is SocketException;
+    }
+  }
+  // FirebaseFunctionsException is itself a FirebaseException, so this covers
+  // callable functions and Realtime Database alike: an unreachable backend
+  // comes back as 'unavailable' (and occasionally 'deadline-exceeded').
+  if (error is FirebaseException) {
+    final code = error.code.toLowerCase();
+    return code.contains('unavailable') ||
+        code.contains('deadline') ||
+        code.contains('network');
+  }
+  return false;
+}
+
 /// A short, user-presentable description of [error] for the "Failed to ..."
 /// messages surfaced in the UI. [DioException.toString] dumps the request
 /// options and the raw response object, and [FirebaseFunctionsException]
@@ -78,6 +128,10 @@ class _TwilioApiException implements Exception {
 /// username" for a suspended/expired Twilio account) plus the HTTP status, or
 /// the "[plugin/code] message" prefix for a Firebase exception.
 String describeTwilioError(Object error) {
+  // Offline is the common case (Wi-Fi off, no mobile data) and has nothing to
+  // do with Twilio or the account, so give it a plain "check your connection"
+  // message before any transport-specific unwrapping below.
+  if (isOfflineError(error)) return _l10n().noInternetConnection;
   if (error is DioException) {
     final status = error.response?.statusCode;
     final body = error.response?.data;
@@ -101,7 +155,14 @@ String describeTwilioError(Object error) {
     }
     return '[${error.code}] ${error.message}';
   }
-  return error.toString();
+  // A plain `Exception('...')` stringifies as "Exception: ...". Some of these
+  // carry a genuinely user-facing message (e.g. the permission prompts in
+  // makeCall), so keep the text but drop the leaked "Exception: " prefix.
+  final text = error.toString();
+  const exceptionPrefix = 'Exception: ';
+  return text.startsWith(exceptionPrefix)
+      ? text.substring(exceptionPrefix.length)
+      : text;
 }
 
 class TwilioService {
@@ -175,10 +236,25 @@ class TwilioService {
   // pushes, so re-register whenever it fires instead of only at app startup.
   StreamSubscription<String>? _tokenRefreshSubscription;
 
+  /// Returns the store entitlement fields to attach to twilioAccessToken (empty
+  /// for a trial-only device). Injected rather than reaching into
+  /// SubscriptionService directly, to keep the two services decoupled. See
+  /// SubscriptionService.currentEntitlement.
+  final Map<String, String> Function()? entitlementProvider;
+
+  /// Attempts to silently recover a paid entitlement this device owns but
+  /// hasn't cached, returning whether one is now available. Called once when a
+  /// token request is refused as subscription-expired, to cover a paid device
+  /// that dials before the startup restore finished (or before opening
+  /// Settings). See SubscriptionService.recoverEntitlement.
+  final Future<bool> Function()? entitlementRecovery;
+
   TwilioService({
     required this.accountSid,
     required this.authToken,
     required StorageService storageService,
+    this.entitlementProvider,
+    this.entitlementRecovery,
   }) : _storageService = storageService {
     _initializeClient();
     _tokenRefreshSubscription = FirebaseMessaging.instance.onTokenRefresh.listen((_) {
@@ -509,10 +585,28 @@ class TwilioService {
     }
 
     try {
+      return await _mintAccessToken();
+    } on SubscriptionExpiredException {
+      // The trial has lapsed and we presented no active entitlement. On a device
+      // that owns a subscription but hasn't cached it yet (fresh install / new
+      // device, dialing before the startup restore finished), try to recover it
+      // silently once, then retry before surfacing the expiry to the user.
+      final recover = entitlementRecovery;
+      if (recover == null || !await recover()) rethrow;
+      return await _mintAccessToken();
+    }
+  }
+
+  Future<String> _mintAccessToken() async {
+    try {
       final response = await _firebaseFunctions.httpsCallable('twilioAccessToken').call({
         'accountSid': accountSid,
         'authToken': authToken,
         'callerId': currentPhoneNumber ?? '',
+        // Attach the device's paid store entitlement, if any, so the backend's
+        // OR gate can grant access on an active subscription once the trial has
+        // lapsed. Empty for trial-only devices.
+        ...?entitlementProvider?.call(),
       });
       final token = response.data as String;
       _cachedAccessToken = token;
@@ -571,7 +665,7 @@ class TwilioService {
       return phoneNumberStrings;
     } catch (e) {
       debugPrint('Error fetching phoneNumbers: $e');
-      throw Exception('Failed to make call: ${describeTwilioError(e)}');
+      throw _TwilioApiException(describeTwilioError(e));
     }
   }
 
@@ -583,7 +677,9 @@ class TwilioService {
       return await _fetchIncomingPhoneNumbers();
     } catch (e) {
       debugPrint('Error fetching incoming numbers: $e');
-      throw Exception('Failed to fetch phone numbers: ${describeTwilioError(e)}');
+      // No "Failed to ..." prefix here: the caller (Settings) already adds its
+      // own "Could not load phone numbers: ..." wrapper around this.
+      throw _TwilioApiException(describeTwilioError(e));
     }
   }
 
@@ -687,7 +783,9 @@ class TwilioService {
       return CallHistoryPage(calls: calls, nextPageUrl: nextPageUrl);
     } catch (e) {
       debugPrint('Error fetching call history: $e');
-      throw Exception('Failed to fetch call history: ${describeTwilioError(e)}');
+      // No "Failed to ..." prefix here: the caller (Call history) already adds
+      // its own "Failed to load call history: ..." wrapper around this.
+      throw _TwilioApiException(describeTwilioError(e));
     }
   }
 
@@ -848,7 +946,9 @@ class TwilioService {
     } catch (e, stackTrace) {
       debugPrint('Error making call: $e');
       debugPrintStack(stackTrace: stackTrace);
-      throw Exception('Failed to make call: ${describeTwilioError(e)}');
+      // No "Failed to ..." prefix here: the caller (Home) already adds its own
+      // "Failed to make call: ..." wrapper around this.
+      throw _TwilioApiException(describeTwilioError(e));
     }
   }
 
@@ -875,7 +975,9 @@ class TwilioService {
       );
     } catch (e) {
       debugPrint('Error sending message: $e');
-      throw Exception('Failed to send message: ${describeTwilioError(e)}');
+      // No "Failed to ..." prefix here: the caller (Messages) already adds its
+      // own "Failed to send message: ..." wrapper around this.
+      throw _TwilioApiException(describeTwilioError(e));
     }
   }
 
@@ -910,8 +1012,50 @@ class TwilioService {
       return MessagePage(messages: messages, nextPageUrl: nextPageUrl);
     } catch (e) {
       debugPrint('Error fetching messages: $e');
-      throw Exception('Failed to fetch messages: ${describeTwilioError(e)}');
+      // No "Failed to ..." prefix here: the caller (Messages) already adds its
+      // own "Failed to load messages: ..." wrapper around this.
+      throw _TwilioApiException(describeTwilioError(e));
     }
+  }
+
+  /// Permanently deletes a message from Twilio — its body and any MMS media —
+  /// via `DELETE /Messages/{Sid}.json`. This is irreversible and account-wide:
+  /// the message vanishes from every device sharing this Twilio account and
+  /// from the Twilio console/logs, not just this app's cache. Twilio only
+  /// allows deleting messages in a terminal state (delivered/received/failed/
+  /// undelivered); inbound spam always qualifies, but an outbound message
+  /// still in flight is rejected with a 409, surfaced here like any other
+  /// Twilio error.
+  /// https://www.twilio.com/docs/sms/api/message-resource#delete-a-message-resource
+  Future<void> deleteMessage(String sid) async {
+    try {
+      await _dio.delete('/Messages/$sid.json');
+    } catch (e) {
+      debugPrint('Error deleting message $sid: $e');
+      // No "Failed to ..." prefix here: the caller (Messages) already adds its
+      // own "Failed to delete message: ..." wrapper around this.
+      throw _TwilioApiException(describeTwilioError(e));
+    }
+  }
+
+  /// Deletes every message in [sids] from Twilio (see [deleteMessage]), used to
+  /// wipe a whole spam conversation at once. Runs the deletes sequentially so a
+  /// long thread doesn't fire a burst of concurrent DELETEs at the REST API,
+  /// and — unlike [deleteMessage] — never throws: it reports which SIDs were
+  /// removed alongside the first error, so the caller can prune the deleted
+  /// ones from its cache even on a partial failure.
+  Future<BulkDeleteResult> deleteMessages(Iterable<String> sids) async {
+    final deleted = <String>[];
+    for (final sid in sids) {
+      try {
+        await _dio.delete('/Messages/$sid.json');
+        deleted.add(sid);
+      } catch (e) {
+        debugPrint('Error deleting message $sid: $e');
+        return BulkDeleteResult(deleted: deleted, error: describeTwilioError(e));
+      }
+    }
+    return BulkDeleteResult(deleted: deleted);
   }
 
   Future<Message> _messageFromTwilio(Map<String, dynamic> json) async {

@@ -8,7 +8,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # A version number is three numbers separated by dots, like 1.2.43
 # followed by an optional build number separated by a +.
 # Bump and build with `flutter build appbundle --release`
-version: 1.0.0+5
+version: 1.0.0+8
 
 environment:
   sdk: ^3.8.0-24.0.dev
@@ -51,6 +51,7 @@ dependencies:
   url_launcher: ^6.3.2
   in_app_purchase: ^3.2.1
   in_app_purchase_android: ^0.5.2
+  share_plus: ^13.3.0
 
 # Use a local fork of twilio_voice, rebased onto the published 0.4.0 (which already
 # includes the FlutterViewController fix from github.com/cybex-dev/twilio_voice/pull/311,

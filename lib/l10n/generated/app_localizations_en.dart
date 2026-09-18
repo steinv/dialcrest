@@ -197,6 +197,44 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get delete => 'Delete';
+
+  @override
+  String get share => 'Share';
+
+  @override
+  String get copy => 'Copy';
+
+  @override
+  String get copiedToClipboard => 'Copied to clipboard';
+
+  @override
+  String get deleteMessage => 'Delete message';
+
+  @override
+  String get deleteConversation => 'Delete conversation';
+
+  @override
+  String get deleteMessageConfirm =>
+      'Permanently delete this message from Twilio? This can\'t be undone.';
+
+  @override
+  String deleteConversationConfirm(Object count) {
+    return 'Permanently delete this whole conversation ($count messages) from Twilio? This can\'t be undone.';
+  }
+
+  @override
+  String get messageDeleted => 'Message deleted';
+
+  @override
+  String get conversationDeleted => 'Conversation deleted';
+
+  @override
+  String failedToDeleteMessage(Object error) {
+    return 'Failed to delete message: $error';
+  }
+
+  @override
   String get noMessagesYet => 'No messages yet';
 
   @override
@@ -227,6 +265,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get purchaseCanceled => 'Purchase canceled';
 
   @override
+  String get restorePurchases => 'Restore purchases';
+
+  @override
+  String get purchasesRestored => 'Subscription restored';
+
+  @override
+  String get noPurchasesToRestore => 'No active subscription found to restore';
+
+  @override
   String failedToUpdateMode(Object error) {
     return 'Failed to update mode: $error';
   }
@@ -246,6 +293,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Check your Twilio account for issues (suspended, trial restrictions, invalid credentials).';
 
   @override
+  String get noInternetConnection =>
+      'No internet connection. Check your Wi-Fi or mobile data and try again.';
+
+  @override
   String get logOut => 'Log out';
 
   @override
@@ -256,8 +307,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get licenseTitle => 'License';
 
   @override
-  String get licenseSubtitle =>
-      'Your Dialcrest subscription for this Twilio account.';
+  String get licensePlanMonthly => 'Dialcrest license — Monthly subscription';
+
+  @override
+  String get licensePlanYearly => 'Dialcrest license — Yearly subscription';
 
   @override
   String get purchasingUnavailable =>
@@ -303,19 +356,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get perYearSuffix => '/year';
 
   @override
-  String get yearlyDiscountNote =>
-      'Purchasing for a year gives you 2 months free. Subscriptions renew automatically until canceled.';
-
-  @override
   String get modeTitle => 'Mode';
 
   @override
   String get modeSubtitleVacation =>
-      'This device will not ring for incoming calls or notify you of new texts. Other people using this Twilio account are unaffected.';
+      'This device will not ring for incoming calls or notify you of new texts.';
 
   @override
   String get modeSubtitleOnline =>
-      'This device rings for incoming calls as normal.';
+      'This device rings for incoming calls and notifies you of new texts, as normal.';
 
   @override
   String get onlineMode => 'Online mode';

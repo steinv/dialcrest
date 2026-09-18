@@ -199,6 +199,44 @@ class AppLocalizationsFr extends AppLocalizations {
   }
 
   @override
+  String get delete => 'Supprimer';
+
+  @override
+  String get share => 'Partager';
+
+  @override
+  String get copy => 'Copier';
+
+  @override
+  String get copiedToClipboard => 'Copié dans le presse-papiers';
+
+  @override
+  String get deleteMessage => 'Supprimer le message';
+
+  @override
+  String get deleteConversation => 'Supprimer la conversation';
+
+  @override
+  String get deleteMessageConfirm =>
+      'Supprimer définitivement ce message de Twilio ? Cette action est irréversible.';
+
+  @override
+  String deleteConversationConfirm(Object count) {
+    return 'Supprimer définitivement toute cette conversation ($count messages) de Twilio ? Cette action est irréversible.';
+  }
+
+  @override
+  String get messageDeleted => 'Message supprimé';
+
+  @override
+  String get conversationDeleted => 'Conversation supprimée';
+
+  @override
+  String failedToDeleteMessage(Object error) {
+    return 'Échec de la suppression du message : $error';
+  }
+
+  @override
   String get noMessagesYet => 'Pas encore de messages';
 
   @override
@@ -229,6 +267,15 @@ class AppLocalizationsFr extends AppLocalizations {
   String get purchaseCanceled => 'Achat annulé';
 
   @override
+  String get restorePurchases => 'Restaurer les achats';
+
+  @override
+  String get purchasesRestored => 'Abonnement restauré';
+
+  @override
+  String get noPurchasesToRestore => 'Aucun abonnement actif à restaurer';
+
+  @override
   String failedToUpdateMode(Object error) {
     return 'Échec de la mise à jour du mode : $error';
   }
@@ -248,6 +295,10 @@ class AppLocalizationsFr extends AppLocalizations {
       'Vérifiez votre compte Twilio (suspension, restrictions d\'essai, identifiants invalides).';
 
   @override
+  String get noInternetConnection =>
+      'Pas de connexion Internet. Vérifiez votre Wi-Fi ou vos données mobiles, puis réessayez.';
+
+  @override
   String get logOut => 'Se déconnecter';
 
   @override
@@ -258,8 +309,10 @@ class AppLocalizationsFr extends AppLocalizations {
   String get licenseTitle => 'Licence';
 
   @override
-  String get licenseSubtitle =>
-      'Votre abonnement Dialcrest pour ce compte Twilio.';
+  String get licensePlanMonthly => 'Licence Dialcrest — Abonnement mensuel';
+
+  @override
+  String get licensePlanYearly => 'Licence Dialcrest — Abonnement annuel';
 
   @override
   String get purchasingUnavailable =>
@@ -305,19 +358,15 @@ class AppLocalizationsFr extends AppLocalizations {
   String get perYearSuffix => '/an';
 
   @override
-  String get yearlyDiscountNote =>
-      'En choisissant l\'abonnement annuel, vous bénéficiez de 2 mois offerts. Les abonnements se renouvellent automatiquement jusqu\'à annulation.';
-
-  @override
   String get modeTitle => 'Mode';
 
   @override
   String get modeSubtitleVacation =>
-      'Cet appareil ne sonnera pas pour les appels entrants et ne vous avertira pas des nouveaux messages. Les autres personnes utilisant ce compte Twilio ne sont pas concernées.';
+      'Cet appareil ne sonnera pas pour les appels entrants et ne vous avertira pas des nouveaux messages.';
 
   @override
   String get modeSubtitleOnline =>
-      'Cet appareil sonne normalement pour les appels entrants.';
+      'Cet appareil sonne normalement pour les appels entrants et vous avertit des nouveaux messages.';
 
   @override
   String get onlineMode => 'Mode en ligne';

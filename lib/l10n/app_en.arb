@@ -185,6 +185,43 @@
     "placeholders": { "error": {} }
   },
 
+  "delete": "Delete",
+  "@delete": {},
+
+  "share": "Share",
+  "@share": {},
+
+  "copy": "Copy",
+  "@copy": {},
+
+  "copiedToClipboard": "Copied to clipboard",
+  "@copiedToClipboard": {},
+
+  "deleteMessage": "Delete message",
+  "@deleteMessage": {},
+
+  "deleteConversation": "Delete conversation",
+  "@deleteConversation": {},
+
+  "deleteMessageConfirm": "Permanently delete this message from Twilio? This can't be undone.",
+  "@deleteMessageConfirm": {},
+
+  "deleteConversationConfirm": "Permanently delete this whole conversation ({count} messages) from Twilio? This can't be undone.",
+  "@deleteConversationConfirm": {
+    "placeholders": { "count": {} }
+  },
+
+  "messageDeleted": "Message deleted",
+  "@messageDeleted": {},
+
+  "conversationDeleted": "Conversation deleted",
+  "@conversationDeleted": {},
+
+  "failedToDeleteMessage": "Failed to delete message: {error}",
+  "@failedToDeleteMessage": {
+    "placeholders": { "error": {} }
+  },
+
   "noMessagesYet": "No messages yet",
   "@noMessagesYet": {},
 
@@ -214,6 +251,13 @@
   "purchaseCanceled": "Purchase canceled",
   "@purchaseCanceled": {},
 
+  "restorePurchases": "Restore purchases",
+  "@restorePurchases": {},
+  "purchasesRestored": "Subscription restored",
+  "@purchasesRestored": {},
+  "noPurchasesToRestore": "No active subscription found to restore",
+  "@noPurchasesToRestore": {},
+
   "failedToUpdateMode": "Failed to update mode: {error}",
   "@failedToUpdateMode": {
     "placeholders": { "error": {} }
@@ -232,6 +276,9 @@
   "twilioAccountError": "Check your Twilio account for issues (suspended, trial restrictions, invalid credentials).",
   "@twilioAccountError": {},
 
+  "noInternetConnection": "No internet connection. Check your Wi-Fi or mobile data and try again.",
+  "@noInternetConnection": {},
+
   "logOut": "Log out",
   "@logOut": {},
 
@@ -241,8 +288,11 @@
   "licenseTitle": "License",
   "@licenseTitle": {},
 
-  "licenseSubtitle": "Your Dialcrest subscription for this Twilio account.",
-  "@licenseSubtitle": {},
+  "licensePlanMonthly": "Dialcrest license — Monthly subscription",
+  "@licensePlanMonthly": {},
+
+  "licensePlanYearly": "Dialcrest license — Yearly subscription",
+  "@licensePlanYearly": {},
 
   "purchasingUnavailable": "Purchasing isn't available on this platform.",
   "@purchasingUnavailable": {},
@@ -280,16 +330,14 @@
   "perYearSuffix": "/year",
   "@perYearSuffix": {},
 
-  "yearlyDiscountNote": "Purchasing for a year gives you 2 months free. Subscriptions renew automatically until canceled.",
-  "@yearlyDiscountNote": {},
 
   "modeTitle": "Mode",
   "@modeTitle": {},
 
-  "modeSubtitleVacation": "This device will not ring for incoming calls or notify you of new texts. Other people using this Twilio account are unaffected.",
+  "modeSubtitleVacation": "This device will not ring for incoming calls or notify you of new texts.",
   "@modeSubtitleVacation": {},
 
-  "modeSubtitleOnline": "This device rings for incoming calls as normal.",
+  "modeSubtitleOnline": "This device rings for incoming calls and notifies you of new texts, as normal.",
   "@modeSubtitleOnline": {},
 
   "onlineMode": "Online mode",

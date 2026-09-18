@@ -50,6 +50,37 @@ Localized strings live in `lib/l10n/*.arb` (English, German, French, Spanish,
 Dutch) — run `flutter gen-l10n` after editing them to regenerate
 `lib/l10n/generated/`.
 
+## Cloud Functions
+
+All functions are defined in `functions/src/index.ts` (region `europe-west1`,
+project `twilio-phone-peblet`), with business logic split out into
+`functions/src/twilio.ts` (Twilio) and `functions/src/subscription.ts`
+(Apple/Google subscription verification).
+
+### Callable (invoked from the app via `FirebaseFunctions`/`httpsCallable`)
+
+| Function | What it does | Called from |
+| --- | --- | --- |
+| `twilioRegister` | Creates/updates the device's Twilio Voice push credential; also runs the "account onboarded" hook that records account creation and starts the 30-day trial. | `lib/services/twilio_service.dart` (`_register()`) |
+| `twilioAccessToken` | Mints a Twilio Voice access token, gated on an active trial/subscription. | `lib/services/twilio_service.dart` (`_mintAccessToken()`) |
+| `twilioVerifyApplePurchase` | Verifies an App Store transaction and persists the resulting entitlement/expiry. | `lib/services/subscription_service.dart` (`_verifyPurchase()`, iOS) |
+| `twilioVerifyGooglePurchase` | Verifies a Play purchase token and persists the resulting entitlement/expiry. | `lib/services/subscription_service.dart` (`_verifyPurchase()`, Android) |
+| `twilioRefreshSubscription` | Re-checks the stored entitlement and returns current subscription status (keeps Settings accurate). | `lib/services/subscription_service.dart` (`refreshPaidStatus()`) |
+| `twilioGetIncomingAppSid` | Resolves (creating if needed) the tenant's incoming TwiML App SID. | `lib/services/twilio_service.dart` (`getIncomingAppSid()`) |
+| `twilioConfigureNumbers` | Wires the given number SIDs to ring this app, restoring any deselected number's original webhook config. | `lib/services/twilio_service.dart` (`configureNumbers()`) |
+| `twilioRegisterMessagingDevice` | Registers/refreshes the device's FCM token so incoming SMS can be pushed to it. | `lib/services/twilio_service.dart` (`_registerMessagingDevice()`) |
+
+### Webhook/trigger (invoked by Twilio, Apple, or Google — never called from the app)
+
+| Function | What it does | Invoked by |
+| --- | --- | --- |
+| `twilioIncomingCall` | TwiML for an inbound PSTN call; dials the registered `<Client>` (the app) or says "temporarily unavailable" if the subscription lapsed. | Twilio, as the number's voice URL |
+| `twilioOutgoingCall` | TwiML for an outgoing call placed from the SDK; dials the destination using the account number as caller ID. | Twilio, as the TwiML App's outgoing voice URL |
+| `twilioCallStatusChanges` | Status-callback webhook that logs call lifecycle events. | Twilio, as a status callback |
+| `twilioIncomingMessage` | TwiML for inbound SMS/MMS; pushes an FCM notification to registered devices. | Twilio, as the number's SMS URL |
+| `twilioAppleNotifications` | App Store Server Notifications V2 webhook; re-verifies subscription state from Apple on any lifecycle event. | Apple (see [Subscription renewal notifications](#subscription-renewal-notifications-app-store--play)) |
+| `onPlaySubscriptionNotification` | Pub/Sub-triggered; consumes Google Play Real-time Developer Notifications and re-verifies purchase-token state. | Google Play RTDN, via Pub/Sub (see below) |
+
 ## Secrets
 
 Every backend secret this project needs lives in **one** Secret Manager
@@ -177,6 +208,77 @@ firebase deploy --only functions
 On the next app launch, `twilioRegister` will detect both values, create the APN
 push credential in the tenant's Twilio account, and attach its SID to the Voice
 access token — incoming calls will then ring on a physical iOS device.
+
+## Subscription renewal notifications (App Store / Play)
+
+Paid subscriptions are verified server-side (`functions/src/subscription.ts`) and
+the resulting expiry is cached in Realtime Database. Auto-renewals happen on
+Apple's/Google's side, so the stores need to *tell* the backend when a
+subscription renews, lapses, or is refunded — otherwise the cached expiry goes
+stale and Settings shows "expired" for a subscription that actually renewed. Set
+up both stores' notifications so those events reach the Cloud Functions.
+
+The full design and code plan lives in
+[`SUBSCRIPTION_NOTIFICATIONS.md`](SUBSCRIPTION_NOTIFICATIONS.md); this section is
+just the console setup for the two notification channels.
+
+### Apple — App Store Server Notifications V2
+
+Apple POSTs a signed notification to an HTTPS endpoint for every subscription
+lifecycle event (`DID_RENEW`, `EXPIRED`, `DID_FAIL_TO_RENEW`,
+`DID_CHANGE_RENEWAL_STATUS`, `REFUND`, …). The `twilioAppleNotifications`
+function receives them, verifies the signature against Apple's roots, and
+re-verifies the subscription against the App Store Server API.
+
+1. Deploy functions so the endpoint exists:
+   `https://europe-west1-twilio-phone-peblet.cloudfunctions.net/twilioAppleNotifications`
+2. In **App Store Connect → your app → App Information → App Store Server
+   Notifications**, select **Version 2** and set that URL as **both** the
+   **Production URL** and the **Sandbox URL** (the signed payload says which
+   environment sent it). Sandbox events flow immediately, which is what surfaces
+   the fast-renewing test-license renewals without placing a call.
+
+No extra secret is needed — the existing `apple_iap_key` inside
+`TWILIO_PEBLET_SECRET` (see [Secrets](#secrets)) authenticates the App Store
+Server API and is what notification signatures are validated against.
+
+### Google — Real-time Developer Notifications (RTDN)
+
+Google publishes subscription events to a **Cloud Pub/Sub** topic; a Pub/Sub-
+triggered function (`onPlaySubscriptionNotification`) consumes them and
+re-verifies against the Play Developer API.
+
+1. Create a Pub/Sub topic in the `twilio-phone-peblet` project:
+
+   ```bash
+   gcloud pubsub topics create play-subscription-notifications \
+     --project twilio-phone-peblet
+   ```
+
+2. Let Google Play publish to it (Play uses a fixed system service account):
+
+   ```bash
+   gcloud pubsub topics add-iam-policy-binding play-subscription-notifications \
+     --project twilio-phone-peblet \
+     --member "serviceAccount:google-play-developer-notifications@system.gserviceaccount.com" \
+     --role roles/pubsub.publisher
+   ```
+
+3. In **Play Console → Monetization setup → Real-time developer
+   notifications**, paste the full topic name and enable it:
+   `projects/twilio-phone-peblet/topics/play-subscription-notifications`
+   Use **Send a test notification** to confirm the wiring once the function is
+   deployed.
+
+No extra secret is needed — the `android_fcm` service account inside
+`TWILIO_PEBLET_SECRET` already has "View financial data" access in Play Console
+and is used as the Play Developer API credential.
+
+### Deploy
+
+```bash
+firebase deploy --only functions
+```
 
 ## License
 

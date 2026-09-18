@@ -41,6 +41,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   StreamSubscription<CallEvent>? _callEventsSub;
   Timer? _connectTimeout;
 
+  /// The number of the call currently being connected, so a connect-failure
+  /// event (which carries no number) can name it in the error message.
+  String? _connectingNumber;
+
   /// Lets the app bar's refresh button drive the call-history screen's reload.
   final GlobalKey<CallHistoryScreenState> _callHistoryKey = GlobalKey();
 
@@ -92,7 +96,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// Resolves the connecting state from Twilio call-state events. The spinner
   /// keeps running through `ringing`, and clears once the call goes active
   /// (`connected`/`reconnected`) or terminates (`callEnded`/`declined`/
-  /// `missedCall`).
+  /// `missedCall`/`connectFailure`).
   void _onCallEvent(CallEvent event) {
     if (!_isConnecting) return;
     switch (event) {
@@ -106,6 +110,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _clearConnecting();
         break;
       default:
+        // Any event that arrives while still connecting but isn't one we treat
+        // as terminal. Logged so an unexpected failure mode (e.g. a plugin
+        // build that surfaces connect failures under a different event) is
+        // visible instead of only manifesting as a spinner that hangs until
+        // the safety timeout.
+        debugPrint('Unhandled call event while connecting: $event');
         break;
     }
   }
@@ -113,6 +123,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _clearConnecting() {
     _connectTimeout?.cancel();
     _connectTimeout = null;
+    _connectingNumber = null;
     if (mounted && _isConnecting) {
       setState(() => _isConnecting = false);
     }
@@ -152,13 +163,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final storageService = Provider.of<StorageService>(context, listen: false);
 
     if (storageService.accountSid != null && storageService.authToken != null) {
+      _subscriptionService = SubscriptionService(
+        accountSid: storageService.accountSid!,
+        storageService: storageService,
+      );
       _twilioService = TwilioService(
         accountSid: storageService.accountSid!,
         authToken: storageService.authToken!,
         storageService: storageService,
-      );
-      _subscriptionService = SubscriptionService(
-        accountSid: storageService.accountSid!,
+        entitlementProvider: () => _subscriptionService.currentEntitlement,
+        entitlementRecovery: _subscriptionService.recoverEntitlement,
       );
 
       // Set up callbacks for incoming communications
@@ -312,6 +326,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // Ignore taps while a call is already being connected.
     if (_isConnecting) return;
 
+    _connectingNumber = number;
     setState(() => _isConnecting = true);
     // Safety net: if no call-state event ever arrives (e.g. the platform fails
     // silently), stop showing the spinner instead of hanging forever.

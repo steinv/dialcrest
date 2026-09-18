@@ -199,6 +199,44 @@ class AppLocalizationsEs extends AppLocalizations {
   }
 
   @override
+  String get delete => 'Eliminar';
+
+  @override
+  String get share => 'Compartir';
+
+  @override
+  String get copy => 'Copiar';
+
+  @override
+  String get copiedToClipboard => 'Copiado al portapapeles';
+
+  @override
+  String get deleteMessage => 'Eliminar mensaje';
+
+  @override
+  String get deleteConversation => 'Eliminar conversación';
+
+  @override
+  String get deleteMessageConfirm =>
+      '¿Eliminar permanentemente este mensaje de Twilio? Esta acción no se puede deshacer.';
+
+  @override
+  String deleteConversationConfirm(Object count) {
+    return '¿Eliminar permanentemente toda esta conversación ($count mensajes) de Twilio? Esta acción no se puede deshacer.';
+  }
+
+  @override
+  String get messageDeleted => 'Mensaje eliminado';
+
+  @override
+  String get conversationDeleted => 'Conversación eliminada';
+
+  @override
+  String failedToDeleteMessage(Object error) {
+    return 'Error al eliminar el mensaje: $error';
+  }
+
+  @override
   String get noMessagesYet => 'Aún no hay mensajes';
 
   @override
@@ -229,6 +267,16 @@ class AppLocalizationsEs extends AppLocalizations {
   String get purchaseCanceled => 'Compra cancelada';
 
   @override
+  String get restorePurchases => 'Restaurar compras';
+
+  @override
+  String get purchasesRestored => 'Suscripción restaurada';
+
+  @override
+  String get noPurchasesToRestore =>
+      'No se encontró ninguna suscripción activa para restaurar';
+
+  @override
   String failedToUpdateMode(Object error) {
     return 'Error al actualizar el modo: $error';
   }
@@ -248,6 +296,10 @@ class AppLocalizationsEs extends AppLocalizations {
       'Revisa tu cuenta de Twilio por si hay problemas (suspensión, restricciones de prueba, credenciales no válidas).';
 
   @override
+  String get noInternetConnection =>
+      'Sin conexión a internet. Revisa tu wifi o tus datos móviles e inténtalo de nuevo.';
+
+  @override
   String get logOut => 'Cerrar sesión';
 
   @override
@@ -258,8 +310,11 @@ class AppLocalizationsEs extends AppLocalizations {
   String get licenseTitle => 'Licencia';
 
   @override
-  String get licenseSubtitle =>
-      'Tu suscripción de Dialcrest para esta cuenta de Twilio.';
+  String get licensePlanMonthly =>
+      'Licencia de Dialcrest — Suscripción mensual';
+
+  @override
+  String get licensePlanYearly => 'Licencia de Dialcrest — Suscripción anual';
 
   @override
   String get purchasingUnavailable =>
@@ -305,19 +360,15 @@ class AppLocalizationsEs extends AppLocalizations {
   String get perYearSuffix => '/año';
 
   @override
-  String get yearlyDiscountNote =>
-      'Con la suscripción anual obtienes 2 meses gratis. Las suscripciones se renuevan automáticamente hasta que se cancelen.';
-
-  @override
   String get modeTitle => 'Modo';
 
   @override
   String get modeSubtitleVacation =>
-      'Este dispositivo no sonará con las llamadas entrantes ni te avisará de nuevos mensajes. Esto no afecta a otras personas que usen esta cuenta de Twilio.';
+      'Este dispositivo no sonará con las llamadas entrantes ni te avisará de nuevos mensajes.';
 
   @override
   String get modeSubtitleOnline =>
-      'Este dispositivo suena con normalidad con las llamadas entrantes.';
+      'Este dispositivo suena con normalidad con las llamadas entrantes y te avisa de nuevos mensajes.';
 
   @override
   String get onlineMode => 'Modo en línea';

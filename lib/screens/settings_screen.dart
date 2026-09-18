@@ -72,25 +72,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _subscriptionError = null;
     });
     try {
-      // Kick both off before awaiting so they run concurrently.
-      final statusFuture = widget.subscriptionService.fetchStatus();
+      // Kick all off before awaiting so they run concurrently. The trial side
+      // is read from RTDB (fetchStatus); the paid side is re-verified against
+      // the store (refreshPaidStatus) so it self-heals after a renewal. A paid
+      // refresh failure (offline, no entitlement) must not fail the whole
+      // screen, so it degrades to null and we fall back to the trial record.
+      final trialFuture = widget.subscriptionService.fetchStatus();
+      final paidFuture = widget.subscriptionService
+          .refreshPaidStatus()
+          .catchError((_) => null as SubscriptionStatus?);
       final productsFuture = widget.subscriptionService.loadProducts();
-      final status = await statusFuture;
+      final trial = await trialFuture;
+      final paid = await paidFuture;
       final products = await productsFuture;
       if (!mounted) return;
       setState(() {
-        _subscriptionStatus = status;
+        _subscriptionStatus = _effectiveStatus(trial, paid);
         _products = products;
         _isLoadingSubscription = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _subscriptionError =
-            AppLocalizations.of(context)!.couldNotLoadSubscription(e.toString());
+        _subscriptionError = AppLocalizations.of(context)!
+            .couldNotLoadSubscription(describeTwilioError(e));
         _isLoadingSubscription = false;
       });
     }
+  }
+
+  /// Combines the two subscription axes for display: a live paid subscription
+  /// wins (show the plan + renewal date); otherwise a still-live trial covers
+  /// the user; otherwise show whichever lapsed record they actually have (a
+  /// paid record → "subscription expired", else the trial → "trial expired").
+  SubscriptionStatus _effectiveStatus(
+    SubscriptionStatus trial,
+    SubscriptionStatus? paid,
+  ) {
+    if (paid != null && paid.isActive) return paid;
+    if (trial.isActive) return trial;
+    return paid ?? trial;
   }
 
   /// Looks up [productId] among the store-loaded products and starts a
@@ -126,7 +147,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       );
     } catch (e) {
+      // A purchase can fail because the store considers the user already
+      // subscribed to the SAME plan (e.g. it auto-renewed but the app hadn't
+      // noticed). Rather than surface that as an error, re-verify the existing
+      // entitlement — if it's active for the plan just attempted, this is
+      // really a success. Only checking the plan match keeps an unrelated
+      // failure (e.g. a failed upgrade from monthly to yearly) from being
+      // masked by the still-active old plan.
+      final recovered = await _recoverExistingSubscription();
+      final expectedPlan =
+          productId == SubscriptionService.yearlyProductId ? 'yearly' : 'monthly';
       if (!mounted) return;
+      if (recovered != null && recovered.plan == expectedPlan) {
+        setState(() {
+          _subscriptionStatus = recovered;
+          _isPurchasing = false;
+        });
+        return;
+      }
       setState(() => _isPurchasing = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -135,6 +173,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
       );
+    }
+  }
+
+  /// Re-verifies this device's stored paid entitlement and returns it if
+  /// active, else null. Used to turn an "already subscribed" purchase failure
+  /// into a success and to back the "Restore purchases" action.
+  Future<SubscriptionStatus?> _recoverExistingSubscription() async {
+    try {
+      final status = await widget.subscriptionService.refreshPaidStatus();
+      return (status != null && status.isActive) ? status : null;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -325,7 +375,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _buildSectionHeader({
     required IconData icon,
     required String title,
-    required String subtitle,
+    String? subtitle,
   }) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
@@ -342,11 +392,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   title,
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  style: const TextStyle(color: Colors.grey, fontSize: 13),
-                ),
+                if (subtitle != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(color: Colors.grey, fontSize: 13),
+                  ),
+                ],
               ],
             ),
           ),
@@ -359,11 +411,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// plus purchase buttons on platforms that support in-app purchase.
   List<Widget> _buildLicenseSection() {
     final l10n = AppLocalizations.of(context)!;
+    final status = _subscriptionStatus;
+    // Name the active paid plan in the header subtitle; a trial or lapsed
+    // subscription has no plan to show, so the header stays title-only.
+    final planSubtitle = (status != null && status.isActive && !status.isTrial)
+        ? (status.plan == 'yearly'
+              ? l10n.licensePlanYearly
+              : l10n.licensePlanMonthly)
+        : null;
     return [
       _buildSectionHeader(
         icon: Icons.workspace_premium,
         title: l10n.licenseTitle,
-        subtitle: l10n.licenseSubtitle,
+        subtitle: planSubtitle,
       ),
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -388,7 +448,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   _buildSubscriptionStatusText(_subscriptionStatus!),
                   if (!_subscriptionStatus!.isActive ||
-                      _subscriptionStatus!.isTrial) ...[
+                      _subscriptionStatus!.isTrial ||
+                      !_subscriptionStatus!.autoRenew) ...[
                     const SizedBox(height: 12),
                     if (widget.subscriptionService.isSupported)
                       _buildPurchaseButtons()
@@ -462,11 +523,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 6),
-        Text(
-          l10n.yearlyDiscountNote,
-          style: const TextStyle(color: Colors.grey, fontSize: 12),
-        ),
         if (_isPurchasing) ...[
           const SizedBox(height: 8),
           const Center(
@@ -477,8 +533,57 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
         ],
+        // Lets a subscriber who reinstalled (and so lost the locally stored
+        // entitlement) recover their paid subscription from the store.
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(
+            onPressed: _isPurchasing ? null : _restorePurchases,
+            child: Text(l10n.restorePurchases),
+          ),
+        ),
       ],
     );
+  }
+
+  /// Asks the store to re-deliver past purchases, then re-verifies the
+  /// recovered entitlement. Shows the recovered subscription on success, or a
+  /// "nothing to restore" notice if the store had no active purchase.
+  Future<void> _restorePurchases() async {
+    if (_isPurchasing) return;
+    setState(() => _isPurchasing = true);
+    final l10n = AppLocalizations.of(context)!;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await widget.subscriptionService.restorePurchases();
+      // restorePurchases replays purchases through the stream asynchronously;
+      // poll the cheap local cache until it lands rather than guessing a fixed
+      // delay (~3s max — mirrors SubscriptionService.recoverEntitlement).
+      for (
+        var i = 0;
+        i < 10 && widget.subscriptionService.currentEntitlement.isEmpty;
+        i++
+      ) {
+        await Future.delayed(const Duration(milliseconds: 300));
+      }
+      final recovered = await _recoverExistingSubscription();
+      if (!mounted) return;
+      setState(() {
+        if (recovered != null) _subscriptionStatus = recovered;
+        _isPurchasing = false;
+      });
+      messenger.showSnackBar(SnackBar(
+        content: Text(
+          recovered != null ? l10n.purchasesRestored : l10n.noPurchasesToRestore,
+        ),
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isPurchasing = false);
+      messenger.showSnackBar(
+        SnackBar(content: Text(l10n.purchaseFailed(e.toString()))),
+      );
+    }
   }
 
   @override

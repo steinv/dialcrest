@@ -9,6 +9,7 @@ import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:in_app_purchase_android/in_app_purchase_android.dart';
 
 import '../models/subscription_status.dart';
+import 'storage_service.dart';
 
 /// Thrown by [SubscriptionService.purchase] when the user cancels the store's
 /// purchase flow rather than the purchase failing outright, so callers can
@@ -42,6 +43,7 @@ class SubscriptionService {
   static const String _androidProductId = 'dialcrest';
 
   final String accountSid;
+  final StorageService _storageService;
   final FirebaseFunctions _firebaseFunctions = FirebaseFunctions.instanceFor(
     region: 'europe-west1',
   );
@@ -63,14 +65,62 @@ class SubscriptionService {
   /// key to map purchase updates back to a specific pending purchase.
   Completer<SubscriptionStatus>? _pendingPurchase;
 
+  /// The startup restore kicked off below, while it's still the one
+  /// [recoverEntitlement] should join instead of starting a redundant one.
+  /// Consumed (set to null) the first time it's joined.
+  Future<void>? _startupRestore;
+
+  /// Set once [recoverEntitlement] has tried and found nothing. Nothing about
+  /// the answer changes without either a successful [purchase] or an explicit
+  /// "Restore purchases" tap — both populate [currentEntitlement] directly, on
+  /// a path this flag doesn't gate — so there's no value in retrying the
+  /// automatic mid-dial recovery again this session once it's failed once.
+  bool _entitlementRecoveryExhausted = false;
+
   bool get isSupported => Platform.isAndroid || Platform.isIOS;
 
-  SubscriptionService({required this.accountSid}) {
+  SubscriptionService({
+    required this.accountSid,
+    required StorageService storageService,
+  }) : _storageService = storageService {
     if (!isSupported) return;
     _purchaseSubscription = _inAppPurchase.purchaseStream.listen(
       _onPurchaseUpdate,
       onError: (e) => debugPrint('Subscription purchase stream error: $e'),
     );
+    // On Android, restorePurchases() is a silent local query (no prompt), so
+    // populate the cached entitlement at startup. This lets a device that owns
+    // a subscription but hasn't cached it (fresh install / new device) pass the
+    // enforcement gate on its first dial, before ever opening Settings. iOS is
+    // left to the explicit Restore button (and the StoreKit 2 path in
+    // APPLE_TODO.md) because its restore can prompt for sign-in.
+    if (Platform.isAndroid) {
+      _startupRestore = _inAppPurchase.restorePurchases().catchError(
+        (e) => debugPrint('Startup entitlement restore failed: $e'),
+      );
+    }
+  }
+
+  /// The store entitlement to attach to a gated backend call (twilioAccessToken
+  /// / twilioRefreshSubscription), or null if this device has only ever
+  /// trialed. The backend re-verifies whatever token this returns against the
+  /// store, so a persisted-but-stale token is fine — it names the subscription,
+  /// the store reports its current state. Deliberately does not query the store
+  /// (which can prompt for sign-in), so trialing users hit no store friction.
+  ///
+  /// TODO(ios): on iOS, StoreKit 2's Transaction.currentEntitlements could
+  /// recover a paid entitlement after a reinstall WITHOUT a sign-in prompt
+  /// (unlike restorePurchases), letting us auto-detect it here instead of
+  /// requiring the explicit "Restore purchases" button. The current design
+  /// doesn't use that path — it relies on the button — so a reinstalled iOS
+  /// subscriber still has to tap Restore until this is wired up.
+  Map<String, String> get currentEntitlement {
+    final store = _storageService.paidEntitlementStore;
+    final token = _storageService.paidEntitlementToken;
+    if (store == null || token == null) return const {};
+    return store == 'app_store'
+        ? {'signedTransactionInfo': token}
+        : {'purchaseToken': token};
   }
 
   void dispose() {
@@ -259,6 +309,13 @@ class SubscriptionService {
   Future<SubscriptionStatus> _verifyPurchase(PurchaseDetails purchase) async {
     final verificationData =
         purchase.verificationData.serverVerificationData;
+    // Persist first so the entitlement survives even if verification fails
+    // transiently — later token requests re-present it and the backend
+    // re-verifies against the store.
+    await _storageService.setPaidEntitlement(
+      Platform.isIOS ? 'app_store' : 'play_store',
+      verificationData,
+    );
     final callable = Platform.isIOS
         ? 'twilioVerifyApplePurchase'
         : 'twilioVerifyGooglePurchase';
@@ -271,5 +328,63 @@ class SubscriptionService {
     return SubscriptionStatus.fromJson(
       Map<String, dynamic>.from(response.data as Map),
     );
+  }
+
+  /// Re-verifies this device's stored paid entitlement against the store and
+  /// returns its current status, or null if the device has no paid entitlement
+  /// (trial-only). Used by Settings so paid state self-heals after a renewal
+  /// instead of relying on a stale cached expiry.
+  Future<SubscriptionStatus?> refreshPaidStatus() async {
+    final entitlement = currentEntitlement;
+    if (entitlement.isEmpty) return null;
+    final response = await _firebaseFunctions
+        .httpsCallable('twilioRefreshSubscription')
+        .call({'accountSid': accountSid, ...entitlement});
+    return SubscriptionStatus.fromJson(
+      Map<String, dynamic>.from(response.data as Map),
+    );
+  }
+
+  /// Asks the store to re-deliver past purchases through the purchase stream,
+  /// so a paid user who reinstalled (losing the locally stored entitlement) can
+  /// recover it. This can prompt for store sign-in, so it's an explicit
+  /// user-initiated action (a "Restore purchases" button), never automatic.
+  Future<void> restorePurchases() async {
+    if (!isSupported) return;
+    await _inAppPurchase.restorePurchases();
+  }
+
+  /// Attempts to silently recover a paid entitlement this device owns but
+  /// hasn't cached (fresh install / new device), returning whether one is now
+  /// available. Used by the enforcement retry when a dial is blocked as
+  /// "subscription expired" — covering the race where a dial happens before
+  /// the fire-and-forget startup restore (above) has populated
+  /// [currentEntitlement]. Android only: restorePurchases() there is a silent
+  /// local query, so it's safe mid-dial. iOS returns whatever is already cached
+  /// without triggering a (potentially prompting) restore — its silent path is
+  /// the StoreKit 2 currentEntitlements work in APPLE_TODO.md.
+  ///
+  /// Joins the startup restore instead of starting a second one, and gives up
+  /// for the rest of the session once a check finds nothing — see
+  /// [_entitlementRecoveryExhausted] — so a device with no subscription pays
+  /// this cost at most once, not on every blocked dial.
+  Future<bool> recoverEntitlement() async {
+    if (currentEntitlement.isNotEmpty) return true;
+    if (!Platform.isAndroid || _entitlementRecoveryExhausted) return false;
+    final startupRestore = _startupRestore;
+    _startupRestore = null;
+    try {
+      await (startupRestore ?? _inAppPurchase.restorePurchases());
+      // restorePurchases delivers purchases through the stream asynchronously;
+      // poll briefly until _handlePurchase has persisted one (~3s max).
+      for (var i = 0; i < 10 && currentEntitlement.isEmpty; i++) {
+        await Future.delayed(const Duration(milliseconds: 300));
+      }
+    } catch (e) {
+      debugPrint('Entitlement recovery failed: $e');
+    }
+    final found = currentEntitlement.isNotEmpty;
+    if (!found) _entitlementRecoveryExhausted = true;
+    return found;
   }
 }

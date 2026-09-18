@@ -404,6 +404,72 @@ abstract class AppLocalizations {
   /// **'Failed to send message: {error}'**
   String failedToSendMessage(Object error);
 
+  /// No description provided for @delete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get delete;
+
+  /// No description provided for @share.
+  ///
+  /// In en, this message translates to:
+  /// **'Share'**
+  String get share;
+
+  /// No description provided for @copy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy'**
+  String get copy;
+
+  /// No description provided for @copiedToClipboard.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied to clipboard'**
+  String get copiedToClipboard;
+
+  /// No description provided for @deleteMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete message'**
+  String get deleteMessage;
+
+  /// No description provided for @deleteConversation.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete conversation'**
+  String get deleteConversation;
+
+  /// No description provided for @deleteMessageConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Permanently delete this message from Twilio? This can\'t be undone.'**
+  String get deleteMessageConfirm;
+
+  /// No description provided for @deleteConversationConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Permanently delete this whole conversation ({count} messages) from Twilio? This can\'t be undone.'**
+  String deleteConversationConfirm(Object count);
+
+  /// No description provided for @messageDeleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Message deleted'**
+  String get messageDeleted;
+
+  /// No description provided for @conversationDeleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Conversation deleted'**
+  String get conversationDeleted;
+
+  /// No description provided for @failedToDeleteMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to delete message: {error}'**
+  String failedToDeleteMessage(Object error);
+
   /// No description provided for @noMessagesYet.
   ///
   /// In en, this message translates to:
@@ -452,6 +518,24 @@ abstract class AppLocalizations {
   /// **'Purchase canceled'**
   String get purchaseCanceled;
 
+  /// No description provided for @restorePurchases.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore purchases'**
+  String get restorePurchases;
+
+  /// No description provided for @purchasesRestored.
+  ///
+  /// In en, this message translates to:
+  /// **'Subscription restored'**
+  String get purchasesRestored;
+
+  /// No description provided for @noPurchasesToRestore.
+  ///
+  /// In en, this message translates to:
+  /// **'No active subscription found to restore'**
+  String get noPurchasesToRestore;
+
   /// No description provided for @failedToUpdateMode.
   ///
   /// In en, this message translates to:
@@ -476,6 +560,12 @@ abstract class AppLocalizations {
   /// **'Check your Twilio account for issues (suspended, trial restrictions, invalid credentials).'**
   String get twilioAccountError;
 
+  /// No description provided for @noInternetConnection.
+  ///
+  /// In en, this message translates to:
+  /// **'No internet connection. Check your Wi-Fi or mobile data and try again.'**
+  String get noInternetConnection;
+
   /// No description provided for @logOut.
   ///
   /// In en, this message translates to:
@@ -494,11 +584,17 @@ abstract class AppLocalizations {
   /// **'License'**
   String get licenseTitle;
 
-  /// No description provided for @licenseSubtitle.
+  /// No description provided for @licensePlanMonthly.
   ///
   /// In en, this message translates to:
-  /// **'Your Dialcrest subscription for this Twilio account.'**
-  String get licenseSubtitle;
+  /// **'Dialcrest license — Monthly subscription'**
+  String get licensePlanMonthly;
+
+  /// No description provided for @licensePlanYearly.
+  ///
+  /// In en, this message translates to:
+  /// **'Dialcrest license — Yearly subscription'**
+  String get licensePlanYearly;
 
   /// No description provided for @purchasingUnavailable.
   ///
@@ -560,12 +656,6 @@ abstract class AppLocalizations {
   /// **'/year'**
   String get perYearSuffix;
 
-  /// No description provided for @yearlyDiscountNote.
-  ///
-  /// In en, this message translates to:
-  /// **'Purchasing for a year gives you 2 months free. Subscriptions renew automatically until canceled.'**
-  String get yearlyDiscountNote;
-
   /// No description provided for @modeTitle.
   ///
   /// In en, this message translates to:
@@ -575,13 +665,13 @@ abstract class AppLocalizations {
   /// No description provided for @modeSubtitleVacation.
   ///
   /// In en, this message translates to:
-  /// **'This device will not ring for incoming calls or notify you of new texts. Other people using this Twilio account are unaffected.'**
+  /// **'This device will not ring for incoming calls or notify you of new texts.'**
   String get modeSubtitleVacation;
 
   /// No description provided for @modeSubtitleOnline.
   ///
   /// In en, this message translates to:
-  /// **'This device rings for incoming calls as normal.'**
+  /// **'This device rings for incoming calls and notifies you of new texts, as normal.'**
   String get modeSubtitleOnline;
 
   /// No description provided for @onlineMode.

@@ -197,6 +197,44 @@ class AppLocalizationsNl extends AppLocalizations {
   }
 
   @override
+  String get delete => 'Verwijderen';
+
+  @override
+  String get share => 'Delen';
+
+  @override
+  String get copy => 'Kopiëren';
+
+  @override
+  String get copiedToClipboard => 'Gekopieerd naar klembord';
+
+  @override
+  String get deleteMessage => 'Bericht verwijderen';
+
+  @override
+  String get deleteConversation => 'Gesprek verwijderen';
+
+  @override
+  String get deleteMessageConfirm =>
+      'Dit bericht definitief verwijderen uit Twilio? Dit kan niet ongedaan worden gemaakt.';
+
+  @override
+  String deleteConversationConfirm(Object count) {
+    return 'Dit hele gesprek ($count berichten) definitief verwijderen uit Twilio? Dit kan niet ongedaan worden gemaakt.';
+  }
+
+  @override
+  String get messageDeleted => 'Bericht verwijderd';
+
+  @override
+  String get conversationDeleted => 'Gesprek verwijderd';
+
+  @override
+  String failedToDeleteMessage(Object error) {
+    return 'Verwijderen van bericht mislukt: $error';
+  }
+
+  @override
   String get noMessagesYet => 'Nog geen berichten';
 
   @override
@@ -227,6 +265,16 @@ class AppLocalizationsNl extends AppLocalizations {
   String get purchaseCanceled => 'Aankoop geannuleerd';
 
   @override
+  String get restorePurchases => 'Aankopen herstellen';
+
+  @override
+  String get purchasesRestored => 'Abonnement hersteld';
+
+  @override
+  String get noPurchasesToRestore =>
+      'Geen actief abonnement gevonden om te herstellen';
+
+  @override
   String failedToUpdateMode(Object error) {
     return 'Bijwerken van modus mislukt: $error';
   }
@@ -246,6 +294,10 @@ class AppLocalizationsNl extends AppLocalizations {
       'Controleer je Twilio-account op problemen (geschorst, proefbeperkingen, ongeldige inloggegevens).';
 
   @override
+  String get noInternetConnection =>
+      'Geen internetverbinding. Controleer je wifi of mobiele data en probeer het opnieuw.';
+
+  @override
   String get logOut => 'Uitloggen';
 
   @override
@@ -256,8 +308,11 @@ class AppLocalizationsNl extends AppLocalizations {
   String get licenseTitle => 'Licentie';
 
   @override
-  String get licenseSubtitle =>
-      'Uw Dialcrest-abonnement voor dit Twilio-account.';
+  String get licensePlanMonthly =>
+      'Dialcrest-licentie — Maandelijks abonnement';
+
+  @override
+  String get licensePlanYearly => 'Dialcrest-licentie — Jaarlijks abonnement';
 
   @override
   String get purchasingUnavailable =>
@@ -303,19 +358,15 @@ class AppLocalizationsNl extends AppLocalizations {
   String get perYearSuffix => '/jaar';
 
   @override
-  String get yearlyDiscountNote =>
-      'Bij een jaarabonnement krijgt u 2 maanden gratis. Abonnementen worden automatisch verlengd totdat u opzegt.';
-
-  @override
   String get modeTitle => 'Modus';
 
   @override
   String get modeSubtitleVacation =>
-      'Dit apparaat gaat niet over bij inkomende oproepen en meldt geen nieuwe berichten. Andere gebruikers van dit Twilio-account worden hierdoor niet beïnvloed.';
+      'Dit apparaat gaat niet over bij inkomende oproepen en meldt geen nieuwe berichten.';
 
   @override
   String get modeSubtitleOnline =>
-      'Dit apparaat gaat normaal over bij inkomende oproepen.';
+      'Dit apparaat gaat normaal over bij inkomende oproepen en meldt nieuwe berichten.';
 
   @override
   String get onlineMode => 'Online modus';
