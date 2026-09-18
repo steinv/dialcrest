@@ -258,7 +258,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       // Kick both off before awaiting so they run concurrently.
       final numbersFuture = widget.twilioService.getIncomingNumbers();
-      final appSidFuture = widget.twilioService.getIncomingAppSid();
+      final appSidFuture = widget.twilioService.getCachedIncomingAppSid();
       // Settings can open before the app's startup caller-id lookup finishes;
       // wait for it so _selectedNumber below reflects the resolved default
       // (falls back to the first number) instead of a still-blank value.

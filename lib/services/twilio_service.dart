@@ -816,8 +816,34 @@ class TwilioService {
     }
   }
 
+  DatabaseReference _incomingAppSidRef() => FirebaseDatabase.instanceFor(
+        app: Firebase.app(),
+        databaseURL:
+            'https://twilio-phone-peblet-default-rtdb.europe-west1.firebasedatabase.app',
+      ).ref('/twilio/$accountSid/twiml-app-sid/incoming');
+
+  /// Like [getIncomingAppSid] but reads the SID from its server-side RTDB cache
+  /// (written by getOrCreateTwimlApp) instead of the Cloud Function, so Settings
+  /// — which opens often and only needs to compare each number's
+  /// voice_application_sid against ours — avoids a round-trip every time.
+  ///
+  /// Falls back to [getIncomingAppSid] when the cache is empty (a brand-new
+  /// account whose incoming app hasn't been created yet) or the RTDB read fails.
+  /// Unlike [getIncomingAppSid] it never *creates* the app, so callers that rely
+  /// on get-or-create (e.g. onboarding) must keep using [getIncomingAppSid].
+  Future<String> getCachedIncomingAppSid() async {
+    try {
+      await AccountAuthService.instance.ensureLinked(accountSid, authToken);
+      final cached = (await _incomingAppSidRef().get()).value;
+      if (cached is String && cached.isNotEmpty) return cached;
+    } catch (e) {
+      debugPrint('Could not read cached incoming app sid, falling back: $e');
+    }
+    return getIncomingAppSid();
+  }
+
   /// The tenant's incoming TwiML App SID (created on first use). A number is
-  /// configured for this app iff its voice_application_sid equals this.
+  /// configured for this app if its voice_application_sid equals this.
   Future<String> getIncomingAppSid() async {
     try {
       final response = await _firebaseFunctions
