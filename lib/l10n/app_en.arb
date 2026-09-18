@@ -202,6 +202,9 @@
   "deleteConversation": "Delete conversation",
   "@deleteConversation": {},
 
+  "openConversation": "Open conversation",
+  "@openConversation": {},
+
   "deleteMessageConfirm": "Permanently delete this message from Twilio? This can't be undone.",
   "@deleteMessageConfirm": {},
 

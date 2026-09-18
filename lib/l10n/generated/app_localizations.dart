@@ -446,6 +446,12 @@ abstract class AppLocalizations {
   /// **'Delete conversation'**
   String get deleteConversation;
 
+  /// No description provided for @openConversation.
+  ///
+  /// In en, this message translates to:
+  /// **'Open conversation'**
+  String get openConversation;
+
   /// No description provided for @deleteMessageConfirm.
   ///
   /// In en, this message translates to:

@@ -215,6 +215,9 @@ class AppLocalizationsNl extends AppLocalizations {
   String get deleteConversation => 'Gesprek verwijderen';
 
   @override
+  String get openConversation => 'Gesprek openen';
+
+  @override
   String get deleteMessageConfirm =>
       'Dit bericht definitief verwijderen uit Twilio? Dit kan niet ongedaan worden gemaakt.';
 

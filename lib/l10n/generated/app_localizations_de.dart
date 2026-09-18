@@ -216,6 +216,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get deleteConversation => 'Unterhaltung löschen';
 
   @override
+  String get openConversation => 'Unterhaltung öffnen';
+
+  @override
   String get deleteMessageConfirm =>
       'Diese Nachricht endgültig aus Twilio löschen? Das kann nicht rückgängig gemacht werden.';
 

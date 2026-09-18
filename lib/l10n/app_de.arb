@@ -61,6 +61,7 @@
   "copiedToClipboard": "In die Zwischenablage kopiert",
   "deleteMessage": "Nachricht löschen",
   "deleteConversation": "Unterhaltung löschen",
+  "openConversation": "Unterhaltung öffnen",
   "deleteMessageConfirm": "Diese Nachricht endgültig aus Twilio löschen? Das kann nicht rückgängig gemacht werden.",
   "deleteConversationConfirm": "Diese gesamte Unterhaltung ({count} Nachrichten) endgültig aus Twilio löschen? Das kann nicht rückgängig gemacht werden.",
   "messageDeleted": "Nachricht gelöscht",

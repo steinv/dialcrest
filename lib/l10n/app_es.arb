@@ -61,6 +61,7 @@
   "copiedToClipboard": "Copiado al portapapeles",
   "deleteMessage": "Eliminar mensaje",
   "deleteConversation": "Eliminar conversación",
+  "openConversation": "Abrir conversación",
   "deleteMessageConfirm": "¿Eliminar permanentemente este mensaje de Twilio? Esta acción no se puede deshacer.",
   "deleteConversationConfirm": "¿Eliminar permanentemente toda esta conversación ({count} mensajes) de Twilio? Esta acción no se puede deshacer.",
   "messageDeleted": "Mensaje eliminado",

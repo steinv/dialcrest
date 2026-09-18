@@ -61,6 +61,7 @@
   "copiedToClipboard": "Copié dans le presse-papiers",
   "deleteMessage": "Supprimer le message",
   "deleteConversation": "Supprimer la conversation",
+  "openConversation": "Ouvrir la conversation",
   "deleteMessageConfirm": "Supprimer définitivement ce message de Twilio ? Cette action est irréversible.",
   "deleteConversationConfirm": "Supprimer définitivement toute cette conversation ({count} messages) de Twilio ? Cette action est irréversible.",
   "messageDeleted": "Message supprimé",

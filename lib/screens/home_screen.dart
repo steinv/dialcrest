@@ -701,6 +701,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           onSelectContact: (number) =>
               setState(() => _selectedContact = number),
           onStartConversation: _startNewConversation,
+          onCall: _makeCall,
         );
       case 3:
         return SettingsScreen(

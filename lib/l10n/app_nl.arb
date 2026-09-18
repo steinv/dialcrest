@@ -61,6 +61,7 @@
   "copiedToClipboard": "Gekopieerd naar klembord",
   "deleteMessage": "Bericht verwijderen",
   "deleteConversation": "Gesprek verwijderen",
+  "openConversation": "Gesprek openen",
   "deleteMessageConfirm": "Dit bericht definitief verwijderen uit Twilio? Dit kan niet ongedaan worden gemaakt.",
   "deleteConversationConfirm": "Dit hele gesprek ({count} berichten) definitief verwijderen uit Twilio? Dit kan niet ongedaan worden gemaakt.",
   "messageDeleted": "Bericht verwijderd",

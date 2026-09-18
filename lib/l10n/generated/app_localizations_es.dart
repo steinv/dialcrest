@@ -217,6 +217,9 @@ class AppLocalizationsEs extends AppLocalizations {
   String get deleteConversation => 'Eliminar conversación';
 
   @override
+  String get openConversation => 'Abrir conversación';
+
+  @override
   String get deleteMessageConfirm =>
       '¿Eliminar permanentemente este mensaje de Twilio? Esta acción no se puede deshacer.';
 
