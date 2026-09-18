@@ -487,6 +487,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
   }
 
+  /// Opens the Messages thread for [number] — e.g. from the call-history
+  /// action sheet's "Message" option. Unlike [_openNewConversation] this
+  /// assumes no sheet is still on the navigation stack (the caller pops its
+  /// own), so it only switches tabs.
+  void _openConversation(String number) {
+    final trimmed = number.trim();
+    if (trimmed.isEmpty) return;
+    setState(() {
+      _selectedIndex = 2; // Messages tab
+      _selectedContact = trimmed;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -662,6 +675,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           key: _callHistoryKey,
           twilioService: _twilioService,
           onCall: _makeCall,
+          onMessage: _openConversation,
         );
       case 2:
         return MessagesScreen(

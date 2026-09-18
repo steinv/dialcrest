@@ -200,41 +200,47 @@ abstract class AppLocalizations {
   /// **'Outgoing'**
   String get callTypeOutgoing;
 
-  /// No description provided for @missedSuffix.
-  ///
-  /// In en, this message translates to:
-  /// **' (Missed)'**
-  String get missedSuffix;
-
   /// No description provided for @addToContacts.
   ///
   /// In en, this message translates to:
   /// **'Add to Contacts'**
   String get addToContacts;
 
-  /// No description provided for @callBack.
+  /// No description provided for @message.
   ///
   /// In en, this message translates to:
-  /// **'Call Back'**
-  String get callBack;
+  /// **'Message'**
+  String get message;
 
-  /// No description provided for @callDetailsType.
+  /// No description provided for @call.
   ///
   /// In en, this message translates to:
-  /// **'Type: {type}'**
-  String callDetailsType(Object type);
+  /// **'Call'**
+  String get call;
 
-  /// No description provided for @callDetailsTime.
+  /// No description provided for @deleteFromHistory.
   ///
   /// In en, this message translates to:
-  /// **'Time: {time}'**
-  String callDetailsTime(Object time);
+  /// **'Delete from history'**
+  String get deleteFromHistory;
 
-  /// No description provided for @callDetailsDuration.
+  /// No description provided for @deleteCallConfirm.
   ///
   /// In en, this message translates to:
-  /// **'Duration: {duration}'**
-  String callDetailsDuration(Object duration);
+  /// **'Permanently delete this call from Twilio? This can\'t be undone.'**
+  String get deleteCallConfirm;
+
+  /// No description provided for @callDeleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Call deleted'**
+  String get callDeleted;
+
+  /// No description provided for @failedToDeleteCall.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to delete call: {error}'**
+  String failedToDeleteCall(Object error);
 
   /// No description provided for @durationHoursMinutes.
   ///

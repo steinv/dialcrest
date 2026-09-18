@@ -53,28 +53,27 @@
   "callTypeOutgoing": "Outgoing",
   "@callTypeOutgoing": {},
 
-  "missedSuffix": " (Missed)",
-  "@missedSuffix": {},
-
   "addToContacts": "Add to Contacts",
   "@addToContacts": {},
 
-  "callBack": "Call Back",
-  "@callBack": {},
+  "message": "Message",
+  "@message": {},
 
-  "callDetailsType": "Type: {type}",
-  "@callDetailsType": {
-    "placeholders": { "type": {} }
-  },
+  "call": "Call",
+  "@call": {},
 
-  "callDetailsTime": "Time: {time}",
-  "@callDetailsTime": {
-    "placeholders": { "time": {} }
-  },
+  "deleteFromHistory": "Delete from history",
+  "@deleteFromHistory": {},
 
-  "callDetailsDuration": "Duration: {duration}",
-  "@callDetailsDuration": {
-    "placeholders": { "duration": {} }
+  "deleteCallConfirm": "Permanently delete this call from Twilio? This can't be undone.",
+  "@deleteCallConfirm": {},
+
+  "callDeleted": "Call deleted",
+  "@callDeleted": {},
+
+  "failedToDeleteCall": "Failed to delete call: {error}",
+  "@failedToDeleteCall": {
+    "placeholders": { "error": {} }
   },
 
   "durationHoursMinutes": "{hours}h {minutes}m",

@@ -64,27 +64,27 @@ class AppLocalizationsNl extends AppLocalizations {
   String get callTypeOutgoing => 'Uitgaand';
 
   @override
-  String get missedSuffix => ' (Gemist)';
-
-  @override
   String get addToContacts => 'Toevoegen aan contacten';
 
   @override
-  String get callBack => 'Terugbellen';
+  String get message => 'Bericht';
 
   @override
-  String callDetailsType(Object type) {
-    return 'Type: $type';
-  }
+  String get call => 'Bellen';
 
   @override
-  String callDetailsTime(Object time) {
-    return 'Tijd: $time';
-  }
+  String get deleteFromHistory => 'Uit geschiedenis verwijderen';
 
   @override
-  String callDetailsDuration(Object duration) {
-    return 'Duur: $duration';
+  String get deleteCallConfirm =>
+      'Dit gesprek definitief verwijderen uit Twilio? Dit kan niet ongedaan worden gemaakt.';
+
+  @override
+  String get callDeleted => 'Gesprek verwijderd';
+
+  @override
+  String failedToDeleteCall(Object error) {
+    return 'Verwijderen van gesprek mislukt: $error';
   }
 
   @override
