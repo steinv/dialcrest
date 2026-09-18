@@ -38,6 +38,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Set<String> _pendingConfigureSids = {};
   bool _vacationMode = false;
   bool _isTogglingVacationMode = false;
+  /// When false (the default), Settings shows a single dropdown that sets one
+  /// number for both incoming and outgoing. When true, the incoming/outgoing
+  /// split is shown instead. Persisted per-device via StorageService.
+  bool _advanced = false;
   SubscriptionStatus? _subscriptionStatus;
   List<ProductDetails> _products = [];
   bool _isLoadingSubscription = true;
@@ -62,6 +66,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     _selectedNumber = widget.twilioService.currentPhoneNumber;
     _vacationMode = widget.twilioService.isVacationMode;
+    _advanced = Provider.of<StorageService>(context, listen: false)
+        .getAdvancedNumberConfig();
     _loadData();
     _loadSubscription();
   }
@@ -339,6 +345,99 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// Returns [_numbers] with each entry's voice_application_sid rewritten so
+  /// exactly [configuredSids] point at this app's incoming TwiML App — mirrors
+  /// server-side state after a configureNumbers call, so [_configuredSids]
+  /// (and the advanced view) stay in sync without a refetch.
+  List<IncomingPhoneNumbers> _withConfiguredSids(Set<String> configuredSids) {
+    return _numbers
+        .map(
+          (n) => IncomingPhoneNumbers(
+            n.capabilities,
+            n.phone_number,
+            n.status,
+            n.sid,
+            configuredSids.contains(n.sid) ? _incomingAppSid : '',
+          ),
+        )
+        .toList();
+  }
+
+  /// Simple-mode selection: makes [number] the single number used for both
+  /// directions. Sets it as the outgoing caller id AND configures it (only it)
+  /// for incoming — configureNumbers reverts every other number to its
+  /// pre-app snapshot, so simple mode always means exactly one active number.
+  Future<void> _selectSimpleNumber(String number) async {
+    if (_isSwitching) return;
+    final match = _numbers.where((n) => n.phone_number == number);
+    if (match.isEmpty) return;
+    final sid = match.first.sid;
+    // Nothing to do if it's already the sole configured number and current.
+    if (number == _selectedNumber &&
+        _configuredSids.length == 1 &&
+        _configuredSids.contains(sid)) {
+      return;
+    }
+    await _applySingleNumber(number, sid, setOutgoing: true);
+  }
+
+  /// Shared body of the simple-mode single-number apply: marks switching,
+  /// optionally re-points the outgoing caller id, configures [sid] as the sole
+  /// incoming number, and syncs local state — with the common error snackbar.
+  /// Callers ([_selectSimpleNumber], [_applySimpleConfig]) run their own
+  /// guard/match first and skip the no-op case.
+  Future<void> _applySingleNumber(
+    String number,
+    String sid, {
+    required bool setOutgoing,
+  }) async {
+    setState(() => _isSwitching = true);
+    try {
+      if (setOutgoing) await widget.twilioService.setCurrentPhoneNumber(number);
+      await widget.twilioService.configureNumbers([sid]);
+      if (!mounted) return;
+      setState(() {
+        _selectedNumber = number;
+        _numbers = _withConfiguredSids({sid});
+        _isSwitching = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isSwitching = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context)!.failedToSwitchNumber(e.toString()),
+          ),
+        ),
+      );
+    }
+  }
+
+  /// Persists the advanced toggle. Turning it OFF re-enforces the single-number
+  /// rule: the currently selected number is configured for incoming and every
+  /// other number is reverted to its snapshot (see [_selectSimpleNumber]).
+  Future<void> _setAdvanced(bool advanced) async {
+    setState(() => _advanced = advanced);
+    await Provider.of<StorageService>(context, listen: false)
+        .setAdvancedNumberConfig(advanced);
+    if (!advanced) await _applySimpleConfig();
+  }
+
+  /// Configures the selected number (only it) for incoming, reverting all
+  /// others — used when leaving advanced mode so basic mode's guarantee holds.
+  /// A no-op if it's already the sole configured number.
+  Future<void> _applySimpleConfig() async {
+    final selected = _selectedNumber;
+    if (selected == null || _isSwitching) return;
+    final match = _numbers.where((n) => n.phone_number == selected);
+    if (match.isEmpty) return;
+    final sid = match.first.sid;
+    if (_configuredSids.length == 1 && _configuredSids.contains(sid)) return;
+    // Outgoing already points at [selected]; only incoming needs re-pointing.
+    await _applySingleNumber(selected, sid, setOutgoing: false);
+  }
+
   Future<void> _logout() async {
     final l10n = AppLocalizations.of(context)!;
     final confirmed = await showDialog<bool>(
@@ -586,6 +685,121 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// Simplified number config: one dropdown that sets a single number for both
+  /// incoming and outgoing (see [_selectSimpleNumber]).
+  List<Widget> _buildSimpleNumberConfig(AppLocalizations l10n) {
+    return [
+      _buildSectionHeader(
+        icon: Icons.phone,
+        title: l10n.phoneNumberTitle,
+      ),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      isExpanded: true,
+                      value: _phoneNumbers.contains(_selectedNumber)
+                          ? _selectedNumber
+                          : null,
+                      hint: Text(l10n.selectNumber),
+                      items: _phoneNumbers
+                          .map(
+                            (number) => DropdownMenuItem<String>(
+                              value: number,
+                              child: Text(number),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: _isSwitching
+                          ? null
+                          : (value) {
+                              if (value != null) _selectSimpleNumber(value);
+                            },
+                    ),
+                  ),
+                ),
+                if (_isSwitching) ...[
+                  const SizedBox(width: 12),
+                  const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    ];
+  }
+
+  /// Advanced number config: the incoming/outgoing split — an outgoing caller
+  /// id picker plus per-number "rings this app" checkboxes.
+  List<Widget> _buildAdvancedNumberConfig(AppLocalizations l10n) {
+    return [
+      _buildSectionHeader(
+        icon: Icons.call_made,
+        title: l10n.outgoingTitle,
+        subtitle: l10n.outgoingSubtitle,
+      ),
+      Card(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        child: Column(
+          children: _phoneNumbers
+              .map(
+                (number) => RadioListTile<String>(
+                  controlAffinity: ListTileControlAffinity.leading,
+                  title: Text(number),
+                  value: number,
+                  groupValue: _selectedNumber,
+                  onChanged: _isSwitching
+                      ? null
+                      : (value) => _selectNumber(value!),
+                ),
+              )
+              .toList(),
+        ),
+      ),
+      const SizedBox(height: 24),
+      _buildSectionHeader(
+        icon: Icons.call_received,
+        title: l10n.incomingTitle,
+        subtitle: l10n.incomingSubtitle,
+      ),
+      Card(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        child: Column(
+          children: _numbers.map((number) {
+            final isConfigured = _configuredSids.contains(number.sid);
+            final isPending = _pendingConfigureSids.contains(number.sid);
+            return CheckboxListTile(
+              controlAffinity: ListTileControlAffinity.leading,
+              title: Text(number.phone_number),
+              value: isConfigured,
+              onChanged: isPending
+                  ? null
+                  : (value) => _toggleConfigured(number, value ?? false),
+              secondary: isPending
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : null,
+            );
+          }).toList(),
+        ),
+      ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -643,12 +857,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         _setVacationMode(selection.first),
                   ),
           ),
-          const SizedBox(height: 24),
-          _buildSectionHeader(
-            icon: Icons.call_made,
-            title: l10n.outgoingTitle,
-            subtitle: l10n.outgoingSubtitle,
-          ),
+          const SizedBox(height: 16),
           if (_isLoading)
             const Padding(
               padding: EdgeInsets.all(24),
@@ -664,54 +873,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Text(l10n.noPhoneNumbersFound),
             )
-          else ...[
-            Card(
-              margin: const EdgeInsets.symmetric(horizontal: 16),
-              child: Column(
-                children: _phoneNumbers
-                    .map(
-                      (number) => RadioListTile<String>(
-                        controlAffinity: ListTileControlAffinity.leading,
-                        title: Text(number),
-                        value: number,
-                        groupValue: _selectedNumber,
-                        onChanged: _isSwitching
-                            ? null
-                            : (value) => _selectNumber(value!),
-                      ),
-                    )
-                    .toList(),
-              ),
-            ),
-            const SizedBox(height: 24),
-            _buildSectionHeader(
-              icon: Icons.call_received,
-              title: l10n.incomingTitle,
-              subtitle: l10n.incomingSubtitle,
-            ),
-            Card(
-              margin: const EdgeInsets.symmetric(horizontal: 16),
-              child: Column(
-                children: _numbers.map((number) {
-                  final isConfigured = _configuredSids.contains(number.sid);
-                  final isPending = _pendingConfigureSids.contains(number.sid);
-                  return CheckboxListTile(
-                    controlAffinity: ListTileControlAffinity.leading,
-                    title: Text(number.phone_number),
-                    value: isConfigured,
-                    onChanged: isPending
-                        ? null
-                        : (value) => _toggleConfigured(number, value ?? false),
-                    secondary: isPending
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : null,
-                  );
-                }).toList(),
-              ),
+          else if (_advanced)
+            ..._buildAdvancedNumberConfig(l10n)
+          else
+            ..._buildSimpleNumberConfig(l10n),
+          // Only offer the advanced split when there are numbers to configure;
+          // with none, both modes collapse to the same "no numbers" message.
+          if (_phoneNumbers.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            SwitchListTile(
+              secondary: const Icon(Icons.tune),
+              title: Text(l10n.advancedTitle),
+              value: _advanced,
+              // Disabled mid-switch so a config apply can't race a toggle.
+              onChanged: _isSwitching ? null : _setAdvanced,
             ),
           ],
           const Divider(height: 32),

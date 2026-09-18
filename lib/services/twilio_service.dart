@@ -399,25 +399,79 @@ class TwilioService {
     // registered" — see SubscriptionService.fetchStatus).
     _registerVoice();
 
-    // Resolve the caller-id number used for outgoing calls/access-token minting.
+    // Resolve the caller-id number used for outgoing calls/access-token minting
+    // (and, on first launch, wire that same number for incoming — see
+    // _resolveCurrentPhoneNumber).
     _currentPhoneNumberResolved = _resolveCurrentPhoneNumber();
   }
 
   Future<void> _resolveCurrentPhoneNumber() async {
     try {
-      final phoneNumbers = await getPhoneNumbers();
-      if (phoneNumbers == null || phoneNumbers.isEmpty) return;
+      // Fetch the full number resources (not just getPhoneNumbers' strings) so
+      // the same list drives both caller-id resolution and the first-launch
+      // incoming wiring below, which needs each number's sid and current
+      // voice_application_sid.
+      final numbers = await getIncomingNumbers();
+      if (numbers.isEmpty) return;
+      final phoneNumbers = numbers.map((n) => n.phone_number).toList();
+      // Catch numbers added to the account since last launch (getPhoneNumbers
+      // did this as a side effect; preserved here now that we fetch directly).
+      unawaited(_reregisterForNewNumbers(phoneNumbers));
       // Prefer the number the user previously picked in Settings, as long as
       // it's still on the account; otherwise fall back to the first number.
       final selected = _storageService.getSelectedPhoneNumber(accountSid);
       currentPhoneNumber = (selected != null && phoneNumbers.contains(selected))
           ? selected
           : phoneNumbers.first;
+      // First-launch onboarding: wire that same number for incoming too, so a
+      // new single-number user receives calls/texts without visiting Settings.
+      // Fire-and-forget so it doesn't delay currentPhoneNumber readiness for
+      // callers awaiting ensureCurrentPhoneNumberResolved (outgoing).
+      unawaited(_ensureIncomingConfigured(numbers));
     } catch (e) {
       // A transient connectivity failure (e.g. no DNS for api.twilio.com) must
       // not become an unhandled exception during startup; the user can still
       // pick a caller id later from Settings once the account is reachable.
       debugPrint('Skipping caller-id resolution, phone-number fetch failed: $e');
+    }
+  }
+
+  /// One-time onboarding that makes the resolved caller-id number ring this app
+  /// for incoming calls/texts too. Called from [_resolveCurrentPhoneNumber]
+  /// with the numbers it already fetched. Runs once per account per device
+  /// (guarded by a StorageService flag) and only for a genuinely new user —
+  /// one who has never picked a caller id on this device. A returning user
+  /// (stored selection present) has already had the chance to set up incoming,
+  /// so we never override their choice — including a deliberate "no incoming"
+  /// setup — even on the first launch after this feature ships; the flag is
+  /// simply seeded for them. Any failure leaves the flag unset so it retries on
+  /// the next launch.
+  Future<void> _ensureIncomingConfigured(List<IncomingPhoneNumbers> numbers) async {
+    if (_storageService.getIncomingAutoConfigured(accountSid)) return;
+    // A stored caller-id selection means the user has used the app before, so
+    // their current incoming setup is deliberate. Seed the flag and skip rather
+    // than re-wiring incoming behind their back on the first post-upgrade run.
+    if (_storageService.getSelectedPhoneNumber(accountSid) != null) {
+      await _storageService.setIncomingAutoConfigured(accountSid, true);
+      return;
+    }
+    final current = currentPhoneNumber;
+    if (current == null || current.isEmpty) return;
+    try {
+      final appSid = await getIncomingAppSid();
+      final alreadyConfigured = numbers.any(
+        (n) => n.voice_application_sid != null && n.voice_application_sid == appSid,
+      );
+      if (!alreadyConfigured) {
+        final match = numbers.where((n) => n.phone_number == current);
+        if (match.isEmpty) return; // caller id not among numbers; retry next launch
+        await configureNumbers([match.first.sid]);
+      }
+      // Configured now, or the user already had a number configured — either
+      // way onboarding is done; don't run again on this device.
+      await _storageService.setIncomingAutoConfigured(accountSid, true);
+    } catch (e) {
+      debugPrint('Auto-configure incoming failed (will retry next launch): $e');
     }
   }
 
@@ -630,6 +684,28 @@ class TwilioService {
     _cachedAccessToken = null;
     _cachedAccessTokenExpiry = null;
     await _registerVoice();
+  }
+
+  /// Switches the outgoing caller id from the app bar's quick switcher,
+  /// respecting the number-config mode. In advanced mode outgoing and incoming
+  /// are independent, so this only changes the caller id. In simple mode the
+  /// active number is shared for both directions, so it also re-points incoming
+  /// (via [configureNumbers]) to keep that single-number guarantee — otherwise
+  /// a quick switch would leave calls ringing on the previously selected number.
+  Future<void> switchOutgoingNumber(String phoneNumber) async {
+    if (_storageService.getAdvancedNumberConfig()) {
+      await setCurrentPhoneNumber(phoneNumber);
+      return;
+    }
+    // Simple mode: the active number is shared for both directions. Resolve the
+    // sid first (via the error-wrapping getIncomingNumbers) so a fetch failure
+    // leaves outgoing untouched, then switch outgoing and re-point incoming to
+    // keep the single-number guarantee.
+    final match = (await getIncomingNumbers())
+        .where((n) => n.phone_number == phoneNumber);
+    await setCurrentPhoneNumber(phoneNumber);
+    if (match.isEmpty) return;
+    await configureNumbers([match.first.sid]);
   }
 
   /// Headers needed to fetch a Twilio Media resource URL directly (e.g. from

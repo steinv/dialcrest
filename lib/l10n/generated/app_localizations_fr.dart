@@ -375,6 +375,15 @@ class AppLocalizationsFr extends AppLocalizations {
   String get vacationMode => 'Mode absence';
 
   @override
+  String get phoneNumberTitle => 'Numéro de téléphone';
+
+  @override
+  String get selectNumber => 'Sélectionner un numéro';
+
+  @override
+  String get advancedTitle => 'Avancé';
+
+  @override
   String get outgoingTitle => 'Sortant';
 
   @override

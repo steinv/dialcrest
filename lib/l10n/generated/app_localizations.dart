@@ -692,6 +692,24 @@ abstract class AppLocalizations {
   /// **'Vacation mode'**
   String get vacationMode;
 
+  /// No description provided for @phoneNumberTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Phone number'**
+  String get phoneNumberTitle;
+
+  /// No description provided for @selectNumber.
+  ///
+  /// In en, this message translates to:
+  /// **'Select a number'**
+  String get selectNumber;
+
+  /// No description provided for @advancedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Advanced'**
+  String get advancedTitle;
+
   /// No description provided for @outgoingTitle.
   ///
   /// In en, this message translates to:

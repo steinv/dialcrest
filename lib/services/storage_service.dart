@@ -110,6 +110,30 @@ class StorageService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Whether Settings shows the advanced incoming/outgoing split (true) or the
+  /// simplified single-number dropdown (false, the default). A per-device UI
+  /// preference — not tied to a Twilio account — so it's stored unscoped.
+  bool getAdvancedNumberConfig() {
+    return _prefs.getBool('advanced_number_config') ?? false;
+  }
+
+  Future<void> setAdvancedNumberConfig(bool advanced) async {
+    await _prefs.setBool('advanced_number_config', advanced);
+  }
+
+  /// Whether this device has already run the one-time "configure the caller-id
+  /// number for incoming too" onboarding for [accountSid] (see
+  /// TwilioService._ensureIncomingConfigured). Set once onboarding succeeds so
+  /// it never re-runs — in particular so it never re-adds incoming config that
+  /// an advanced user later cleared on purpose.
+  bool getIncomingAutoConfigured(String accountSid) {
+    return _prefs.getBool('incoming_autoconfigured_$accountSid') ?? false;
+  }
+
+  Future<void> setIncomingAutoConfigured(String accountSid, bool value) async {
+    await _prefs.setBool('incoming_autoconfigured_$accountSid', value);
+  }
+
   List<String> getKnownPhoneNumbers(String accountSid) {
     return _prefs.getStringList('known_phone_numbers_$accountSid') ?? [];
   }

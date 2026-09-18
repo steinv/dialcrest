@@ -215,7 +215,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _switchOutgoingNumber(String number) async {
     if (number == _twilioService.currentPhoneNumber) return;
     try {
-      await _twilioService.setCurrentPhoneNumber(number);
+      await _twilioService.switchOutgoingNumber(number);
       if (!mounted) return;
       setState(() {});
     } catch (e) {

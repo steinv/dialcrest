@@ -345,6 +345,15 @@
   "vacationMode": "Vacation mode",
   "@vacationMode": {},
 
+  "phoneNumberTitle": "Phone number",
+  "@phoneNumberTitle": {},
+
+  "selectNumber": "Select a number",
+  "@selectNumber": {},
+
+  "advancedTitle": "Advanced",
+  "@advancedTitle": {},
+
   "outgoingTitle": "Outgoing",
   "@outgoingTitle": {},
 

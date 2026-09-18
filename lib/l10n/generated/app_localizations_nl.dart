@@ -375,6 +375,15 @@ class AppLocalizationsNl extends AppLocalizations {
   String get vacationMode => 'Vakantiemodus';
 
   @override
+  String get phoneNumberTitle => 'Telefoonnummer';
+
+  @override
+  String get selectNumber => 'Kies een nummer';
+
+  @override
+  String get advancedTitle => 'Geavanceerd';
+
+  @override
   String get outgoingTitle => 'Uitgaand';
 
   @override
