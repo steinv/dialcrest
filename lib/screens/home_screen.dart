@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:twilio_voice/twilio_voice.dart';
 import '../l10n/generated/app_localizations.dart';
 import '../models/call.dart';
+import '../services/account_auth_service.dart';
 import '../services/storage_service.dart';
 import '../services/twilio_service.dart';
 import '../services/subscription_service.dart';
@@ -163,6 +164,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final storageService = Provider.of<StorageService>(context, listen: false);
 
     if (storageService.accountSid != null && storageService.authToken != null) {
+      // Bind the anonymous Firebase identity to this account so account-scoped
+      // RTDB reads/writes are authorized. ensureLinked skips the
+      // twilioLinkAccount call when the cached token already carries this
+      // account's claim — so the common case (main.dart already linked on
+      // startup) costs no function call — while still re-linking when the user
+      // has logged into a different Twilio account.
+      // Fire-and-forget: RTDB readers ensureLinked before their own access.
+      // Best-effort like the startup link in main.dart — swallow errors so a
+      // transient link failure (offline, functions error) doesn't escape as an
+      // uncaught async error; the recovery path in _runLink only handles
+      // FirebaseAuthException, not FirebaseFunctionsException.
+      unawaited(
+        AccountAuthService.instance
+            .ensureLinked(storageService.accountSid!, storageService.authToken!)
+            .catchError(
+              (Object e) => debugPrint('Skipping account link on init: $e'),
+            ),
+      );
       _subscriptionService = SubscriptionService(
         accountSid: storageService.accountSid!,
         storageService: storageService,
@@ -215,7 +234,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _switchOutgoingNumber(String number) async {
     if (number == _twilioService.currentPhoneNumber) return;
     try {
-      await _twilioService.setCurrentPhoneNumber(number);
+      await _twilioService.switchOutgoingNumber(number);
       if (!mounted) return;
       setState(() {});
     } catch (e) {
@@ -366,6 +385,114 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ),
       );
     }
+  }
+
+  /// Opens a searchable list of the device's contacts from the dialer's app
+  /// bar; tapping one places a call to that contact. Mirrors
+  /// [_startNewConversation] but dials instead of opening a message thread.
+  void _showContactsPicker() {
+    final searchController = TextEditingController();
+    // Contacts (and the READ_CONTACTS prompt) are only needed once the user
+    // actually opens this picker, so kick off the load here.
+    Provider.of<ContactsService>(context, listen: false).ensureLoaded();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      // Consumer (rather than listen:false) so the list repopulates itself if
+      // the load kicked off above is still in flight when the sheet opens.
+      builder: (context) => Consumer<ContactsService>(
+        builder: (context, contactsService, _) => StatefulBuilder(
+          builder: (context, setSheetState) {
+            final matches = contactsService.search(searchController.text);
+            final l10n = AppLocalizations.of(context)!;
+
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.only(
+                  left: 16,
+                  right: 16,
+                  top: 16,
+                  bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+                ),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.of(context).size.height * 0.8,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        l10n.contactsTitle,
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: searchController,
+                        autofocus: false,
+                        keyboardType: TextInputType.text,
+                        decoration: InputDecoration(
+                          labelText: l10n.searchContactsHint,
+                          prefixIcon: const Icon(Icons.search),
+                          border: const OutlineInputBorder(),
+                        ),
+                        onChanged: (_) => setSheetState(() {}),
+                      ),
+                      const SizedBox(height: 8),
+                      Flexible(
+                        child: !contactsService.loaded
+                            ? const Center(
+                                child: Padding(
+                                  padding: EdgeInsets.all(24),
+                                  child: CircularProgressIndicator(),
+                                ),
+                              )
+                            : matches.isEmpty
+                            ? Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(24),
+                                  child: Text(l10n.noContactsFound),
+                                ),
+                              )
+                            : ListView.builder(
+                                shrinkWrap: true,
+                                itemCount: matches.length,
+                                itemBuilder: (context, index) {
+                                  final contact = matches[index];
+                                  return ListTile(
+                                    leading: CircleAvatar(
+                                      backgroundColor: Theme.of(
+                                        context,
+                                      ).colorScheme.primary,
+                                      child: Text(
+                                        contact.name.isNotEmpty
+                                            ? contact.name[0].toUpperCase()
+                                            : '?',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                    title: Text(contact.name),
+                                    subtitle: Text(contact.number),
+                                    onTap: () {
+                                      Navigator.pop(context);
+                                      _makeCall(contact.number);
+                                    },
+                                  );
+                                },
+                              ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
   }
 
   /// Prompts for a phone number — or lets the user pick an existing contact —
@@ -640,6 +767,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   List<Widget> _buildAppBarActions() {
     switch (_selectedIndex) {
+      case 0: // Dialer tab
+        return [
+          IconButton(
+            icon: const Icon(Icons.contacts),
+            tooltip: AppLocalizations.of(context)!.contactsTitle,
+            onPressed: _showContactsPicker,
+          ),
+        ];
       case 1: // Call history tab
         return [
           IconButton(
@@ -685,6 +820,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           onSelectContact: (number) =>
               setState(() => _selectedContact = number),
           onStartConversation: _startNewConversation,
+          onCall: _makeCall,
         );
       case 3:
         return SettingsScreen(

@@ -5,8 +5,18 @@
     ".write": false,
     "twilio": {
       "$accountSid": {
-        "subscription": {
-          ".read": true
+        "trial": {
+          ".read": "auth.token.accountSid === $accountSid"
+        },
+        "twiml-app-sid": {
+          ".read": "auth.token.accountSid === $accountSid"
+        },
+        "configuration": {
+          ".read": "auth.token.accountSid === $accountSid",
+          ".write": "auth.token.accountSid === $accountSid",
+          "advancedNumberConfig": {
+            ".validate": "newData.isBoolean()"
+          }
         }
       }
     }

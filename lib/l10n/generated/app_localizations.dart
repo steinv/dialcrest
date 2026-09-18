@@ -338,6 +338,24 @@ abstract class AppLocalizations {
   /// **'New conversation'**
   String get newConversationTooltip;
 
+  /// No description provided for @contactsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Contacts'**
+  String get contactsTitle;
+
+  /// No description provided for @searchContactsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search contacts'**
+  String get searchContactsHint;
+
+  /// No description provided for @noContactsFound.
+  ///
+  /// In en, this message translates to:
+  /// **'No contacts found'**
+  String get noContactsFound;
+
   /// No description provided for @dialerTabLabel.
   ///
   /// In en, this message translates to:
@@ -445,6 +463,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Delete conversation'**
   String get deleteConversation;
+
+  /// No description provided for @openConversation.
+  ///
+  /// In en, this message translates to:
+  /// **'Open conversation'**
+  String get openConversation;
 
   /// No description provided for @deleteMessageConfirm.
   ///
@@ -691,6 +715,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Vacation mode'**
   String get vacationMode;
+
+  /// No description provided for @phoneNumberTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Phone number'**
+  String get phoneNumberTitle;
+
+  /// No description provided for @selectNumber.
+  ///
+  /// In en, this message translates to:
+  /// **'Select a number'**
+  String get selectNumber;
+
+  /// No description provided for @advancedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Advanced'**
+  String get advancedTitle;
 
   /// No description provided for @outgoingTitle.
   ///

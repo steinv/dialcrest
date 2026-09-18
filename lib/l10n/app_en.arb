@@ -140,6 +140,15 @@
   "newConversationTooltip": "New conversation",
   "@newConversationTooltip": {},
 
+  "contactsTitle": "Contacts",
+  "@contactsTitle": {},
+
+  "searchContactsHint": "Search contacts",
+  "@searchContactsHint": {},
+
+  "noContactsFound": "No contacts found",
+  "@noContactsFound": {},
+
   "dialerTabLabel": "Dialer",
   "@dialerTabLabel": {},
 
@@ -201,6 +210,9 @@
 
   "deleteConversation": "Delete conversation",
   "@deleteConversation": {},
+
+  "openConversation": "Open conversation",
+  "@openConversation": {},
 
   "deleteMessageConfirm": "Permanently delete this message from Twilio? This can't be undone.",
   "@deleteMessageConfirm": {},
@@ -344,6 +356,15 @@
 
   "vacationMode": "Vacation mode",
   "@vacationMode": {},
+
+  "phoneNumberTitle": "Phone number",
+  "@phoneNumberTitle": {},
+
+  "selectNumber": "Select a number",
+  "@selectNumber": {},
+
+  "advancedTitle": "Advanced",
+  "@advancedTitle": {},
 
   "outgoingTitle": "Outgoing",
   "@outgoingTitle": {},

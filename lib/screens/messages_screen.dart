@@ -14,6 +14,9 @@ import '../widgets/linkified_text.dart';
 /// The actions offered by the long-press sheet on a message bubble.
 enum _MessageAction { share, copy, delete }
 
+/// The actions offered by the long-press sheet on a conversation row.
+enum _ConversationAction { addContact, open, call, delete }
+
 /// Messages pulled page-by-page from the Twilio REST API, grouped into
 /// conversations by the remote number. The conversation list has infinite
 /// scroll (loads the next page as the user nears the bottom) and pull-to-refresh;
@@ -30,12 +33,17 @@ class MessagesScreen extends StatefulWidget {
   /// switches to the dialer).
   final VoidCallback onStartConversation;
 
+  /// Places a call to the given number (the parent switches to the dialer and
+  /// dials).
+  final void Function(String number) onCall;
+
   const MessagesScreen({
     super.key,
     required this.twilioService,
     required this.selectedContact,
     required this.onSelectContact,
     required this.onStartConversation,
+    required this.onCall,
   });
 
   @override
@@ -312,6 +320,67 @@ class MessagesScreenState extends State<MessagesScreen> {
     }
   }
 
+  /// Opens a bottom sheet of actions for a conversation row: add the number to
+  /// contacts (only when it isn't already one), open the thread, or delete the
+  /// whole conversation.
+  Future<void> _showConversationActions(Conversation conversation) async {
+    final l10n = AppLocalizations.of(context)!;
+    final colorScheme = Theme.of(context).colorScheme;
+    final isContact = conversation.contactName != null;
+    final action = await showModalBottomSheet<_ConversationAction>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: Text(conversation.contactName ?? conversation.phoneNumber),
+              subtitle: isContact ? Text(conversation.phoneNumber) : null,
+            ),
+            const Divider(height: 1),
+            if (!isContact)
+              ListTile(
+                leading: const Icon(Icons.person_add_alt_1_outlined),
+                title: Text(l10n.addToContacts),
+                onTap: () =>
+                    Navigator.of(context).pop(_ConversationAction.addContact),
+              ),
+            ListTile(
+              leading: const Icon(Icons.message_outlined),
+              title: Text(l10n.openConversation),
+              onTap: () => Navigator.of(context).pop(_ConversationAction.open),
+            ),
+            ListTile(
+              leading: const Icon(Icons.call_outlined),
+              title: Text(l10n.call),
+              onTap: () => Navigator.of(context).pop(_ConversationAction.call),
+            ),
+            ListTile(
+              leading: Icon(Icons.delete_outline, color: colorScheme.error),
+              title: Text(
+                l10n.deleteConversation,
+                style: TextStyle(color: colorScheme.error),
+              ),
+              onTap: () => Navigator.of(context).pop(_ConversationAction.delete),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (action == null || !mounted) return;
+    switch (action) {
+      case _ConversationAction.addContact:
+        await Provider.of<ContactsService>(context, listen: false)
+            .openAddContact(conversation.phoneNumber);
+      case _ConversationAction.open:
+        widget.onSelectContact(conversation.phoneNumber);
+      case _ConversationAction.call:
+        widget.onCall(conversation.phoneNumber);
+      case _ConversationAction.delete:
+        await _deleteConversation(conversation);
+    }
+  }
+
   /// Permanently deletes a whole conversation from Twilio (after
   /// confirmation) — every currently-loaded message to/from that number.
   /// Whatever actually got deleted is pruned from the cache even if Twilio
@@ -417,8 +486,8 @@ class MessagesScreenState extends State<MessagesScreen> {
         style: const TextStyle(color: Colors.grey),
       ),
       onTap: () => widget.onSelectContact(conversation.phoneNumber),
-      // Long-press to permanently delete the whole spam thread from Twilio.
-      onLongPress: () => _deleteConversation(conversation),
+      // Long-press opens a sheet of actions for the whole conversation.
+      onLongPress: () => _showConversationActions(conversation),
     );
   }
 

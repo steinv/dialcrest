@@ -155,6 +155,15 @@ class AppLocalizationsEs extends AppLocalizations {
   String get newConversationTooltip => 'Nueva conversación';
 
   @override
+  String get contactsTitle => 'Contactos';
+
+  @override
+  String get searchContactsHint => 'Buscar contactos';
+
+  @override
+  String get noContactsFound => 'No se encontraron contactos';
+
+  @override
   String get dialerTabLabel => 'Teclado';
 
   @override
@@ -215,6 +224,9 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get deleteConversation => 'Eliminar conversación';
+
+  @override
+  String get openConversation => 'Abrir conversación';
 
   @override
   String get deleteMessageConfirm =>
@@ -375,6 +387,15 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get vacationMode => 'Modo vacaciones';
+
+  @override
+  String get phoneNumberTitle => 'Número de teléfono';
+
+  @override
+  String get selectNumber => 'Selecciona un número';
+
+  @override
+  String get advancedTitle => 'Avanzado';
 
   @override
   String get outgoingTitle => 'Saliente';

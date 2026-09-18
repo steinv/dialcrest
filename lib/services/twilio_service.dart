@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -17,6 +18,7 @@ import '../../models/call.dart';
 import '../../models/message.dart';
 import '../l10n/generated/app_localizations.dart';
 import '../l10n/generated/app_localizations_en.dart';
+import 'account_auth_service.dart';
 import 'storage_service.dart';
 
 /// Looks up the localized strings for the device's current locale without a
@@ -182,6 +184,16 @@ class TwilioService {
     region: 'europe-west1',
   );
   final StorageService _storageService;
+
+  /// Account-level "advanced number config" flag, stored in RTDB (not per-device)
+  /// because it governs account-wide incoming/outgoing behavior — see
+  /// [advancedNumberConfig]. Cached here after the first read; defaults to false
+  /// (simple mode) until loaded, and stays false if RTDB is unreachable.
+  bool _advancedNumberConfig = false;
+
+  /// The one-time RTDB load of [_advancedNumberConfig], kicked off during
+  /// [_initializeClient] and awaited by any reader that needs an up-to-date value.
+  Future<void>? _advancedNumberConfigResolved;
 
   // Callbacks for incoming communications
   Function(String from)? onIncomingCall;
@@ -399,25 +411,83 @@ class TwilioService {
     // registered" — see SubscriptionService.fetchStatus).
     _registerVoice();
 
-    // Resolve the caller-id number used for outgoing calls/access-token minting.
+    // Resolve the caller-id number used for outgoing calls/access-token minting
+    // (and, on first launch, wire that same number for incoming — see
+    // _resolveCurrentPhoneNumber).
     _currentPhoneNumberResolved = _resolveCurrentPhoneNumber();
+
+    // Pre-load the account-level advanced-config flag so Settings and the app
+    // bar's quick switcher have it ready without a first-use round-trip.
+    _advancedNumberConfigResolved = _loadAdvancedNumberConfig();
   }
 
   Future<void> _resolveCurrentPhoneNumber() async {
     try {
-      final phoneNumbers = await getPhoneNumbers();
-      if (phoneNumbers == null || phoneNumbers.isEmpty) return;
+      // Fetch the full number resources (not just getPhoneNumbers' strings) so
+      // the same list drives both caller-id resolution and the first-launch
+      // incoming wiring below, which needs each number's sid and current
+      // voice_application_sid.
+      final numbers = await getIncomingNumbers();
+      if (numbers.isEmpty) return;
+      final phoneNumbers = numbers.map((n) => n.phone_number).toList();
+      // Catch numbers added to the account since last launch (getPhoneNumbers
+      // did this as a side effect; preserved here now that we fetch directly).
+      unawaited(_reregisterForNewNumbers(phoneNumbers));
       // Prefer the number the user previously picked in Settings, as long as
       // it's still on the account; otherwise fall back to the first number.
       final selected = _storageService.getSelectedPhoneNumber(accountSid);
       currentPhoneNumber = (selected != null && phoneNumbers.contains(selected))
           ? selected
           : phoneNumbers.first;
+      // First-launch onboarding: wire that same number for incoming too, so a
+      // new single-number user receives calls/texts without visiting Settings.
+      // Fire-and-forget so it doesn't delay currentPhoneNumber readiness for
+      // callers awaiting ensureCurrentPhoneNumberResolved (outgoing).
+      unawaited(_ensureIncomingConfigured(numbers));
     } catch (e) {
       // A transient connectivity failure (e.g. no DNS for api.twilio.com) must
       // not become an unhandled exception during startup; the user can still
       // pick a caller id later from Settings once the account is reachable.
       debugPrint('Skipping caller-id resolution, phone-number fetch failed: $e');
+    }
+  }
+
+  /// One-time onboarding that makes the resolved caller-id number ring this app
+  /// for incoming calls/texts too. Called from [_resolveCurrentPhoneNumber]
+  /// with the numbers it already fetched. Runs once per account per device
+  /// (guarded by a StorageService flag) and only for a genuinely new user —
+  /// one who has never picked a caller id on this device. A returning user
+  /// (stored selection present) has already had the chance to set up incoming,
+  /// so we never override their choice — including a deliberate "no incoming"
+  /// setup — even on the first launch after this feature ships; the flag is
+  /// simply seeded for them. Any failure leaves the flag unset so it retries on
+  /// the next launch.
+  Future<void> _ensureIncomingConfigured(List<IncomingPhoneNumbers> numbers) async {
+    if (_storageService.getIncomingAutoConfigured(accountSid)) return;
+    // A stored caller-id selection means the user has used the app before, so
+    // their current incoming setup is deliberate. Seed the flag and skip rather
+    // than re-wiring incoming behind their back on the first post-upgrade run.
+    if (_storageService.getSelectedPhoneNumber(accountSid) != null) {
+      await _storageService.setIncomingAutoConfigured(accountSid, true);
+      return;
+    }
+    final current = currentPhoneNumber;
+    if (current == null || current.isEmpty) return;
+    try {
+      final appSid = await getIncomingAppSid();
+      final alreadyConfigured = numbers.any(
+        (n) => n.voice_application_sid != null && n.voice_application_sid == appSid,
+      );
+      if (!alreadyConfigured) {
+        final match = numbers.where((n) => n.phone_number == current);
+        if (match.isEmpty) return; // caller id not among numbers; retry next launch
+        await configureNumbers([match.first.sid]);
+      }
+      // Configured now, or the user already had a number configured — either
+      // way onboarding is done; don't run again on this device.
+      await _storageService.setIncomingAutoConfigured(accountSid, true);
+    } catch (e) {
+      debugPrint('Auto-configure incoming failed (will retry next launch): $e');
     }
   }
 
@@ -632,6 +702,69 @@ class TwilioService {
     await _registerVoice();
   }
 
+  /// Switches the outgoing caller id from the app bar's quick switcher,
+  /// respecting the number-config mode. In advanced mode outgoing and incoming
+  /// are independent, so this only changes the caller id. In simple mode the
+  /// active number is shared for both directions, so it also re-points incoming
+  /// (via [configureNumbers]) to keep that single-number guarantee — otherwise
+  /// a quick switch would leave calls ringing on the previously selected number.
+  Future<void> switchOutgoingNumber(String phoneNumber) async {
+    if (await getAdvancedNumberConfig()) {
+      await setCurrentPhoneNumber(phoneNumber);
+      return;
+    }
+    // Simple mode: the active number is shared for both directions. Resolve the
+    // sid first (via the error-wrapping getIncomingNumbers) so a fetch failure
+    // leaves outgoing untouched, then switch outgoing and re-point incoming to
+    // keep the single-number guarantee.
+    final match = (await getIncomingNumbers())
+        .where((n) => n.phone_number == phoneNumber);
+    await setCurrentPhoneNumber(phoneNumber);
+    if (match.isEmpty) return;
+    await configureNumbers([match.first.sid]);
+  }
+
+  DatabaseReference _advancedNumberConfigRef() => FirebaseDatabase.instanceFor(
+        app: Firebase.app(),
+        databaseURL:
+            'https://twilio-phone-peblet-default-rtdb.europe-west1.firebasedatabase.app',
+      ).ref('/twilio/$accountSid/configuration/advancedNumberConfig');
+
+  /// The account-level advanced-number-config flag: whether incoming and
+  /// outgoing numbers are configured independently (true) or share a single
+  /// number (false, the default). Stored in RTDB so the choice is consistent for
+  /// every device on the account — it governs account-wide Twilio routing, so a
+  /// per-device flag would let devices disagree about how the account behaves.
+  ///
+  /// Reads the cached value once loaded, otherwise performs the one-time RTDB
+  /// load. Defaults to false (simple mode) and stays false if RTDB is
+  /// unreachable (offline) — see the offline behavior decision in the design.
+  Future<bool> getAdvancedNumberConfig() async {
+    await (_advancedNumberConfigResolved ??= _loadAdvancedNumberConfig());
+    return _advancedNumberConfig;
+  }
+
+  Future<void> _loadAdvancedNumberConfig() async {
+    try {
+      await AccountAuthService.instance.ensureLinked(accountSid, authToken);
+      final snapshot = await _advancedNumberConfigRef().get();
+      _advancedNumberConfig = snapshot.value == true;
+    } catch (e) {
+      debugPrint('Could not read advanced number config, defaulting to simple: $e');
+      _advancedNumberConfig = false;
+    }
+  }
+
+  /// Persists the account-level advanced-number-config flag to RTDB and updates
+  /// the local cache. Requires the account claim (set at link time); the write
+  /// is authorized by database.rules.json's ownership check.
+  Future<void> setAdvancedNumberConfig(bool advanced) async {
+    await AccountAuthService.instance.ensureLinked(accountSid, authToken);
+    await _advancedNumberConfigRef().set(advanced);
+    _advancedNumberConfig = advanced;
+    _advancedNumberConfigResolved = Future.value();
+  }
+
   /// Headers needed to fetch a Twilio Media resource URL directly (e.g. from
   /// `Image.network` or `VideoPlayerController.networkUrl`) — those files sit
   /// behind the same Basic Auth as the rest of the REST API.
@@ -683,8 +816,34 @@ class TwilioService {
     }
   }
 
+  DatabaseReference _incomingAppSidRef() => FirebaseDatabase.instanceFor(
+        app: Firebase.app(),
+        databaseURL:
+            'https://twilio-phone-peblet-default-rtdb.europe-west1.firebasedatabase.app',
+      ).ref('/twilio/$accountSid/twiml-app-sid/incoming');
+
+  /// Like [getIncomingAppSid] but reads the SID from its server-side RTDB cache
+  /// (written by getOrCreateTwimlApp) instead of the Cloud Function, so Settings
+  /// — which opens often and only needs to compare each number's
+  /// voice_application_sid against ours — avoids a round-trip every time.
+  ///
+  /// Falls back to [getIncomingAppSid] when the cache is empty (a brand-new
+  /// account whose incoming app hasn't been created yet) or the RTDB read fails.
+  /// Unlike [getIncomingAppSid] it never *creates* the app, so callers that rely
+  /// on get-or-create (e.g. onboarding) must keep using [getIncomingAppSid].
+  Future<String> getCachedIncomingAppSid() async {
+    try {
+      await AccountAuthService.instance.ensureLinked(accountSid, authToken);
+      final cached = (await _incomingAppSidRef().get()).value;
+      if (cached is String && cached.isNotEmpty) return cached;
+    } catch (e) {
+      debugPrint('Could not read cached incoming app sid, falling back: $e');
+    }
+    return getIncomingAppSid();
+  }
+
   /// The tenant's incoming TwiML App SID (created on first use). A number is
-  /// configured for this app iff its voice_application_sid equals this.
+  /// configured for this app if its voice_application_sid equals this.
   Future<String> getIncomingAppSid() async {
     try {
       final response = await _firebaseFunctions

@@ -110,6 +110,19 @@ class StorageService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Whether this device has already run the one-time "configure the caller-id
+  /// number for incoming too" onboarding for [accountSid] (see
+  /// TwilioService._ensureIncomingConfigured). Set once onboarding succeeds so
+  /// it never re-runs — in particular so it never re-adds incoming config that
+  /// an advanced user later cleared on purpose.
+  bool getIncomingAutoConfigured(String accountSid) {
+    return _prefs.getBool('incoming_autoconfigured_$accountSid') ?? false;
+  }
+
+  Future<void> setIncomingAutoConfigured(String accountSid, bool value) async {
+    await _prefs.setBool('incoming_autoconfigured_$accountSid', value);
+  }
+
   List<String> getKnownPhoneNumbers(String accountSid) {
     return _prefs.getStringList('known_phone_numbers_$accountSid') ?? [];
   }

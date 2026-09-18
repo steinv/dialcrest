@@ -75,7 +75,7 @@ describe('twilioRegister', () => {
     it('creates the account, starts its trial, and provisions push credentials', async () => {
         await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
         expect(dbTree().twilio.AC1.createdAt).toEqual(expect.any(Number));
-        expect(dbTree().twilio.AC1.subscription.plan).toBe('trial');
+        expect(dbTree().twilio.AC1.trial.plan).toBe('trial');
         expect(twilioMocks().createOrUpdatePushCredentials).toHaveBeenCalledWith(
             'AC1', 'tok', expect.any(String), expect.any(String), expect.any(String),
         );
@@ -86,7 +86,7 @@ describe('twilioRegister', () => {
         await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
         jest.setSystemTime(1000);
         await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
-        expect(dbTree().twilio.AC1.subscription.trialStartedAt).toBe(0);
+        expect(dbTree().twilio.AC1.trial.trialStartedAt).toBe(0);
         jest.useRealTimers();
     });
 });
