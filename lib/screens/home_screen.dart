@@ -165,8 +165,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     if (storageService.accountSid != null && storageService.authToken != null) {
       // Bind the anonymous Firebase identity to this account so account-scoped
-      // RTDB reads/writes are authorized. Re-linking here (not just at first
-      // startup) is what lets a user log out and into a different Twilio account.
+      // RTDB reads/writes are authorized. ensureLinked skips the
+      // twilioLinkAccount call when the cached token already carries this
+      // account's claim — so the common case (main.dart already linked on
+      // startup) costs no function call — while still re-linking when the user
+      // has logged into a different Twilio account.
       // Fire-and-forget: RTDB readers ensureLinked before their own access.
       // Best-effort like the startup link in main.dart — swallow errors so a
       // transient link failure (offline, functions error) doesn't escape as an
@@ -174,7 +177,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       // FirebaseAuthException, not FirebaseFunctionsException.
       unawaited(
         AccountAuthService.instance
-            .link(storageService.accountSid!, storageService.authToken!)
+            .ensureLinked(storageService.accountSid!, storageService.authToken!)
             .catchError(
               (Object e) => debugPrint('Skipping account link on init: $e'),
             ),

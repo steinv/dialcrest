@@ -114,10 +114,13 @@ void main() async {
         await storageService.clearCredentials();
       } else {
         // Bind the identity to this account so RTDB reads/writes are authorized.
+        // ensureLinked skips the twilioLinkAccount call when the cached token
+        // already carries this account's claim (the common warm-start case);
+        // it only hits the function on a cold identity or an account switch.
         // Best-effort — TwilioService/SubscriptionService also ensureLinked
         // before their own RTDB access, and offline falls back to defaults.
         try {
-          await AccountAuthService.instance.link(
+          await AccountAuthService.instance.ensureLinked(
             storageService.accountSid!,
             storageService.authToken!,
           );
