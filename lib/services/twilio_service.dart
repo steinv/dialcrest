@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart' hide Message;
 import 'package:intl/intl.dart';
 import 'package:dialcrest/dto/IncomingPhoneNumbers.dart';
+import 'package:dialcrest/services/review_account_shim.dart';
 import 'package:dialcrest/models/PhoneNumber.dart';
 import 'package:twilio_voice/twilio_voice.dart' hide Call;
 import '../../models/call.dart';
@@ -866,10 +867,14 @@ class TwilioService {
   Future<List<IncomingPhoneNumbers>> _fetchIncomingPhoneNumbers() async {
     final response = await _dio.get('/IncomingPhoneNumbers.json');
     final List<dynamic> phoneNumbers = response.data['incoming_phone_numbers'];
-    return phoneNumbers
+    final numbers = phoneNumbers
         .map((it) => IncomingPhoneNumbers.fromJson(it))
         .where((number) => number.status == 'in-use')
         .toList();
+    // Injects the trial number for the Google Play review account when it owns
+    // no listable number; a no-op for every other account. See
+    // ReviewAccountShim.
+    return ReviewAccountShim.apply(accountSid, numbers);
   }
 
   Future<List<String>?> getPhoneNumbers() async {
