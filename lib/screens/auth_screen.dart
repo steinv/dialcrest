@@ -61,6 +61,11 @@ class _AuthScreenState extends State<AuthScreen> {
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => HomeScreen()),
       );
+    } on TestCredentialsException {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = AppLocalizations.of(context)!.testCredentialsError;
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() {

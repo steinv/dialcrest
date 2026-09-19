@@ -36,6 +36,10 @@ class AppLocalizationsNl extends AppLocalizations {
       'Ongeldige Account SID of Auth Token, of geschorst account. Controleer uw Twilio Console en probeer het opnieuw.';
 
   @override
+  String get testCredentialsError =>
+      'Dit zijn Twilio-testgegevens, die deze app niet kan gebruiken. Voer uw echte Account SID en Auth Token in (een proefaccount werkt ook).';
+
+  @override
   String credentialsCheckError(Object error) {
     return 'Kon gegevens niet verifiëren (controleer uw verbinding): $error';
   }

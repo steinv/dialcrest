@@ -152,6 +152,12 @@ abstract class AppLocalizations {
   /// **'Invalid Account SID or Auth Token or suspended account. Check your Twilio Console and try again.'**
   String get invalidCredentialsError;
 
+  /// No description provided for @testCredentialsError.
+  ///
+  /// In en, this message translates to:
+  /// **'These are Twilio test credentials, which this app can\'t use. Enter your live Account SID and Auth Token (a trial account works too).'**
+  String get testCredentialsError;
+
   /// No description provided for @credentialsCheckError.
   ///
   /// In en, this message translates to:

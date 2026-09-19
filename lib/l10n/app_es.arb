@@ -9,6 +9,7 @@
   "connect": "Conectar",
   "consoleHelpText": "Encontrarás tu Account SID y tu Auth Token en tu Twilio Console.",
   "invalidCredentialsError": "Account SID o Auth Token no válidos, o cuenta suspendida. Revisa tu Twilio Console e inténtalo de nuevo.",
+  "testCredentialsError": "Estas son credenciales de prueba de Twilio, que esta app no puede usar. Introduce tu Account SID y Auth Token reales (una cuenta de prueba también funciona).",
   "credentialsCheckError": "No se pudieron verificar las credenciales (revisa tu conexión): {error}",
 
   "noCallHistory": "Sin historial de llamadas",

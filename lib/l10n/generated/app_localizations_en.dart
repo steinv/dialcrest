@@ -36,6 +36,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Invalid Account SID or Auth Token or suspended account. Check your Twilio Console and try again.';
 
   @override
+  String get testCredentialsError =>
+      'These are Twilio test credentials, which this app can\'t use. Enter your live Account SID and Auth Token (a trial account works too).';
+
+  @override
   String credentialsCheckError(Object error) {
     return 'Could not verify credentials (check your connection): $error';
   }

@@ -76,6 +76,14 @@ class SubscriptionExpiredException implements Exception {
       'Your Dialcrest subscription has expired. Open Settings to renew.';
 }
 
+/// Thrown by [TwilioService.validateCredentials] when the entered credentials
+/// are Twilio *test* credentials (403 with Twilio error code 20008). They
+/// authenticate fine but can't access the account, phone-number, or history
+/// resources this app relies on, so they're rejected up front with a clear
+/// message rather than the misleading "invalid credentials". See
+/// https://www.twilio.com/docs/iam/test-credentials (supported resources).
+class TestCredentialsException implements Exception {}
+
 /// Wraps an already-clean, user-presentable message (typically the output of
 /// [describeTwilioError]) without [Exception]'s own "Exception: " prefix, so
 /// callers that already add their own "Failed to ..." wrapper don't end up
@@ -388,10 +396,16 @@ class TwilioService {
       // 401 (and 403/404 for a wrong SID) mean the credentials don't work.
       // Anything else (timeout, no DNS, 5xx) isn't a credential verdict.
       final status = e.response?.statusCode;
+      final body = e.response?.data;
+      final code = body is Map ? body['code'] : null;
       // Twilio returns a JSON body like {"code":20003,"message":"Authentication
       // Error - ..."} on auth failures; logging it turns a vague "invalid
       // credentials" into the exact reason (wrong key type, rotated token, etc.).
-      debugPrint('validateCredentials: status=$status body=${e.response?.data} type=${e.type}');
+      debugPrint('validateCredentials: status=$status body=$body type=${e.type}');
+      // Twilio *test* credentials authenticate but can't reach the account
+      // resource, returning 403 with code 20008. Distinguish that from a wrong
+      // SID/token so the user gets an actionable message instead of "invalid".
+      if (code == 20008) throw TestCredentialsException();
       if (status == 401 || status == 403 || status == 404) return false;
       rethrow;
     }

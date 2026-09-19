@@ -9,6 +9,7 @@
   "connect": "Verbinden",
   "consoleHelpText": "U vindt uw Account SID en Auth Token in uw Twilio Console.",
   "invalidCredentialsError": "Ongeldige Account SID of Auth Token, of geschorst account. Controleer uw Twilio Console en probeer het opnieuw.",
+  "testCredentialsError": "Dit zijn Twilio-testgegevens, die deze app niet kan gebruiken. Voer uw echte Account SID en Auth Token in (een proefaccount werkt ook).",
   "credentialsCheckError": "Kon gegevens niet verifiëren (controleer uw verbinding): {error}",
 
   "noCallHistory": "Geen oproepgeschiedenis",

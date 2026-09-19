@@ -9,6 +9,7 @@
   "connect": "Verbinden",
   "consoleHelpText": "Ihre Account SID und Ihren Auth Token finden Sie in Ihrer Twilio Console.",
   "invalidCredentialsError": "Ungültige Account SID oder ungültiger Auth Token, oder Konto gesperrt. Überprüfen Sie Ihre Twilio Console und versuchen Sie es erneut.",
+  "testCredentialsError": "Dies sind Twilio-Testzugangsdaten, die diese App nicht verwenden kann. Geben Sie Ihre echte Account SID und Ihren Auth Token ein (ein Testkonto funktioniert auch).",
   "credentialsCheckError": "Zugangsdaten konnten nicht überprüft werden (Verbindung prüfen): {error}",
 
   "noCallHistory": "Kein Anrufverlauf",
