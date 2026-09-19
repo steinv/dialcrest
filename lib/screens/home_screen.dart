@@ -134,15 +134,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _twilioService.startPollingForIncomingCommunications();
       // Pick up contacts added/edited in the OS Contacts app while we were
       // away — but only if contacts were actually loaded already; otherwise
       // this would turn every resume into a surprise permission prompt for a
       // user who's never touched a contacts-dependent feature.
       final contactsService = Provider.of<ContactsService>(context, listen: false);
       if (contactsService.loaded) contactsService.load();
-    } else if (state == AppLifecycleState.paused) {
-      _twilioService.stopPollingForIncomingCommunications();
     }
   }
 
@@ -200,18 +197,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _showIncomingCallNotification(from);
       };
 
-      _twilioService.onIncomingMessage = (from, body) {
-        _showIncomingMessageNotification(from, body);
+      _twilioService.onIncomingMessage = (from, body, messageSid, to) {
+        _showIncomingMessageNotification(from, body, messageSid, to);
       };
 
       // A notification was tapped (app was backgrounded/killed) — no banner
-      // moment, just open the conversation directly.
+      // moment, just open the conversation directly. The native/local
+      // notification payloads don't carry the SID or the local number, so this
+      // message gets a synthetic id and is reconciled by the refresh() below.
       _twilioService.onOpenConversation = (from, body) {
-        _handleIncomingMessage(from, body);
+        _handleIncomingMessage(_incomingMessage(from, body, '', ''));
       };
 
-      // Start polling for incoming communications
-      _twilioService.startPollingForIncomingCommunications();
       _loadOutgoingNumbers();
       _maybeShowOnboarding(storageService);
     }
@@ -290,7 +287,39 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
   }
 
-  void _showIncomingMessageNotification(String from, String body) {
+  /// Builds a [Message] for an inbound push. Keyed by the real Twilio SID so it
+  /// dedups against the same message when it later arrives via a REST refresh
+  /// (which also uses the SID as the id); falls back to a synthetic id only when
+  /// the push omitted the SID. [to] is the account's own number the SMS came in
+  /// on, stored as [Message.localNumber] for outgoing-number scoping.
+  Message _incomingMessage(String from, String body, String messageSid, String to) {
+    return Message(
+      id: messageSid.isNotEmpty ? messageSid : UniqueKey().toString(),
+      phoneNumber: from,
+      content: body,
+      timestamp: DateTime.now(),
+      isIncoming: true,
+      localNumber: to,
+    );
+  }
+
+  void _showIncomingMessageNotification(
+      String from, String body, String messageSid, String to) {
+    final message = _incomingMessage(from, body, messageSid, to);
+    // Persist to the offline cache unconditionally so an incoming message is
+    // never lost, whichever tab is active — MessagesScreen is only mounted on
+    // the Messages tab, so its live-insert path below can't be relied on to
+    // save it. Scoped to the selected outgoing number to mirror the REST list;
+    // addMessage upserts by id, so the live insert below won't duplicate it.
+    if (_twilioService.matchesCurrentNumber(message)) {
+      Provider.of<StorageService>(context, listen: false).addMessage(message);
+    }
+    // If the user is already viewing this person's thread, drop the message
+    // straight into it in real time instead of interrupting with a banner.
+    if (_messagesKey.currentState?.addIncomingMessage(message) ?? false) {
+      return;
+    }
+
     final contactName =
         Provider.of<ContactsService>(
           context,
@@ -305,7 +334,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _notificationBody =
           '$contactName: ${body.length > 30 ? '${body.substring(0, 30)}...' : body}';
       _notificationAction = () {
-        _handleIncomingMessage(from, body);
+        _handleIncomingMessage(message);
       };
     });
   }
@@ -331,18 +360,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
   }
 
-  void _handleIncomingMessage(String from, String body) {
+  void _handleIncomingMessage(Message message) {
     final storageService = Provider.of<StorageService>(context, listen: false);
 
-    // Add to message history
-    final message = Message(
-      id: UniqueKey().toString(),
-      phoneNumber: from,
-      content: body,
-      timestamp: DateTime.now(),
-      isIncoming: true,
-    );
-
+    // Persist to the offline cache. addMessage upserts by id, so this is a
+    // no-op duplicate when the foreground path already inserted this same SID.
     storageService.addMessage(message);
     // If the Messages tab is already open (on this or another conversation),
     // switching _selectedIndex/_selectedContact below won't recreate
@@ -352,7 +374,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     setState(() {
       _showNotification = false;
       _selectedIndex = 2; // Switch to messages tab
-      _selectedContact = from;
+      _selectedContact = message.phoneNumber;
     });
   }
 

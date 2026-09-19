@@ -211,6 +211,10 @@ class StorageService extends ChangeNotifier {
   }
 
   Future<void> addMessage(Message message) async {
+    // Upsert by id so a message inserted live from a foreground push isn't
+    // duplicated when the same message arrives again via a notification tap.
+    // Real messages are keyed by their Twilio SID; synthetic ids never collide.
+    _messages.removeWhere((m) => m.id == message.id);
     _messages.insert(0, message); // Add to beginning of list
     await _saveMessages();
     notifyListeners();

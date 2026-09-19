@@ -213,7 +213,8 @@ class TwilioService {
   /// [_incomingMessageChannel] below), because this app's Twilio Voice FCM
   /// service is Android's one registered FirebaseMessagingService, so
   /// [FirebaseMessaging.onMessage] never reaches Dart there.
-  Function(String from, String body)? onIncomingMessage;
+  Function(String from, String body, String messageSid, String to)?
+      onIncomingMessage;
 
   /// Fires when the user taps a system/local notification for an incoming
   /// text (app was backgrounded or fully killed) and the conversation should
@@ -335,7 +336,12 @@ class TwilioService {
   void _handleForegroundMessage(RemoteMessage message) {
     if (message.data['dialcrest_type'] != 'incoming_message') return;
     if (isVacationMode) return;
-    onIncomingMessage?.call(message.data['from'] ?? '', message.data['body'] ?? '');
+    onIncomingMessage?.call(
+      message.data['from'] ?? '',
+      message.data['body'] ?? '',
+      message.data['messageSid'] ?? '',
+      message.data['to'] ?? '',
+    );
   }
 
   /// Extras from a tapped [IncomingMessageFcmHandler] Android notification,
@@ -1085,6 +1091,12 @@ class TwilioService {
     return current == null || current.isEmpty || message.localNumber == current;
   }
 
+  /// Whether [message] belongs to the currently selected outgoing number, so
+  /// live/persisted incoming messages get scoped exactly like the REST list
+  /// (which filters with [_matchesCurrentNumberMessage]).
+  bool matchesCurrentNumber(Message message) =>
+      _matchesCurrentNumberMessage(message);
+
   /// A "client leg" is the Voice SDK side of the call (the app endpoint),
   /// identified by a `client:` From/To. The other leg carries the real PSTN
   /// number, so these are dropped to avoid duplicate/mislabelled entries.
@@ -1485,20 +1497,4 @@ class TwilioService {
     }
   }
 
-  // For receiving incoming calls and messages, you would typically need to set up a webhook
-  // that Twilio can hit. For a mobile app, this would usually involve a push notification service.
-  // Since we can't use system notifications per the requirements, we'll simulate this with
-  // a polling mechanism in a real implementation.
-
-  // Start polling for incoming communications (simplified for this example)
-  void startPollingForIncomingCommunications() {
-    // In a real implementation, this would poll Twilio's API periodically
-    // or use push notifications through a backend service
-    debugPrint('Started polling for incoming communications');
-  }
-
-  // Stop polling
-  void stopPollingForIncomingCommunications() {
-    debugPrint('Stopped polling for incoming communications');
-  }
 }

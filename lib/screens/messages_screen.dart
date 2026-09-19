@@ -110,6 +110,39 @@ class MessagesScreenState extends State<MessagesScreen> {
   /// trigger a refresh from the app bar.
   Future<void> refresh() => _loadFirstPage();
 
+  /// Delivers an incoming push message into the in-memory list in real time so
+  /// the UI updates live whether the Messages tab is showing the matching thread
+  /// (new bubble + auto-scroll via [_buildThread]) or the conversation list (the
+  /// preview updates and the conversation moves to the top via
+  /// [_groupConversations]). Persistence to the offline cache is owned by the
+  /// caller (HomeScreen), which saves the message regardless of the active tab.
+  ///
+  /// Returns true only when the message belongs to the thread currently open, so
+  /// the parent can suppress the interrupting banner; false otherwise (the
+  /// conversation list or a different thread is open) so the parent still shows
+  /// the banner while the list refreshes underneath.
+  ///
+  /// The message is keyed by its Twilio SID (see [_showIncomingMessageNotification]),
+  /// which matches the id the REST list uses, so the id dedup below drops it if a
+  /// [refresh] already pulled it — no duplicate. (A push missing its SID falls
+  /// back to a synthetic id and is instead replaced wholesale by the next
+  /// [refresh], which clears and re-pulls the list.)
+  bool addIncomingMessage(Message message) {
+    // Scope to the selected outgoing number, exactly as the REST list does: a
+    // message that arrived on a different Twilio number would otherwise show
+    // under the current number and then vanish on the next refresh. Leave those
+    // to the banner/tap flow. Persistence is owned by the caller (HomeScreen),
+    // so this only updates the live in-memory list.
+    if (!widget.twilioService.matchesCurrentNumber(message)) {
+      return false;
+    }
+    if (!_messages.any((m) => m.id == message.id)) {
+      setState(() => _messages.add(message));
+    }
+    final openContact = widget.selectedContact;
+    return openContact != null && _key(openContact) == _key(message.phoneNumber);
+  }
+
   Future<void> _loadFirstPage() async {
     setState(() {
       _loadingFirst = true;
