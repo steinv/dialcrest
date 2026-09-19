@@ -1237,9 +1237,15 @@ class TwilioService {
   Future<Message> sendMessage(String to, String body) async {
     try {
       await ensureCurrentPhoneNumberResolved();
+      // Normalize the recipient to E.164 before sending, mirroring makeCall:
+      // Twilio rejects a non-E.164 `To` (e.g. a contact stored as "0478...")
+      // with error 21211. A number that already carries a dial code is returned
+      // unchanged; one without borrows the caller id's country (currentPhoneNumber).
+      final toWithDialCode = PhoneNumber.fromString(to)
+          .getPhoneWithDialCode(PhoneNumber.fromString(currentPhoneNumber ?? ''));
       final response = await _dio.post(
         '/Messages.json',
-        data: {'To': to, 'From': currentPhoneNumber ?? '', 'Body': body},
+        data: {'To': toWithDialCode, 'From': currentPhoneNumber ?? '', 'Body': body},
         options: Options(contentType: 'application/x-www-form-urlencoded'),
       );
 
@@ -1255,7 +1261,14 @@ class TwilioService {
         localNumber: currentPhoneNumber ?? '',
       );
     } catch (e) {
-      debugPrint('Error sending message: $e');
+      // Log the Twilio status + JSON error body (code/message) rather than the
+      // opaque DioException, whose toString() hides the actual reason (e.g.
+      // 21608 unverified trial recipient, 21211 invalid To, 21606 bad From).
+      if (e is DioException) {
+        debugPrint('Error sending message: status=${e.response?.statusCode} body=${e.response?.data}');
+      } else {
+        debugPrint('Error sending message: $e');
+      }
       // No "Failed to ..." prefix here: the caller (Messages) already adds its
       // own "Failed to send message: ..." wrapper around this.
       throw _TwilioApiException(describeTwilioError(e));
