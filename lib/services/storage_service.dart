@@ -123,6 +123,19 @@ class StorageService extends ChangeNotifier {
     await _prefs.setBool('incoming_autoconfigured_$accountSid', value);
   }
 
+  /// Whether the first-run onboarding wizard has been finished (or explicitly
+  /// skipped) for [accountSid] on this device. Per-device — most of what the
+  /// wizard drives (OS permissions, the Android calling-account toggle) is
+  /// device-local — so it correctly shows again when the same account signs in
+  /// on a new device. Defaults to false so a brand-new user always sees it once.
+  bool getOnboardingCompleted(String accountSid) {
+    return _prefs.getBool('onboarding_completed_$accountSid') ?? false;
+  }
+
+  Future<void> setOnboardingCompleted(String accountSid, bool value) async {
+    await _prefs.setBool('onboarding_completed_$accountSid', value);
+  }
+
   List<String> getKnownPhoneNumbers(String accountSid) {
     return _prefs.getStringList('known_phone_numbers_$accountSid') ?? [];
   }

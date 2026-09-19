@@ -390,5 +390,139 @@
   "@audioMessage": {},
 
   "attachment": "Attachment",
-  "@attachment": {}
+  "@attachment": {},
+
+  "onboardingSkip": "Skip",
+  "@onboardingSkip": {},
+
+  "onboardingNext": "Next",
+  "@onboardingNext": {},
+
+  "onboardingBack": "Back",
+  "@onboardingBack": {},
+
+  "onboardingFinish": "Finish",
+  "@onboardingFinish": {},
+
+  "onboardingStepLabel": "Step {current} of {total}",
+  "@onboardingStepLabel": {
+    "placeholders": { "current": {}, "total": {} }
+  },
+
+  "onboardingWelcomeTitle": "Welcome to Dialcrest",
+  "@onboardingWelcomeTitle": {},
+
+  "onboardingWelcomeBody": "Let's get you set up to make and receive calls. It only takes a minute, or skip it and set things up later in Settings.",
+  "@onboardingWelcomeBody": {},
+
+  "onboardingPermissionsTitle": "Permissions",
+  "@onboardingPermissionsTitle": {},
+
+  "onboardingPermissionsSubtitle": "Dialcrest needs a few permissions to place calls and let you know about incoming ones.",
+  "@onboardingPermissionsSubtitle": {},
+
+  "onboardingGrant": "Grant",
+  "@onboardingGrant": {},
+
+  "onboardingGranted": "Granted",
+  "@onboardingGranted": {},
+
+  "onboardingOpenSettings": "Open settings",
+  "@onboardingOpenSettings": {},
+
+  "onboardingMicTitle": "Microphone",
+  "@onboardingMicTitle": {},
+
+  "onboardingMicWhy": "Needed so the other person can hear you during a call.",
+  "@onboardingMicWhy": {},
+
+  "onboardingMicHow": "Tap Grant, then choose Allow in the prompt that appears.",
+  "@onboardingMicHow": {},
+
+  "onboardingMicDenied": "Denied. Open Settings › Apps › Dialcrest › Permissions and turn on Microphone.",
+  "@onboardingMicDenied": {},
+
+  "onboardingNotificationsTitle": "Notifications",
+  "@onboardingNotificationsTitle": {},
+
+  "onboardingNotificationsWhy": "So you're alerted when someone calls or texts you.",
+  "@onboardingNotificationsWhy": {},
+
+  "onboardingNotificationsHow": "Tap Grant, then choose Allow notifications in the prompt.",
+  "@onboardingNotificationsHow": {},
+
+  "onboardingNotificationsDenied": "Denied. Open Settings › Apps › Dialcrest › Notifications and turn them on.",
+  "@onboardingNotificationsDenied": {},
+
+
+
+
+
+  "onboardingCallingAccountTitle": "Phone & calling account",
+  "@onboardingCallingAccountTitle": {},
+
+  "onboardingCallingAccountWhy": "Android only rings this app for incoming calls when Dialcrest is enabled as a calling account.",
+  "@onboardingCallingAccountWhy": {},
+
+  "onboardingCallingAccountStep1": "Tap Open settings below.",
+  "@onboardingCallingAccountStep1": {},
+
+  "onboardingCallingAccountStep2": "On the Calling accounts screen that opens, find Dialcrest.",
+  "@onboardingCallingAccountStep2": {},
+
+  "onboardingCallingAccountStep3": "Turn the Dialcrest toggle on.",
+  "@onboardingCallingAccountStep3": {},
+
+  "onboardingCallingAccountStep4": "Press back to return here. This step turns green once it's on.",
+  "@onboardingCallingAccountStep4": {},
+
+  "onboardingCallingAccountDenied": "Not enabled yet. Open Settings › Apps › Dialcrest › Calling accounts and turn Dialcrest on.",
+  "@onboardingCallingAccountDenied": {},
+
+  "onboardingNumberTitle": "Your phone number",
+  "@onboardingNumberTitle": {},
+
+  "onboardingNumberChooseSubtitle": "Choose the Twilio number you'll use to make and receive calls.",
+  "@onboardingNumberChooseSubtitle": {},
+
+  "onboardingNumberSingleInfo": "You'll make and receive calls on {number}.",
+  "@onboardingNumberSingleInfo": {
+    "placeholders": { "number": {} }
+  },
+
+  "onboardingNumberNone": "No phone numbers were found on your Twilio account. Buy a Voice-capable number in the Twilio Console, then come back and retry.",
+  "@onboardingNumberNone": {},
+
+  "onboardingBuyNumber": "Open Twilio Console",
+  "@onboardingBuyNumber": {},
+
+  "onboardingConfiguringNumber": "Setting up {number} to receive calls…",
+  "@onboardingConfiguringNumber": {
+    "placeholders": { "number": {} }
+  },
+
+  "onboardingNumberSetupFailed": "Could not finish setting up incoming calls: {error}",
+  "@onboardingNumberSetupFailed": {
+    "placeholders": { "error": {} }
+  },
+
+  "onboardingDoneTitle": "You're all set",
+  "@onboardingDoneTitle": {},
+
+  "onboardingDoneBody": "You can now receive calls on {number}.",
+  "@onboardingDoneBody": {
+    "placeholders": { "number": {} }
+  },
+
+  "onboardingDoneBodyNoNumber": "Add a phone number in Settings whenever you're ready to start receiving calls.",
+  "@onboardingDoneBodyNoNumber": {},
+
+  "onboardingDoneTitleIncomplete": "Almost there",
+  "@onboardingDoneTitleIncomplete": {},
+
+  "onboardingDoneIncompleteIntro": "You can finish now, but these still need attention before you can make and receive calls:",
+  "@onboardingDoneIncompleteIntro": {},
+
+  "onboardingDoneIncompleteHint": "Go Back to set them up now, or do it later in Settings.",
+  "@onboardingDoneIncompleteHint": {}
 }

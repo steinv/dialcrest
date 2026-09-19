@@ -54,18 +54,6 @@ dependencies:
   share_plus: ^13.3.0
   firebase_auth: ^6.7.0
 
-# Use a local fork of twilio_voice, rebased onto the published 0.4.0 (which already
-# includes the FlutterViewController fix from github.com/cybex-dev/twilio_voice/pull/311,
-# via pull/320). Stays on CAPABILITY_CALL_PROVIDER (matches upstream default - calls use
-# the system's native call UI, and the user must enable the account once under Settings ->
-# Calling Accounts). The fork carries two still-unmerged Android fixes on top:
-# - hasCallCapableAccount() must also check getPhoneAccount(handle)?.isEnabled directly,
-#   not just getCallCapablePhoneAccounts() (which silently excludes self-managed accounts -
-#   moot for CALL_PROVIDER today, but keeps this helper correct if that ever changes).
-# - onCallInitializingDisconnectedListener must not gate on `connection.twilioCall`
-#   being non-null, since onConnectFailure nulls it out before invoking the listener
-#   (branch bugfix/npe_onCallInitializingDisconnectedListener, pushed to origin).
-# Switch `path` to a `git:` ref once these are pushed/merged upstream, for CI/other machines.
 dependency_overrides:
   twilio_voice:
     path: ../twilio_voice

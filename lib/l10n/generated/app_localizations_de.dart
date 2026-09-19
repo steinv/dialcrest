@@ -423,4 +423,153 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get attachment => 'Anhang';
+
+  @override
+  String get onboardingSkip => 'Überspringen';
+
+  @override
+  String get onboardingNext => 'Weiter';
+
+  @override
+  String get onboardingBack => 'Zurück';
+
+  @override
+  String get onboardingFinish => 'Fertig';
+
+  @override
+  String onboardingStepLabel(Object current, Object total) {
+    return 'Schritt $current von $total';
+  }
+
+  @override
+  String get onboardingWelcomeTitle => 'Willkommen bei Dialcrest';
+
+  @override
+  String get onboardingWelcomeBody =>
+      'Richten wir alles ein, damit Sie Anrufe tätigen und empfangen können. Es dauert nur eine Minute, oder überspringen Sie es und richten Sie es später in den Einstellungen ein.';
+
+  @override
+  String get onboardingPermissionsTitle => 'Berechtigungen';
+
+  @override
+  String get onboardingPermissionsSubtitle =>
+      'Dialcrest benötigt einige Berechtigungen, um Anrufe zu tätigen und Sie über eingehende Anrufe zu informieren.';
+
+  @override
+  String get onboardingGrant => 'Erlauben';
+
+  @override
+  String get onboardingGranted => 'Erteilt';
+
+  @override
+  String get onboardingOpenSettings => 'Einstellungen öffnen';
+
+  @override
+  String get onboardingMicTitle => 'Mikrofon';
+
+  @override
+  String get onboardingMicWhy =>
+      'Erforderlich, damit Ihr Gesprächspartner Sie während eines Anrufs hören kann.';
+
+  @override
+  String get onboardingMicHow =>
+      'Tippen Sie auf Erlauben und wählen Sie dann im Dialog Zulassen.';
+
+  @override
+  String get onboardingMicDenied =>
+      'Verweigert. Öffnen Sie Einstellungen › Apps › Dialcrest › Berechtigungen und aktivieren Sie das Mikrofon.';
+
+  @override
+  String get onboardingNotificationsTitle => 'Benachrichtigungen';
+
+  @override
+  String get onboardingNotificationsWhy =>
+      'Damit Sie benachrichtigt werden, wenn Sie jemand anruft oder Ihnen schreibt.';
+
+  @override
+  String get onboardingNotificationsHow =>
+      'Tippen Sie auf Erlauben und wählen Sie dann Benachrichtigungen zulassen.';
+
+  @override
+  String get onboardingNotificationsDenied =>
+      'Verweigert. Öffnen Sie Einstellungen › Apps › Dialcrest › Benachrichtigungen und aktivieren Sie sie.';
+
+  @override
+  String get onboardingCallingAccountTitle => 'Telefon und Anrufkonto';
+
+  @override
+  String get onboardingCallingAccountWhy =>
+      'Android lässt diese App bei eingehenden Anrufen nur klingeln, wenn Dialcrest als Anrufkonto aktiviert ist.';
+
+  @override
+  String get onboardingCallingAccountStep1 =>
+      'Tippen Sie unten auf Einstellungen öffnen.';
+
+  @override
+  String get onboardingCallingAccountStep2 =>
+      'Suchen Sie auf dem geöffneten Bildschirm Anrufkonten nach Dialcrest.';
+
+  @override
+  String get onboardingCallingAccountStep3 =>
+      'Aktivieren Sie den Schalter für Dialcrest.';
+
+  @override
+  String get onboardingCallingAccountStep4 =>
+      'Drücken Sie auf Zurück, um hierher zurückzukehren. Dieser Schritt wird grün, sobald er aktiviert ist.';
+
+  @override
+  String get onboardingCallingAccountDenied =>
+      'Noch nicht aktiviert. Öffnen Sie Einstellungen › Apps › Dialcrest › Anrufkonten und aktivieren Sie Dialcrest.';
+
+  @override
+  String get onboardingNumberTitle => 'Ihre Telefonnummer';
+
+  @override
+  String get onboardingNumberChooseSubtitle =>
+      'Wählen Sie die Twilio-Nummer, mit der Sie Anrufe tätigen und empfangen möchten.';
+
+  @override
+  String onboardingNumberSingleInfo(Object number) {
+    return 'Sie tätigen und empfangen Anrufe über $number.';
+  }
+
+  @override
+  String get onboardingNumberNone =>
+      'Auf Ihrem Twilio-Konto wurden keine Telefonnummern gefunden. Kaufen Sie in der Twilio Console eine sprachfähige Nummer und versuchen Sie es dann erneut.';
+
+  @override
+  String get onboardingBuyNumber => 'Twilio Console öffnen';
+
+  @override
+  String onboardingConfiguringNumber(Object number) {
+    return '$number wird für eingehende Anrufe eingerichtet…';
+  }
+
+  @override
+  String onboardingNumberSetupFailed(Object error) {
+    return 'Die Einrichtung eingehender Anrufe konnte nicht abgeschlossen werden: $error';
+  }
+
+  @override
+  String get onboardingDoneTitle => 'Alles bereit';
+
+  @override
+  String onboardingDoneBody(Object number) {
+    return 'Sie können jetzt Anrufe über $number empfangen.';
+  }
+
+  @override
+  String get onboardingDoneBodyNoNumber =>
+      'Fügen Sie in den Einstellungen eine Telefonnummer hinzu, wenn Sie bereit sind, Anrufe zu empfangen.';
+
+  @override
+  String get onboardingDoneTitleIncomplete => 'Fast geschafft';
+
+  @override
+  String get onboardingDoneIncompleteIntro =>
+      'Sie können jetzt abschließen, aber Folgendes muss noch erledigt werden, bevor Sie Anrufe tätigen und empfangen können:';
+
+  @override
+  String get onboardingDoneIncompleteHint =>
+      'Gehen Sie zurück, um dies jetzt einzurichten, oder erledigen Sie es später in den Einstellungen.';
 }

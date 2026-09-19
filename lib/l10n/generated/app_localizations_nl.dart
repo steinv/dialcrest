@@ -423,4 +423,153 @@ class AppLocalizationsNl extends AppLocalizations {
 
   @override
   String get attachment => 'Bijlage';
+
+  @override
+  String get onboardingSkip => 'Overslaan';
+
+  @override
+  String get onboardingNext => 'Volgende';
+
+  @override
+  String get onboardingBack => 'Terug';
+
+  @override
+  String get onboardingFinish => 'Voltooien';
+
+  @override
+  String onboardingStepLabel(Object current, Object total) {
+    return 'Stap $current van $total';
+  }
+
+  @override
+  String get onboardingWelcomeTitle => 'Welkom bij Dialcrest';
+
+  @override
+  String get onboardingWelcomeBody =>
+      'Laten we alles instellen zodat u kunt bellen en gebeld worden. Het duurt maar een minuut, of sla het over en stel het later in bij Instellingen.';
+
+  @override
+  String get onboardingPermissionsTitle => 'Machtigingen';
+
+  @override
+  String get onboardingPermissionsSubtitle =>
+      'Dialcrest heeft een paar machtigingen nodig om te bellen en u te waarschuwen bij inkomende oproepen.';
+
+  @override
+  String get onboardingGrant => 'Toestaan';
+
+  @override
+  String get onboardingGranted => 'Verleend';
+
+  @override
+  String get onboardingOpenSettings => 'Instellingen openen';
+
+  @override
+  String get onboardingMicTitle => 'Microfoon';
+
+  @override
+  String get onboardingMicWhy =>
+      'Nodig zodat de ander u tijdens een gesprek kan horen.';
+
+  @override
+  String get onboardingMicHow =>
+      'Tik op Toestaan en kies daarna Toestaan in het venster dat verschijnt.';
+
+  @override
+  String get onboardingMicDenied =>
+      'Geweigerd. Open Instellingen › Apps › Dialcrest › Machtigingen en schakel Microfoon in.';
+
+  @override
+  String get onboardingNotificationsTitle => 'Meldingen';
+
+  @override
+  String get onboardingNotificationsWhy =>
+      'Zodat u wordt gewaarschuwd wanneer iemand u belt of een bericht stuurt.';
+
+  @override
+  String get onboardingNotificationsHow =>
+      'Tik op Toestaan en kies daarna Meldingen toestaan in het venster.';
+
+  @override
+  String get onboardingNotificationsDenied =>
+      'Geweigerd. Open Instellingen › Apps › Dialcrest › Meldingen en schakel ze in.';
+
+  @override
+  String get onboardingCallingAccountTitle => 'Telefoon en belaccount';
+
+  @override
+  String get onboardingCallingAccountWhy =>
+      'Android laat deze app alleen overgaan bij inkomende oproepen wanneer Dialcrest is ingeschakeld als belaccount.';
+
+  @override
+  String get onboardingCallingAccountStep1 =>
+      'Tik hieronder op Instellingen openen.';
+
+  @override
+  String get onboardingCallingAccountStep2 =>
+      'Zoek Dialcrest op het scherm Belaccounts dat wordt geopend.';
+
+  @override
+  String get onboardingCallingAccountStep3 =>
+      'Zet de schakelaar voor Dialcrest aan.';
+
+  @override
+  String get onboardingCallingAccountStep4 =>
+      'Druk op terug om hierheen terug te keren. Deze stap wordt groen zodra hij aan staat.';
+
+  @override
+  String get onboardingCallingAccountDenied =>
+      'Nog niet ingeschakeld. Open Instellingen › Apps › Dialcrest › Belaccounts en zet Dialcrest aan.';
+
+  @override
+  String get onboardingNumberTitle => 'Uw telefoonnummer';
+
+  @override
+  String get onboardingNumberChooseSubtitle =>
+      'Kies het Twilio-nummer dat u gebruikt om te bellen en gebeld te worden.';
+
+  @override
+  String onboardingNumberSingleInfo(Object number) {
+    return 'U belt en wordt gebeld op $number.';
+  }
+
+  @override
+  String get onboardingNumberNone =>
+      'Er zijn geen telefoonnummers gevonden op uw Twilio-account. Koop een nummer met spraakondersteuning in de Twilio Console en probeer het daarna opnieuw.';
+
+  @override
+  String get onboardingBuyNumber => 'Twilio Console openen';
+
+  @override
+  String onboardingConfiguringNumber(Object number) {
+    return '$number instellen voor inkomende oproepen…';
+  }
+
+  @override
+  String onboardingNumberSetupFailed(Object error) {
+    return 'Kon het instellen van inkomende oproepen niet voltooien: $error';
+  }
+
+  @override
+  String get onboardingDoneTitle => 'Alles is klaar';
+
+  @override
+  String onboardingDoneBody(Object number) {
+    return 'U kunt nu gebeld worden op $number.';
+  }
+
+  @override
+  String get onboardingDoneBodyNoNumber =>
+      'Voeg een telefoonnummer toe bij Instellingen wanneer u klaar bent om oproepen te ontvangen.';
+
+  @override
+  String get onboardingDoneTitleIncomplete => 'Bijna klaar';
+
+  @override
+  String get onboardingDoneIncompleteIntro =>
+      'U kunt nu voltooien, maar het volgende heeft nog aandacht nodig voordat u kunt bellen en gebeld worden:';
+
+  @override
+  String get onboardingDoneIncompleteHint =>
+      'Ga terug om dit nu in te stellen, of doe het later bij Instellingen.';
 }

@@ -781,6 +781,246 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Attachment'**
   String get attachment;
+
+  /// No description provided for @onboardingSkip.
+  ///
+  /// In en, this message translates to:
+  /// **'Skip'**
+  String get onboardingSkip;
+
+  /// No description provided for @onboardingNext.
+  ///
+  /// In en, this message translates to:
+  /// **'Next'**
+  String get onboardingNext;
+
+  /// No description provided for @onboardingBack.
+  ///
+  /// In en, this message translates to:
+  /// **'Back'**
+  String get onboardingBack;
+
+  /// No description provided for @onboardingFinish.
+  ///
+  /// In en, this message translates to:
+  /// **'Finish'**
+  String get onboardingFinish;
+
+  /// No description provided for @onboardingStepLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Step {current} of {total}'**
+  String onboardingStepLabel(Object current, Object total);
+
+  /// No description provided for @onboardingWelcomeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Welcome to Dialcrest'**
+  String get onboardingWelcomeTitle;
+
+  /// No description provided for @onboardingWelcomeBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Let\'s get you set up to make and receive calls. It only takes a minute, or skip it and set things up later in Settings.'**
+  String get onboardingWelcomeBody;
+
+  /// No description provided for @onboardingPermissionsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Permissions'**
+  String get onboardingPermissionsTitle;
+
+  /// No description provided for @onboardingPermissionsSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Dialcrest needs a few permissions to place calls and let you know about incoming ones.'**
+  String get onboardingPermissionsSubtitle;
+
+  /// No description provided for @onboardingGrant.
+  ///
+  /// In en, this message translates to:
+  /// **'Grant'**
+  String get onboardingGrant;
+
+  /// No description provided for @onboardingGranted.
+  ///
+  /// In en, this message translates to:
+  /// **'Granted'**
+  String get onboardingGranted;
+
+  /// No description provided for @onboardingOpenSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Open settings'**
+  String get onboardingOpenSettings;
+
+  /// No description provided for @onboardingMicTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone'**
+  String get onboardingMicTitle;
+
+  /// No description provided for @onboardingMicWhy.
+  ///
+  /// In en, this message translates to:
+  /// **'Needed so the other person can hear you during a call.'**
+  String get onboardingMicWhy;
+
+  /// No description provided for @onboardingMicHow.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap Grant, then choose Allow in the prompt that appears.'**
+  String get onboardingMicHow;
+
+  /// No description provided for @onboardingMicDenied.
+  ///
+  /// In en, this message translates to:
+  /// **'Denied. Open Settings › Apps › Dialcrest › Permissions and turn on Microphone.'**
+  String get onboardingMicDenied;
+
+  /// No description provided for @onboardingNotificationsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications'**
+  String get onboardingNotificationsTitle;
+
+  /// No description provided for @onboardingNotificationsWhy.
+  ///
+  /// In en, this message translates to:
+  /// **'So you\'re alerted when someone calls or texts you.'**
+  String get onboardingNotificationsWhy;
+
+  /// No description provided for @onboardingNotificationsHow.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap Grant, then choose Allow notifications in the prompt.'**
+  String get onboardingNotificationsHow;
+
+  /// No description provided for @onboardingNotificationsDenied.
+  ///
+  /// In en, this message translates to:
+  /// **'Denied. Open Settings › Apps › Dialcrest › Notifications and turn them on.'**
+  String get onboardingNotificationsDenied;
+
+  /// No description provided for @onboardingCallingAccountTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Phone & calling account'**
+  String get onboardingCallingAccountTitle;
+
+  /// No description provided for @onboardingCallingAccountWhy.
+  ///
+  /// In en, this message translates to:
+  /// **'Android only rings this app for incoming calls when Dialcrest is enabled as a calling account.'**
+  String get onboardingCallingAccountWhy;
+
+  /// No description provided for @onboardingCallingAccountStep1.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap Open settings below.'**
+  String get onboardingCallingAccountStep1;
+
+  /// No description provided for @onboardingCallingAccountStep2.
+  ///
+  /// In en, this message translates to:
+  /// **'On the Calling accounts screen that opens, find Dialcrest.'**
+  String get onboardingCallingAccountStep2;
+
+  /// No description provided for @onboardingCallingAccountStep3.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn the Dialcrest toggle on.'**
+  String get onboardingCallingAccountStep3;
+
+  /// No description provided for @onboardingCallingAccountStep4.
+  ///
+  /// In en, this message translates to:
+  /// **'Press back to return here. This step turns green once it\'s on.'**
+  String get onboardingCallingAccountStep4;
+
+  /// No description provided for @onboardingCallingAccountDenied.
+  ///
+  /// In en, this message translates to:
+  /// **'Not enabled yet. Open Settings › Apps › Dialcrest › Calling accounts and turn Dialcrest on.'**
+  String get onboardingCallingAccountDenied;
+
+  /// No description provided for @onboardingNumberTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Your phone number'**
+  String get onboardingNumberTitle;
+
+  /// No description provided for @onboardingNumberChooseSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose the Twilio number you\'ll use to make and receive calls.'**
+  String get onboardingNumberChooseSubtitle;
+
+  /// No description provided for @onboardingNumberSingleInfo.
+  ///
+  /// In en, this message translates to:
+  /// **'You\'ll make and receive calls on {number}.'**
+  String onboardingNumberSingleInfo(Object number);
+
+  /// No description provided for @onboardingNumberNone.
+  ///
+  /// In en, this message translates to:
+  /// **'No phone numbers were found on your Twilio account. Buy a Voice-capable number in the Twilio Console, then come back and retry.'**
+  String get onboardingNumberNone;
+
+  /// No description provided for @onboardingBuyNumber.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Twilio Console'**
+  String get onboardingBuyNumber;
+
+  /// No description provided for @onboardingConfiguringNumber.
+  ///
+  /// In en, this message translates to:
+  /// **'Setting up {number} to receive calls…'**
+  String onboardingConfiguringNumber(Object number);
+
+  /// No description provided for @onboardingNumberSetupFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not finish setting up incoming calls: {error}'**
+  String onboardingNumberSetupFailed(Object error);
+
+  /// No description provided for @onboardingDoneTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'You\'re all set'**
+  String get onboardingDoneTitle;
+
+  /// No description provided for @onboardingDoneBody.
+  ///
+  /// In en, this message translates to:
+  /// **'You can now receive calls on {number}.'**
+  String onboardingDoneBody(Object number);
+
+  /// No description provided for @onboardingDoneBodyNoNumber.
+  ///
+  /// In en, this message translates to:
+  /// **'Add a phone number in Settings whenever you\'re ready to start receiving calls.'**
+  String get onboardingDoneBodyNoNumber;
+
+  /// No description provided for @onboardingDoneTitleIncomplete.
+  ///
+  /// In en, this message translates to:
+  /// **'Almost there'**
+  String get onboardingDoneTitleIncomplete;
+
+  /// No description provided for @onboardingDoneIncompleteIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'You can finish now, but these still need attention before you can make and receive calls:'**
+  String get onboardingDoneIncompleteIntro;
+
+  /// No description provided for @onboardingDoneIncompleteHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Go Back to set them up now, or do it later in Settings.'**
+  String get onboardingDoneIncompleteHint;
 }
 
 class _AppLocalizationsDelegate
