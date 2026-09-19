@@ -1204,7 +1204,7 @@ class TwilioService {
       await TwilioVoicePlatform.instance.setTokens(accessToken: accessToken, deviceToken: deviceToken);
 
       final toPhoneNumberWithDialCode = PhoneNumber.fromString(to).getPhoneWithDialCode(PhoneNumber.fromString(currentPhoneNumber ?? ''));
-      return TwilioVoicePlatform.instance.call.place(
+      return await TwilioVoicePlatform.instance.call.place(
         from: currentPhoneNumber ?? '',
         to: toPhoneNumberWithDialCode,
       );
