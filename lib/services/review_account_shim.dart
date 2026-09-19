@@ -44,7 +44,7 @@ import 'package:dialcrest/dto/IncomingPhoneNumbers.dart';
 ///        on a trial account `To` must be a verified number (use your own):
 ///        ```
 ///        curl -s -X POST "https://api.twilio.com/2010-04-01/Accounts/$SID/Calls.json" \
-///          --data-urlencode "To=+32478394317" \
+///          --data-urlencode "To=+32478000000" \
 ///          --data-urlencode "From=+17372508034" \
 ///          --data-urlencode "Url=https://webhooks.twilio.com/v1/Voice/Template/voice_speech_recognition" \
 ///          -u "$SID:$TOKEN" \
