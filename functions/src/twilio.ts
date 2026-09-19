@@ -1,7 +1,7 @@
 import * as express from 'express';
 import twilio, { Twilio, twiml } from 'twilio';
 import { Request } from 'firebase-functions/https';
-import { catchError, forkJoin, from, map, Observable, of, switchMap, tap } from 'rxjs';
+import { catchError, forkJoin, from, map, Observable, of, switchMap } from 'rxjs';
 import { CredentialInstance, CredentialPushType } from 'twilio/lib/rest/conversations/v1/credential';
 import { IncomingPhoneNumberInstance } from 'twilio/lib/rest/api/v2010/account/incomingPhoneNumber';
 import AccessToken, { AccessTokenOptions } from 'twilio/lib/jwt/AccessToken';
@@ -249,6 +249,36 @@ export function configureSelectedNumbers(
 }
 
 /**
+ * Resolve a usable Twilio API key for `accountSid`, cached in RTDB under
+ * /twilio/{accountSid}/api-key:
+ *   1. cached key present -> verify it still authenticates, then reuse it;
+ *   2. cached but revoked/deleted (401) -> drop the stale cache, mint a fresh one;
+ *   3. no cache -> mint and cache.
+ * accessToken()'s toJwt() signs locally and never contacts Twilio, so a dead key
+ * would otherwise go undetected here — hence the explicit auth probe. Only a 401
+ * counts as revoked; transient errors are re-thrown so we never churn a good key.
+ */
+async function getOrCreateApiKey(client: Twilio, accountSid: string): Promise<{ sid: string; secret: string }> {
+    const ref = admin.database().ref(`/twilio/${accountSid}/api-key`);
+    const cached = (await ref.once('value')).val() as { sid: string; secret: string } | null;
+
+    if (cached) {
+        try {
+            // Authenticate WITH the cached key; a 401 means it was revoked/deleted.
+            await twilio(cached.sid, cached.secret, { accountSid }).api.v2010.accounts(accountSid).fetch();
+            return cached;
+        } catch (err) {
+            if ((err as { status?: number }).status !== 401) throw err;
+            await ref.remove();
+        }
+    }
+
+    const created = await client.iam.v1.newApiKey.create({ accountSid, friendlyName: API_KEY_FRIENDLY_NAME });
+    await ref.set({ sid: created.sid, secret: created.secret });
+    return { sid: created.sid, secret: created.secret };
+}
+
+/**
  * Mint a Twilio Voice access token for a tenant's account.
  * The push credential SID (created by twilioRegister) is read from the DB and
  * added to the VoiceGrant so this device can receive incoming-call pushes.
@@ -257,18 +287,8 @@ export function accessToken(accountSid: string, authToken: string, callerId: str
     const client: Twilio = twilio(accountSid, authToken);
     const db = admin.database();
 
-    // Create (and cache) a Twilio API key the first time we see this account.
-    const newApiKey = from(client.iam.v1.newApiKey.create({ accountSid, friendlyName: API_KEY_FRIENDLY_NAME })).pipe(
-        // TODO storing the API secret in RTDB plaintext — lock down with DB rules / move to a secret store.
-        tap((response) => db.ref(`/twilio/${accountSid}/api-key`).set({ sid: response.sid, secret: response.secret })),
-    );
-
-    const apiKey$ = from(db.ref(`/twilio/${accountSid}/api-key`).once('value')).pipe(
-        switchMap((snapshot) => {
-            const data = snapshot.val() as { sid: string; secret: string } | null;
-            return data ? of(data) : newApiKey;
-        }),
-    );
+    // Reuse the cached API key (verifying it still authenticates), or mint one.
+    const apiKey$ = from(getOrCreateApiKey(client, accountSid));
 
     // Push credential SID persisted by twilioRegister; required for incoming calls.
     const pushCredentialSid$ = from(db.ref(`/twilio/${accountSid}/push-credential/android`).once('value')).pipe(
