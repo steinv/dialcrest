@@ -420,4 +420,151 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get attachment => 'Attachment';
+
+  @override
+  String get onboardingSkip => 'Skip';
+
+  @override
+  String get onboardingNext => 'Next';
+
+  @override
+  String get onboardingBack => 'Back';
+
+  @override
+  String get onboardingFinish => 'Finish';
+
+  @override
+  String onboardingStepLabel(Object current, Object total) {
+    return 'Step $current of $total';
+  }
+
+  @override
+  String get onboardingWelcomeTitle => 'Welcome to Dialcrest';
+
+  @override
+  String get onboardingWelcomeBody =>
+      'Let\'s get you set up to make and receive calls. It only takes a minute, or skip it and set things up later in Settings.';
+
+  @override
+  String get onboardingPermissionsTitle => 'Permissions';
+
+  @override
+  String get onboardingPermissionsSubtitle =>
+      'Dialcrest needs a few permissions to place calls and let you know about incoming ones.';
+
+  @override
+  String get onboardingGrant => 'Grant';
+
+  @override
+  String get onboardingGranted => 'Granted';
+
+  @override
+  String get onboardingOpenSettings => 'Open settings';
+
+  @override
+  String get onboardingMicTitle => 'Microphone';
+
+  @override
+  String get onboardingMicWhy =>
+      'Needed so the other person can hear you during a call.';
+
+  @override
+  String get onboardingMicHow =>
+      'Tap Grant, then choose Allow in the prompt that appears.';
+
+  @override
+  String get onboardingMicDenied =>
+      'Denied. Open Settings › Apps › Dialcrest › Permissions and turn on Microphone.';
+
+  @override
+  String get onboardingNotificationsTitle => 'Notifications';
+
+  @override
+  String get onboardingNotificationsWhy =>
+      'So you\'re alerted when someone calls or texts you.';
+
+  @override
+  String get onboardingNotificationsHow =>
+      'Tap Grant, then choose Allow notifications in the prompt.';
+
+  @override
+  String get onboardingNotificationsDenied =>
+      'Denied. Open Settings › Apps › Dialcrest › Notifications and turn them on.';
+
+  @override
+  String get onboardingCallingAccountTitle => 'Phone & calling account';
+
+  @override
+  String get onboardingCallingAccountWhy =>
+      'Android only rings this app for incoming calls when Dialcrest is enabled as a calling account.';
+
+  @override
+  String get onboardingCallingAccountStep1 => 'Tap Open settings below.';
+
+  @override
+  String get onboardingCallingAccountStep2 =>
+      'On the Calling accounts screen that opens, find Dialcrest.';
+
+  @override
+  String get onboardingCallingAccountStep3 => 'Turn the Dialcrest toggle on.';
+
+  @override
+  String get onboardingCallingAccountStep4 =>
+      'Press back to return here. This step turns green once it\'s on.';
+
+  @override
+  String get onboardingCallingAccountDenied =>
+      'Not enabled yet. Open Settings › Apps › Dialcrest › Calling accounts and turn Dialcrest on.';
+
+  @override
+  String get onboardingNumberTitle => 'Your phone number';
+
+  @override
+  String get onboardingNumberChooseSubtitle =>
+      'Choose the Twilio number you\'ll use to make and receive calls.';
+
+  @override
+  String onboardingNumberSingleInfo(Object number) {
+    return 'You\'ll make and receive calls on $number.';
+  }
+
+  @override
+  String get onboardingNumberNone =>
+      'No phone numbers were found on your Twilio account. Buy a Voice-capable number in the Twilio Console, then come back and retry.';
+
+  @override
+  String get onboardingBuyNumber => 'Open Twilio Console';
+
+  @override
+  String onboardingConfiguringNumber(Object number) {
+    return 'Setting up $number to receive calls…';
+  }
+
+  @override
+  String onboardingNumberSetupFailed(Object error) {
+    return 'Could not finish setting up incoming calls: $error';
+  }
+
+  @override
+  String get onboardingDoneTitle => 'You\'re all set';
+
+  @override
+  String onboardingDoneBody(Object number) {
+    return 'You can now receive calls on $number.';
+  }
+
+  @override
+  String get onboardingDoneBodyNoNumber =>
+      'Add a phone number in Settings whenever you\'re ready to start receiving calls.';
+
+  @override
+  String get onboardingDoneTitleIncomplete => 'Almost there';
+
+  @override
+  String get onboardingDoneIncompleteIntro =>
+      'You can finish now, but these still need attention before you can make and receive calls:';
+
+  @override
+  String get onboardingDoneIncompleteHint =>
+      'Go Back to set them up now, or do it later in Settings.';
 }

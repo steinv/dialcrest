@@ -14,6 +14,7 @@ import '../widgets/dialer.dart';
 import '../widgets/notification_overlay.dart';
 import 'call_history_screen.dart';
 import 'messages_screen.dart';
+import 'onboarding_screen.dart';
 import 'settings_screen.dart';
 import '../models/message.dart';
 
@@ -212,7 +213,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       // Start polling for incoming communications
       _twilioService.startPollingForIncomingCommunications();
       _loadOutgoingNumbers();
+      _maybeShowOnboarding(storageService);
     }
+  }
+
+  /// Shows the first-run onboarding wizard once per account on this device, for
+  /// a brand-new user who hasn't finished (or skipped) it yet. Pushed after the
+  /// first frame — HomeScreen builds behind it, so it's ready the moment the
+  /// wizard is finished/skipped. Reuses the existing [_twilioService] instance.
+  void _maybeShowOnboarding(StorageService storageService) {
+    final accountSid = storageService.accountSid;
+    if (accountSid == null) return;
+    if (storageService.getOnboardingCompleted(accountSid)) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => OnboardingScreen(twilioService: _twilioService),
+        ),
+      );
+    });
   }
 
   /// Loads the account's phone numbers for the app bar's quick outgoing-number

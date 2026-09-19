@@ -425,4 +425,152 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get attachment => 'Archivo adjunto';
+
+  @override
+  String get onboardingSkip => 'Omitir';
+
+  @override
+  String get onboardingNext => 'Siguiente';
+
+  @override
+  String get onboardingBack => 'Atrás';
+
+  @override
+  String get onboardingFinish => 'Finalizar';
+
+  @override
+  String onboardingStepLabel(Object current, Object total) {
+    return 'Paso $current de $total';
+  }
+
+  @override
+  String get onboardingWelcomeTitle => 'Bienvenido a Dialcrest';
+
+  @override
+  String get onboardingWelcomeBody =>
+      'Vamos a configurarlo todo para que puedas hacer y recibir llamadas. Solo tarda un minuto, o puedes omitirlo y configurarlo más tarde en Ajustes.';
+
+  @override
+  String get onboardingPermissionsTitle => 'Permisos';
+
+  @override
+  String get onboardingPermissionsSubtitle =>
+      'Dialcrest necesita algunos permisos para hacer llamadas y avisarte de las llamadas entrantes.';
+
+  @override
+  String get onboardingGrant => 'Conceder';
+
+  @override
+  String get onboardingGranted => 'Concedido';
+
+  @override
+  String get onboardingOpenSettings => 'Abrir ajustes';
+
+  @override
+  String get onboardingMicTitle => 'Micrófono';
+
+  @override
+  String get onboardingMicWhy =>
+      'Necesario para que la otra persona pueda oírte durante una llamada.';
+
+  @override
+  String get onboardingMicHow =>
+      'Toca Conceder y luego elige Permitir en el aviso que aparece.';
+
+  @override
+  String get onboardingMicDenied =>
+      'Denegado. Abre Ajustes › Aplicaciones › Dialcrest › Permisos y activa el Micrófono.';
+
+  @override
+  String get onboardingNotificationsTitle => 'Notificaciones';
+
+  @override
+  String get onboardingNotificationsWhy =>
+      'Para que se te avise cuando alguien te llame o te escriba.';
+
+  @override
+  String get onboardingNotificationsHow =>
+      'Toca Conceder y luego elige Permitir notificaciones en el aviso.';
+
+  @override
+  String get onboardingNotificationsDenied =>
+      'Denegado. Abre Ajustes › Aplicaciones › Dialcrest › Notificaciones y actívalas.';
+
+  @override
+  String get onboardingCallingAccountTitle => 'Teléfono y cuenta de llamadas';
+
+  @override
+  String get onboardingCallingAccountWhy =>
+      'Android solo hace sonar esta aplicación para las llamadas entrantes cuando Dialcrest está activado como cuenta de llamadas.';
+
+  @override
+  String get onboardingCallingAccountStep1 => 'Toca Abrir ajustes más abajo.';
+
+  @override
+  String get onboardingCallingAccountStep2 =>
+      'En la pantalla Cuentas de llamadas que se abre, busca Dialcrest.';
+
+  @override
+  String get onboardingCallingAccountStep3 =>
+      'Activa el interruptor de Dialcrest.';
+
+  @override
+  String get onboardingCallingAccountStep4 =>
+      'Pulsa atrás para volver aquí; este paso se pondrá verde cuando esté activado.';
+
+  @override
+  String get onboardingCallingAccountDenied =>
+      'Aún no está activado. Abre Ajustes › Aplicaciones › Dialcrest › Cuentas de llamadas y activa Dialcrest.';
+
+  @override
+  String get onboardingNumberTitle => 'Tu número de teléfono';
+
+  @override
+  String get onboardingNumberChooseSubtitle =>
+      'Elige el número de Twilio que usarás para hacer y recibir llamadas.';
+
+  @override
+  String onboardingNumberSingleInfo(Object number) {
+    return 'Harás y recibirás llamadas en $number.';
+  }
+
+  @override
+  String get onboardingNumberNone =>
+      'No se encontraron números de teléfono en tu cuenta de Twilio. Compra un número compatible con voz en la Twilio Console y luego vuelve e inténtalo de nuevo.';
+
+  @override
+  String get onboardingBuyNumber => 'Abrir la Twilio Console';
+
+  @override
+  String onboardingConfiguringNumber(Object number) {
+    return 'Configurando $number para recibir llamadas…';
+  }
+
+  @override
+  String onboardingNumberSetupFailed(Object error) {
+    return 'No se pudo terminar de configurar las llamadas entrantes: $error';
+  }
+
+  @override
+  String get onboardingDoneTitle => 'Todo listo';
+
+  @override
+  String onboardingDoneBody(Object number) {
+    return 'Ya puedes recibir llamadas en $number.';
+  }
+
+  @override
+  String get onboardingDoneBodyNoNumber =>
+      'Añade un número de teléfono en Ajustes cuando quieras empezar a recibir llamadas.';
+
+  @override
+  String get onboardingDoneTitleIncomplete => 'Casi listo';
+
+  @override
+  String get onboardingDoneIncompleteIntro =>
+      'Puedes finalizar ahora, pero lo siguiente todavía necesita tu atención antes de poder hacer y recibir llamadas:';
+
+  @override
+  String get onboardingDoneIncompleteHint =>
+      'Vuelve atrás para configurarlo ahora, o hazlo más tarde en Ajustes.';
 }

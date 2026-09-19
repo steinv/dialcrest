@@ -289,7 +289,14 @@ class TwilioService {
   /// covering a cold start and an already-running tap on both platforms).
   Future<void> _initializeIncomingMessageHandling() async {
     try {
-      await FirebaseMessaging.instance.requestPermission();
+      // For a brand-new user the onboarding wizard owns the notification-permission
+      // prompt (see requestNotificationPermission), so don't fire one at launch
+      // before it's been explained. Everything else here still runs — device-token
+      // registration and the listeners — so once the wizard (or a later launch)
+      // grants permission, incoming pushes are delivered without further setup.
+      if (_storageService.getOnboardingCompleted(accountSid)) {
+        await FirebaseMessaging.instance.requestPermission();
+      }
       await _registerMessagingDevice();
 
       await _localNotifications.initialize(
@@ -498,6 +505,72 @@ class TwilioService {
   /// underlying future.
   Future<void> ensureCurrentPhoneNumberResolved() => _currentPhoneNumberResolved;
 
+  // ---------------------------------------------------------------------------
+  // Onboarding-wizard permission surface
+  //
+  // These public wrappers let the first-run onboarding wizard
+  // (OnboardingScreen) request and inspect the same OS permissions that are
+  // otherwise requested lazily at point-of-use, so it can front-load them with
+  // an explanation. They reuse the private helpers below rather than
+  // duplicating the platform-channel calls.
+  // ---------------------------------------------------------------------------
+
+  /// Whether microphone access is currently granted (for a wizard status chip).
+  Future<bool> hasMicrophonePermission() =>
+      TwilioVoicePlatform.instance.hasMicAccess();
+
+  /// Requests microphone access and returns whether it ended up granted. Mic is
+  /// the one call-critical permission, so the wizard treats a false here as a
+  /// step the user still needs to resolve.
+  Future<bool> requestMicrophonePermission() async {
+    final platform = TwilioVoicePlatform.instance;
+    if (!await platform.hasMicAccess()) {
+      await platform.requestMicAccess();
+    }
+    return platform.hasMicAccess();
+  }
+
+  /// Requests notification permission (the wizard's Notifications step) and,
+  /// once the user responds, (re)registers this device for incoming-message and
+  /// voice pushes. The startup path defers its own request for a new user, and
+  /// on iOS the push token only becomes available after permission is allowed,
+  /// so this re-runs registration here to wire pushes up immediately rather than
+  /// waiting for the next launch. Returns whether notifications ended up allowed.
+  Future<bool> requestNotificationPermission() async {
+    final settings = await FirebaseMessaging.instance.requestPermission();
+    await _registerMessagingDevice();
+    await _registerVoice();
+    final status = settings.authorizationStatus;
+    return status == AuthorizationStatus.authorized ||
+        status == AuthorizationStatus.provisional;
+  }
+
+  /// Whether this Android device is set up to actually ring for incoming calls:
+  /// the ConnectionService PhoneAccount is registered AND enabled by the user in
+  /// system settings. Always true-by-omission concerns aside, the wizard uses
+  /// this for the calling-account step's status chip. Android-only; returns
+  /// false / is meaningless on other platforms.
+  Future<bool> isCallingAccountEnabled() =>
+      TwilioVoicePlatform.instance.isPhoneAccountEnabled();
+
+  /// Drives the wizard's Android "Calling account" step: grants the phone
+  /// permissions [registerPhoneAccount] needs, registers the PhoneAccount, and —
+  /// if it isn't enabled yet — opens the system "Calling accounts" screen so the
+  /// user can flip the Dialcrest toggle themselves (the one step the app cannot
+  /// perform for them). Returns whether the account is enabled afterwards; the
+  /// user typically has to return from settings (a resumed-lifecycle re-check)
+  /// before that flips to true.
+  Future<bool> ensureCallingAccountEnabled() async {
+    final platform = TwilioVoicePlatform.instance;
+    final missing = await _ensurePhoneAccountPermissions();
+    if (missing.isNotEmpty) return false;
+    await platform.registerPhoneAccount();
+    if (!await platform.isPhoneAccountEnabled()) {
+      await platform.openPhoneAccountSettings();
+    }
+    return platform.isPhoneAccountEnabled();
+  }
+
   /// Requests the two Android permissions [registerPhoneAccount] itself
   /// needs — READ_PHONE_STATE and READ_PHONE_NUMBERS
   Future<List<String>> _ensurePhoneAccountPermissions() async {
@@ -547,6 +620,15 @@ class TwilioService {
   /// "PhoneAccount is not enabled" warning no longer fires.
   Future<void> _ensurePhoneAccount() async {
     try {
+      // For a brand-new user the onboarding wizard owns phone-account setup end
+      // to end — it explains and requests the READ_PHONE_STATE/READ_PHONE_NUMBERS
+      // permissions, registers the account, and opens the "Calling accounts"
+      // screen — so this startup path must stay completely silent (no permission
+      // prompt, no navigation) until onboarding is finished. makeCall() still
+      // performs the same setup on demand if they skip the wizard, and the next
+      // launch after onboarding runs this normally.
+      if (!_storageService.getOnboardingCompleted(accountSid)) return;
+
       final missingPermissions = await _ensurePhoneAccountPermissions();
       // This runs silently at startup (no UI to explain a permission
       // prompt), so only bail out on the two permissions registerPhoneAccount
