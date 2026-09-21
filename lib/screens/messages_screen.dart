@@ -10,6 +10,7 @@ import '../services/contacts_service.dart';
 import '../services/twilio_service.dart';
 import '../widgets/message_media.dart';
 import '../widgets/linkified_text.dart';
+import '../utils/time_format.dart';
 
 /// The actions offered by the long-press sheet on a message bubble.
 enum _MessageAction { share, copy, delete }
@@ -661,7 +662,7 @@ class MessagesScreenState extends State<MessagesScreen> {
                 ),
               const SizedBox(height: 4),
               Text(
-                DateFormat.jm().format(message.timestamp),
+                formatClockTime(context, message.timestamp),
                 style: TextStyle(
                   color: textColor.withValues(alpha: 0.7),
                   fontSize: 12,

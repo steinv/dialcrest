@@ -360,6 +360,15 @@
   "vacationMode": "Vacation mode",
   "@vacationMode": {},
 
+  "timeFormatTitle": "Time format",
+  "@timeFormatTitle": {},
+
+  "timeFormat24h": "24-hour",
+  "@timeFormat24h": {},
+
+  "timeFormat12h": "AM/PM",
+  "@timeFormat12h": {},
+
   "phoneNumberTitle": "Phone number",
   "@phoneNumberTitle": {},
 

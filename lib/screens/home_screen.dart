@@ -22,10 +22,10 @@ class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  _HomeScreenState createState() => _HomeScreenState();
+  HomeScreenState createState() => HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _selectedIndex = 0;
   late TwilioService _twilioService;
   late SubscriptionService _subscriptionService;
@@ -43,15 +43,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   StreamSubscription<CallEvent>? _callEventsSub;
   Timer? _connectTimeout;
 
-  /// The number of the call currently being connected, so a connect-failure
-  /// event (which carries no number) can name it in the error message.
-  String? _connectingNumber;
-
   /// Lets the app bar's refresh button drive the call-history screen's reload.
   final GlobalKey<CallHistoryScreenState> _callHistoryKey = GlobalKey();
 
   /// Lets the app bar's refresh button drive the messages screen's reload.
   final GlobalKey<MessagesScreenState> _messagesKey = GlobalKey();
+
+  /// Lets the app bar's logout button drive the settings screen's logout flow.
+  final GlobalKey<SettingsScreenState> _settingsKey = GlobalKey();
 
   /// The account's phone numbers, for the app bar's quick outgoing-number
   /// switcher. Loaded once the Twilio service is up; empty until then, which
@@ -125,7 +124,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _clearConnecting() {
     _connectTimeout?.cancel();
     _connectTimeout = null;
-    _connectingNumber = null;
     if (mounted && _isConnecting) {
       setState(() => _isConnecting = false);
     }
@@ -388,7 +386,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // Ignore taps while a call is already being connected.
     if (_isConnecting) return;
 
-    _connectingNumber = number;
     setState(() => _isConnecting = true);
     // Safety net: if no call-state event ever arrives (e.g. the platform fails
     // silently), stop showing the spinner instead of hanging forever.
@@ -839,6 +836,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   onPressed: () => _makeCall(_selectedContact!),
                 ),
               ];
+      case 3: // Settings tab
+        return [
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: TextButton.icon(
+              icon: const Icon(Icons.logout, color: Colors.red),
+              label: Text(
+                AppLocalizations.of(context)!.logOut,
+                style: const TextStyle(color: Colors.red),
+              ),
+              onPressed: () => _settingsKey.currentState?.logout(),
+            ),
+          ),
+        ];
       default:
         return [];
     }
@@ -867,6 +878,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         );
       case 3:
         return SettingsScreen(
+          key: _settingsKey,
           twilioService: _twilioService,
           subscriptionService: _subscriptionService,
         );

@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:intl/intl.dart';
 import '../l10n/generated/app_localizations.dart';
 import '../models/call.dart';
 import '../services/storage_service.dart';
 import '../services/contacts_service.dart';
 import '../services/twilio_service.dart';
+import '../utils/time_format.dart';
 
 /// The actions offered by the long-press/tap sheet on a call-history row.
 enum _CallAction { addContact, message, call, delete }
@@ -222,7 +222,7 @@ class CallHistoryScreenState extends State<CallHistoryScreen> {
   Widget _buildCallTile(ContactsService contacts, PhoneCall call) {
     final l10n = AppLocalizations.of(context)!;
     final contactName = contacts.getContactName(call.phoneNumber);
-    final formattedDate = DateFormat.yMMMd().add_jm().format(call.timestamp);
+    final formattedDate = formatDateTime(context, call.timestamp);
     final typeLabel = call.isIncoming
         ? (call.isMissed ? l10n.callTypeMissed : l10n.callTypeIncoming)
         : l10n.callTypeOutgoing;

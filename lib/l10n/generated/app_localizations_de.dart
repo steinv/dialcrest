@@ -391,6 +391,15 @@ class AppLocalizationsDe extends AppLocalizations {
   String get vacationMode => 'Urlaubsmodus';
 
   @override
+  String get timeFormatTitle => 'Zeitformat';
+
+  @override
+  String get timeFormat24h => '24-Stunden';
+
+  @override
+  String get timeFormat12h => 'AM/PM';
+
+  @override
   String get phoneNumberTitle => 'Telefonnummer';
 
   @override

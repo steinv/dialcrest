@@ -26,10 +26,10 @@ class SettingsScreen extends StatefulWidget {
   });
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  State<SettingsScreen> createState() => SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+class SettingsScreenState extends State<SettingsScreen> {
   List<IncomingPhoneNumbers> _numbers = [];
   String? _incomingAppSid;
   bool _isLoading = true;
@@ -454,7 +454,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await _applySingleNumber(selected, sid, setOutgoing: false);
   }
 
-  Future<void> _logout() async {
+  /// Confirms, clears credentials, and returns to the auth screen. Public so
+  /// the home screen's app-bar logout action (shown only on the Settings tab)
+  /// can drive it via this screen's GlobalKey.
+  Future<void> logout() async {
     final l10n = AppLocalizations.of(context)!;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -822,12 +825,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    // Device-wide clock-format preference (24-hour vs AM/PM); watched so the
+    // segmented button reflects and drives StorageService.getUse24hTime.
+    final use24h = context.watch<StorageService>().getUse24hTime();
     return RefreshIndicator(
       onRefresh: () => Future.wait([_loadData(), _loadSubscription()]),
       child: ListView(
         padding: const EdgeInsets.symmetric(vertical: 10),
         children: [
           ..._buildLicenseSection(),
+          const Divider(height: 32),
+          _buildSectionHeader(
+            icon: Icons.schedule,
+            title: l10n.timeFormatTitle,
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: SegmentedButton<bool>(
+              // Match the vacation-mode toggle: the segment icons already
+              // distinguish the selection, so drop the redundant checkmark.
+              showSelectedIcon: false,
+              segments: [
+                ButtonSegment(
+                  value: true,
+                  label: Text(l10n.timeFormat24h),
+                  icon: const Icon(Icons.schedule),
+                ),
+                ButtonSegment(
+                  value: false,
+                  label: Text(l10n.timeFormat12h),
+                  icon: const Icon(Icons.access_time),
+                ),
+              ],
+              selected: {use24h},
+              onSelectionChanged: (selection) =>
+                  Provider.of<StorageService>(context, listen: false)
+                      .setUse24hTime(selection.first),
+            ),
+          ),
           const Divider(height: 32),
           _buildSectionHeader(
             icon: _vacationMode
@@ -876,7 +911,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         _setVacationMode(selection.first),
                   ),
           ),
-          const SizedBox(height: 16),
+          const Divider(height: 32),
           if (_isLoading)
             const Padding(
               padding: EdgeInsets.all(24),
@@ -910,12 +945,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onChanged: (_isSwitching || !_advancedLoaded) ? null : _setAdvanced,
             ),
           ],
-          const Divider(height: 32),
-          ListTile(
-            leading: const Icon(Icons.logout, color: Colors.red),
-            title: Text(l10n.logOut, style: const TextStyle(color: Colors.red)),
-            onTap: _logout,
-          ),
         ],
       ),
     );

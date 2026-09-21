@@ -722,6 +722,24 @@ abstract class AppLocalizations {
   /// **'Vacation mode'**
   String get vacationMode;
 
+  /// No description provided for @timeFormatTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Time format'**
+  String get timeFormatTitle;
+
+  /// No description provided for @timeFormat24h.
+  ///
+  /// In en, this message translates to:
+  /// **'24-hour'**
+  String get timeFormat24h;
+
+  /// No description provided for @timeFormat12h.
+  ///
+  /// In en, this message translates to:
+  /// **'AM/PM'**
+  String get timeFormat12h;
+
   /// No description provided for @phoneNumberTitle.
   ///
   /// In en, this message translates to:
