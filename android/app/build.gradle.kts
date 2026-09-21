@@ -80,5 +80,12 @@ dependencies {
     // firebase_core's android/gradle.properties).
     implementation(platform("com.google.firebase:firebase-bom:33.16.0"))
     implementation("com.google.firebase:firebase-messaging")
+    // The app's activity theme (res/values/styles.xml) descends from
+    // Theme.AppCompat so the twilio_voice plugin's permission-rationale
+    // AlertDialog (androidx.appcompat.app.AlertDialog) can inflate without
+    // throwing "You need to use a Theme.AppCompat theme". The plugin pulls
+    // appcompat in as `implementation`, so it isn't guaranteed on this
+    // module's classpath — declare it here explicitly.
+    implementation("androidx.appcompat:appcompat:1.7.0")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }
