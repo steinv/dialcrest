@@ -576,4 +576,13 @@ class AppLocalizationsNl extends AppLocalizations {
   @override
   String get onboardingDoneIncompleteHint =>
       'Ga terug om dit nu in te stellen, of doe het later bij Instellingen.';
+
+  @override
+  String get chooseChannelTitle => 'Verstuur met';
+
+  @override
+  String get channelSms => 'SMS';
+
+  @override
+  String get channelWhatsapp => 'WhatsApp';
 }

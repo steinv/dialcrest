@@ -51,6 +51,45 @@ class MessagePage {
   MessagePage({required this.messages, this.nextPageUrl});
 }
 
+/// Whether the currently-configured outgoing number is usable as a WhatsApp
+/// sender, and for what. Computed by [TwilioService.refreshWhatsappCapability]
+/// against the WhatsApp Senders API and gated on the sender matching the
+/// configured number (see docs/whatsapp-integration-plan.md §3). All flags are
+/// false when the configured number is not a WhatsApp sender, which is what
+/// hides every WhatsApp affordance across the app.
+class WhatsappCapability {
+  /// The matched sender is live (status ONLINE / ONLINE:UPDATING).
+  final bool messagingEnabled;
+
+  /// The matched sender can receive WhatsApp calls (voice-enabled + calling
+  /// tier). Populated in the calling phase; false for now.
+  final bool callingInboundEnabled;
+
+  /// The matched sender can place business-initiated WhatsApp calls (inbound
+  /// calling + the sender's country supports it). Populated in the calling
+  /// phase; false for now.
+  final bool callingOutboundEnabled;
+
+  /// The matched sender's bare E.164 number (== the configured outgoing
+  /// number), used as the WhatsApp `from`. Null when no sender matched.
+  final String? senderNumber;
+
+  const WhatsappCapability({
+    this.messagingEnabled = false,
+    this.callingInboundEnabled = false,
+    this.callingOutboundEnabled = false,
+    this.senderNumber,
+  });
+
+  /// The all-disabled capability: the configured number is not a WhatsApp
+  /// sender (or the check hasn't run / failed), so the app behaves as before.
+  const WhatsappCapability.none()
+      : messagingEnabled = false,
+        callingInboundEnabled = false,
+        callingOutboundEnabled = false,
+        senderNumber = null;
+}
+
 /// Outcome of a bulk [TwilioService.deleteMessages] (e.g. deleting a whole
 /// spam conversation): the SIDs that were actually removed from Twilio, and
 /// the first error hit, if any. [deleted] is populated even when [error] is
@@ -193,6 +232,12 @@ class TwilioService {
     region: 'europe-west1',
   );
   final StorageService _storageService;
+
+  /// Whether the currently-configured outgoing number is a WhatsApp sender, and
+  /// for what. Starts all-false (so the app behaves exactly as before) until
+  /// [refreshWhatsappCapability] runs; re-evaluated whenever the outgoing number
+  /// changes. Read synchronously by the UI to gate every WhatsApp affordance.
+  WhatsappCapability whatsappCapability = const WhatsappCapability.none();
 
   /// Account-level "advanced number config" flag, stored in RTDB (not per-device)
   /// because it governs account-wide incoming/outgoing behavior — see
@@ -803,7 +848,65 @@ class TwilioService {
     _cachedAccessToken = null;
     _cachedAccessTokenExpiry = null;
     await _registerVoice();
+    // The WhatsApp capability is tied to the configured number, so re-evaluate
+    // it for the new number (fire-and-forget: the UI reads the last value and
+    // refreshes when this resolves).
+    unawaited(refreshWhatsappCapability());
   }
+
+  /// (Re)computes [whatsappCapability] for the currently-configured outgoing
+  /// number by querying the WhatsApp Senders API and matching a sender to that
+  /// number. Never throws — any failure (offline, no senders, wrong scope)
+  /// leaves the capability all-false, which simply hides the WhatsApp features.
+  ///
+  /// The Senders API lives on messaging.twilio.com/v2 rather than the REST base
+  /// this service is pinned to, so the call passes an absolute URL (Dio then
+  /// ignores [Dio.options.baseUrl]) while still sending the account's Basic Auth
+  /// header. No special permissions beyond the account credentials are needed.
+  Future<void> refreshWhatsappCapability() async {
+    try {
+      await ensureCurrentPhoneNumberResolved();
+      final number = currentPhoneNumber;
+      if (number == null || number.isEmpty) {
+        whatsappCapability = const WhatsappCapability.none();
+        return;
+      }
+      final response = await _dio.get(
+        'https://messaging.twilio.com/v2/Channels/Senders',
+        queryParameters: {'Channel': 'whatsapp', 'PageSize': 100},
+      );
+      final senders = (response.data['senders'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+      final wanted = _digitsOnly(number);
+      Map<String, dynamic>? match;
+      for (final sender in senders) {
+        final senderId = (sender['sender_id'] as String?) ?? '';
+        if (_digitsOnly(ChannelAddress.stripPrefix(senderId)) == wanted) {
+          match = sender;
+          break;
+        }
+      }
+      if (match == null) {
+        whatsappCapability = const WhatsappCapability.none();
+        return;
+      }
+      final status = (match['status'] as String?) ?? '';
+      final online = status == 'ONLINE' || status == 'ONLINE:UPDATING';
+      whatsappCapability = WhatsappCapability(
+        messagingEnabled: online,
+        // Calling flags are populated in the WhatsApp-calling phase.
+        senderNumber: online ? number : null,
+      );
+    } catch (e) {
+      debugPrint('Could not refresh WhatsApp capability: $e');
+      whatsappCapability = const WhatsappCapability.none();
+    }
+  }
+
+  /// Strips everything but digits, so two E.164 numbers compare equal
+  /// regardless of the `whatsapp:` prefix or `+`/formatting differences.
+  static String _digitsOnly(String value) =>
+      value.replaceAll(RegExp(r'\D'), '');
 
   /// Switches the outgoing caller id from the app bar's quick switcher,
   /// respecting the number-config mode. In advanced mode outgoing and incoming
@@ -1246,7 +1349,11 @@ class TwilioService {
   }
 
   // Send an SMS message
-  Future<Message> sendMessage(String to, String body) async {
+  Future<Message> sendMessage(
+    String to,
+    String body, {
+    Channel channel = Channel.sms,
+  }) async {
     try {
       await ensureCurrentPhoneNumberResolved();
       // Normalize the recipient to E.164 before sending, mirroring makeCall:
@@ -1255,9 +1362,17 @@ class TwilioService {
       // unchanged; one without borrows the caller id's country (currentPhoneNumber).
       final toWithDialCode = PhoneNumber.fromString(to)
           .getPhoneWithDialCode(PhoneNumber.fromString(currentPhoneNumber ?? ''));
+      // WhatsApp uses the same Messages API with a `whatsapp:` prefix on both
+      // From and To; the From is the configured number (which, for WhatsApp,
+      // is guaranteed to be the sender — see the capability binding rule).
+      final from = currentPhoneNumber ?? '';
       final response = await _dio.post(
         '/Messages.json',
-        data: {'To': toWithDialCode, 'From': currentPhoneNumber ?? '', 'Body': body},
+        data: {
+          'To': ChannelAddress.forChannel(toWithDialCode, channel),
+          'From': ChannelAddress.forChannel(from, channel),
+          'Body': body,
+        },
         options: Options(contentType: 'application/x-www-form-urlencoded'),
       );
 
@@ -1270,7 +1385,8 @@ class TwilioService {
         content: body,
         timestamp: DateTime.now(),
         isIncoming: false,
-        localNumber: currentPhoneNumber ?? '',
+        localNumber: from,
+        channel: channel,
       );
     } catch (e) {
       // Log the Twilio status + JSON error body (code/message) rather than the
@@ -1367,8 +1483,14 @@ class TwilioService {
   Future<Message> _messageFromTwilio(Map<String, dynamic> json) async {
     final direction = (json['direction'] as String?) ?? '';
     final isIncoming = direction == 'inbound';
-    final from = (json['from'] as String?) ?? '';
-    final to = (json['to'] as String?) ?? '';
+    final rawFrom = (json['from'] as String?) ?? '';
+    final rawTo = (json['to'] as String?) ?? '';
+    // WhatsApp messages arrive with a `whatsapp:` prefix on both from/to; that
+    // prefix is the channel marker. Strip it so numbers group with their SMS
+    // counterparts' formatting and render as plain numbers.
+    final channel = ChannelAddress.channelOf(rawFrom);
+    final from = ChannelAddress.stripPrefix(rawFrom);
+    final to = ChannelAddress.stripPrefix(rawTo);
     // The remote party is the other end of the thread.
     final remote = isIncoming ? from : to;
     // ...and the account's own number: the other side of that same message.
@@ -1403,6 +1525,7 @@ class TwilioService {
       isIncoming: isIncoming,
       media: media,
       localNumber: local,
+      channel: channel,
     );
   }
 

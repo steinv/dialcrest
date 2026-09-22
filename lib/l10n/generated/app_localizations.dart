@@ -1027,6 +1027,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Go Back to set them up now, or do it later in Settings.'**
   String get onboardingDoneIncompleteHint;
+
+  /// No description provided for @chooseChannelTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Send with'**
+  String get chooseChannelTitle;
+
+  /// No description provided for @channelSms.
+  ///
+  /// In en, this message translates to:
+  /// **'SMS'**
+  String get channelSms;
+
+  /// No description provided for @channelWhatsapp.
+  ///
+  /// In en, this message translates to:
+  /// **'WhatsApp'**
+  String get channelWhatsapp;
 }
 
 class _AppLocalizationsDelegate

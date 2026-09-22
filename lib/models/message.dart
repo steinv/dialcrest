@@ -1,3 +1,7 @@
+import 'channel.dart';
+
+export 'channel.dart';
+
 /// A single MMS media attachment on a [Message]: where to fetch its bytes
 /// from (Twilio's Media resource, which requires Basic Auth) and its MIME
 /// type, which decides how it's rendered (image/video/audio).
@@ -31,6 +35,11 @@ class Message {
   final String? contactName;
   final List<MessageMedia> media;
 
+  /// The transport this message used. Derived from the `whatsapp:` prefix on
+  /// the Twilio address (see [ChannelAddress]); defaults to [Channel.sms] for
+  /// entries cached before this field existed.
+  final Channel channel;
+
   /// The account's own Twilio number this message used (the `to` on an
   /// inbound message, the `from` on an outbound one) — as opposed to
   /// [phoneNumber], the remote party. Used to scope the message list to the
@@ -47,6 +56,7 @@ class Message {
     this.contactName,
     this.media = const [],
     this.localNumber = '',
+    this.channel = Channel.sms,
   });
 
   Map<String, dynamic> toJson() {
@@ -59,6 +69,7 @@ class Message {
       'contactName': contactName,
       'media': media.map((m) => m.toJson()).toList(),
       'localNumber': localNumber,
+      'channel': channel.wire,
     };
   }
 
@@ -76,6 +87,7 @@ class Message {
           .map(MessageMedia.fromJson)
           .toList(),
       localNumber: json['localNumber'] ?? '',
+      channel: Channel.fromWire(json['channel']),
     );
   }
 }
@@ -86,11 +98,17 @@ class Conversation {
   final String? contactName;
   final DateTime lastMessageTime;
 
+  /// The transport of this thread. A number can have both an SMS and a WhatsApp
+  /// conversation; they group separately (see MessagesScreen), and opening one
+  /// stays in its own channel.
+  final Channel channel;
+
   Conversation({
     required this.phoneNumber,
     required this.messages,
     this.contactName,
     required this.lastMessageTime,
+    this.channel = Channel.sms,
   });
 
   String get previewText {

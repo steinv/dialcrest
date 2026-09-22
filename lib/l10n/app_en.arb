@@ -527,5 +527,14 @@
   "@onboardingDoneIncompleteIntro": {},
 
   "onboardingDoneIncompleteHint": "Go Back to set them up now, or do it later in Settings.",
-  "@onboardingDoneIncompleteHint": {}
+  "@onboardingDoneIncompleteHint": {},
+
+  "chooseChannelTitle": "Send with",
+  "@chooseChannelTitle": {},
+
+  "channelSms": "SMS",
+  "@channelSms": {},
+
+  "channelWhatsapp": "WhatsApp",
+  "@channelWhatsapp": {}
 }

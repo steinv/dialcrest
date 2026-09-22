@@ -161,5 +161,8 @@
   "onboardingDoneBodyNoNumber": "Fügen Sie in den Einstellungen eine Telefonnummer hinzu, wenn Sie bereit sind, Anrufe zu empfangen.",
   "onboardingDoneTitleIncomplete": "Fast geschafft",
   "onboardingDoneIncompleteIntro": "Sie können jetzt abschließen, aber Folgendes muss noch erledigt werden, bevor Sie Anrufe tätigen und empfangen können:",
-  "onboardingDoneIncompleteHint": "Gehen Sie zurück, um dies jetzt einzurichten, oder erledigen Sie es später in den Einstellungen."
+  "onboardingDoneIncompleteHint": "Gehen Sie zurück, um dies jetzt einzurichten, oder erledigen Sie es später in den Einstellungen.",
+  "chooseChannelTitle": "Senden mit",
+  "channelSms": "SMS",
+  "channelWhatsapp": "WhatsApp"
 }

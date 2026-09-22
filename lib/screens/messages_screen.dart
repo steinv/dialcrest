@@ -28,7 +28,15 @@ class MessagesScreen extends StatefulWidget {
   /// The conversation currently open (a remote phone number), or null to show
   /// the conversation list. Owned by the parent so the app bar can reflect it.
   final String? selectedContact;
-  final ValueChanged<String?> onSelectContact;
+
+  /// The channel of the open conversation (SMS or WhatsApp). Null when the
+  /// conversation list is showing. A number can have both an SMS and a WhatsApp
+  /// thread, so this disambiguates which one is open.
+  final Channel? selectedChannel;
+
+  /// Opens (number, channel) as the active conversation, or (null, null) to
+  /// return to the list. Owned by the parent so the app bar can reflect it.
+  final void Function(String? number, Channel? channel) onSelectConversation;
 
   /// Invoked from the empty state to start a new conversation (the parent
   /// switches to the dialer).
@@ -42,7 +50,8 @@ class MessagesScreen extends StatefulWidget {
     super.key,
     required this.twilioService,
     required this.selectedContact,
-    required this.onSelectContact,
+    required this.selectedChannel,
+    required this.onSelectConversation,
     required this.onStartConversation,
     required this.onCall,
   });
@@ -65,7 +74,7 @@ class MessagesScreenState extends State<MessagesScreen> {
 
   // Tracks the open thread so we only auto-scroll to the newest message when
   // the conversation changes or a message is added, not on every rebuild.
-  String? _threadContact;
+  String? _threadKey;
   int _threadMessageCount = 0;
 
   @override
@@ -107,6 +116,12 @@ class MessagesScreenState extends State<MessagesScreen> {
     return digits.length > 9 ? digits.substring(digits.length - 9) : digits;
   }
 
+  /// The grouping key for a conversation: the number key plus the channel, so
+  /// the SMS thread and the WhatsApp thread to the same number stay separate
+  /// (and opening one keeps you in that technology).
+  String _convKey(String number, Channel channel) =>
+      '${channel.name}|${_key(number)}';
+
   /// (Re)loads the first page, replacing the list. Exposed so the parent can
   /// trigger a refresh from the app bar.
   Future<void> refresh() => _loadFirstPage();
@@ -141,7 +156,10 @@ class MessagesScreenState extends State<MessagesScreen> {
       setState(() => _messages.add(message));
     }
     final openContact = widget.selectedContact;
-    return openContact != null && _key(openContact) == _key(message.phoneNumber);
+    final openChannel = widget.selectedChannel;
+    return openContact != null &&
+        openChannel == message.channel &&
+        _key(openContact) == _key(message.phoneNumber);
   }
 
   Future<void> _loadFirstPage() async {
@@ -195,12 +213,13 @@ class MessagesScreenState extends State<MessagesScreen> {
     }
   }
 
-  Future<void> _send(String number) async {
+  Future<void> _send(String number, Channel channel) async {
     final text = _messageController.text.trim();
     if (text.isEmpty || _sending) return;
     setState(() => _sending = true);
     try {
-      final message = await widget.twilioService.sendMessage(number, text);
+      final message =
+          await widget.twilioService.sendMessage(number, text, channel: channel);
       if (!mounted) return;
       setState(() {
         _messages.add(message);
@@ -265,9 +284,11 @@ class MessagesScreenState extends State<MessagesScreen> {
   /// conversation list (its tile is gone too).
   void _leaveThreadIfEmpty() {
     final contact = widget.selectedContact;
-    if (contact == null) return;
-    if (!_messages.any((m) => _key(m.phoneNumber) == _key(contact))) {
-      widget.onSelectContact(null);
+    final channel = widget.selectedChannel;
+    if (contact == null || channel == null) return;
+    if (!_messages.any((m) =>
+        m.channel == channel && _key(m.phoneNumber) == _key(contact))) {
+      widget.onSelectConversation(null, null);
     }
   }
 
@@ -407,7 +428,8 @@ class MessagesScreenState extends State<MessagesScreen> {
         await Provider.of<ContactsService>(context, listen: false)
             .openAddContact(conversation.phoneNumber);
       case _ConversationAction.open:
-        widget.onSelectContact(conversation.phoneNumber);
+        widget.onSelectConversation(
+            conversation.phoneNumber, conversation.channel);
       case _ConversationAction.call:
         widget.onCall(conversation.phoneNumber);
       case _ConversationAction.delete:
@@ -443,10 +465,12 @@ class MessagesScreenState extends State<MessagesScreen> {
   }
 
   /// Groups the fetched messages into conversations, newest-activity first.
+  /// Keyed by number *and* channel, so a number reached over both SMS and
+  /// WhatsApp appears as two separate threads.
   List<Conversation> _groupConversations(ContactsService contacts) {
     final byKey = <String, List<Message>>{};
     for (final m in _messages) {
-      byKey.putIfAbsent(_key(m.phoneNumber), () => []).add(m);
+      byKey.putIfAbsent(_convKey(m.phoneNumber, m.channel), () => []).add(m);
     }
     final conversations = byKey.values.map((msgs) {
       msgs.sort((a, b) => a.timestamp.compareTo(b.timestamp));
@@ -456,6 +480,7 @@ class MessagesScreenState extends State<MessagesScreen> {
         messages: msgs,
         contactName: contacts.getContactName(number),
         lastMessageTime: msgs.last.timestamp,
+        channel: msgs.last.channel,
       );
     }).toList()
       ..sort((a, b) => b.lastMessageTime.compareTo(a.lastMessageTime));
@@ -464,8 +489,10 @@ class MessagesScreenState extends State<MessagesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.selectedContact != null) {
-      return SafeArea(child: _buildThread(widget.selectedContact!));
+    if (widget.selectedContact != null && widget.selectedChannel != null) {
+      return SafeArea(
+        child: _buildThread(widget.selectedContact!, widget.selectedChannel!),
+      );
     }
     // Listen to the contacts so names resolve (and re-resolve) live.
     final contacts = context.watch<ContactsService>();
@@ -501,6 +528,7 @@ class MessagesScreenState extends State<MessagesScreen> {
 
   Widget _buildConversationTile(Conversation conversation) {
     final title = conversation.contactName ?? conversation.phoneNumber;
+    final isWhatsapp = conversation.channel == Channel.whatsapp;
     return ListTile(
       leading: CircleAvatar(
         backgroundColor: Theme.of(context).colorScheme.primary,
@@ -509,7 +537,15 @@ class MessagesScreenState extends State<MessagesScreen> {
           style: const TextStyle(color: Colors.white),
         ),
       ),
-      title: Text(title),
+      title: Row(
+        children: [
+          Flexible(child: Text(title, overflow: TextOverflow.ellipsis)),
+          if (isWhatsapp) ...[
+            const SizedBox(width: 6),
+            const _WhatsappBadge(),
+          ],
+        ],
+      ),
       subtitle: Text(
         conversation.previewText,
         maxLines: 1,
@@ -519,7 +555,8 @@ class MessagesScreenState extends State<MessagesScreen> {
         DateFormat.yMMMd().format(conversation.lastMessageTime),
         style: const TextStyle(color: Colors.grey),
       ),
-      onTap: () => widget.onSelectContact(conversation.phoneNumber),
+      onTap: () => widget.onSelectConversation(
+          conversation.phoneNumber, conversation.channel),
       // Long-press opens a sheet of actions for the whole conversation.
       onLongPress: () => _showConversationActions(conversation),
     );
@@ -583,15 +620,15 @@ class MessagesScreenState extends State<MessagesScreen> {
 
   // ---- Thread ------------------------------------------------------------
 
-  Widget _buildThread(String contact) {
-    final key = _key(contact);
+  Widget _buildThread(String contact, Channel channel) {
+    final convKey = _convKey(contact, channel);
     final messages = _messages
-        .where((m) => _key(m.phoneNumber) == key)
+        .where((m) => _convKey(m.phoneNumber, m.channel) == convKey)
         .toList()
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
-    if (contact != _threadContact || messages.length != _threadMessageCount) {
-      _threadContact = contact;
+    if (convKey != _threadKey || messages.length != _threadMessageCount) {
+      _threadKey = convKey;
       _threadMessageCount = messages.length;
       _scrollThreadToBottom();
     }
@@ -613,7 +650,7 @@ class MessagesScreenState extends State<MessagesScreen> {
                       _buildBubble(messages[index]),
                 ),
         ),
-        _buildComposer(contact),
+        _buildComposer(contact, channel),
       ],
     );
   }
@@ -676,7 +713,7 @@ class MessagesScreenState extends State<MessagesScreen> {
     );
   }
 
-  Widget _buildComposer(String contact) {
+  Widget _buildComposer(String contact, Channel channel) {
     final colorScheme = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.all(8),
@@ -704,7 +741,7 @@ class MessagesScreenState extends State<MessagesScreen> {
               ),
               maxLines: null,
               textCapitalization: TextCapitalization.sentences,
-              onSubmitted: (_) => _send(contact),
+              onSubmitted: (_) => _send(contact, channel),
             ),
           ),
           const SizedBox(width: 8),
@@ -722,10 +759,37 @@ class MessagesScreenState extends State<MessagesScreen> {
                       ),
                     )
                   : Icon(Icons.send, color: colorScheme.primary),
-              onPressed: _sending ? null : () => _send(contact),
+              onPressed: _sending ? null : () => _send(contact, channel),
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// A compact "WhatsApp" chip shown on a conversation row so WhatsApp threads
+/// are distinguishable from SMS threads in the single mixed list.
+class _WhatsappBadge extends StatelessWidget {
+  const _WhatsappBadge();
+
+  static const _whatsappGreen = Color(0xFF25D366);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: _whatsappGreen.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: const Text(
+        'WhatsApp',
+        style: TextStyle(
+          color: _whatsappGreen,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }

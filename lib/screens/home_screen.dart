@@ -36,6 +36,11 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Function? _notificationAction;
   String? _selectedContact;
 
+  /// The channel of the open conversation, paired with [_selectedContact]. Null
+  /// whenever no thread is open. Reset together with [_selectedContact] on tab
+  /// change, back, and outgoing-number switch.
+  Channel? _selectedChannel;
+
   /// True from the moment an outgoing call is placed until it either connects
   /// (native call UI takes over) or fails/ends. Drives the dialer's spinner and
   /// blocks a second call from being started.
@@ -241,18 +246,32 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final numbers = await _twilioService.getPhoneNumbers();
       if (!mounted) return;
       setState(() => _outgoingNumbers = numbers ?? []);
+      // Evaluate whether the configured number is a WhatsApp sender so the
+      // WhatsApp affordances (un)hide. Best-effort; refreshes the UI when done.
+      await _twilioService.refreshWhatsappCapability();
+      if (mounted) setState(() {});
     } catch (e) {
       debugPrint('Error loading outgoing numbers for quick switcher: $e');
     }
   }
 
   /// Switches the outgoing caller-id number from the app bar's quick switcher.
+  /// Switching numbers always drops any open thread back to the conversation
+  /// list — threads are scoped to the current outgoing number, so one opened
+  /// under the old number is invalid under the new one.
   Future<void> _switchOutgoingNumber(String number) async {
     if (number == _twilioService.currentPhoneNumber) return;
     try {
       await _twilioService.switchOutgoingNumber(number);
       if (!mounted) return;
-      setState(() {});
+      // Close any open thread immediately, then reflect the recomputed WhatsApp
+      // capability for the new number once it resolves.
+      setState(() {
+        _selectedContact = null;
+        _selectedChannel = null;
+      });
+      await _twilioService.refreshWhatsappCapability();
+      if (mounted) setState(() {});
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -373,6 +392,7 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _showNotification = false;
       _selectedIndex = 2; // Switch to messages tab
       _selectedContact = message.phoneNumber;
+      _selectedChannel = message.channel;
     });
   }
 
@@ -644,13 +664,16 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  void _openNewConversation(String number) {
+  Future<void> _openNewConversation(String number) async {
     final trimmed = number.trim();
     if (trimmed.isEmpty) return;
     Navigator.pop(context);
+    final channel = await _chooseMessagingChannel();
+    if (channel == null || !mounted) return; // cancelled
     setState(() {
       _selectedIndex = 2; // Messages tab
       _selectedContact = trimmed;
+      _selectedChannel = channel;
     });
   }
 
@@ -658,13 +681,55 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// action sheet's "Message" option. Unlike [_openNewConversation] this
   /// assumes no sheet is still on the navigation stack (the caller pops its
   /// own), so it only switches tabs.
-  void _openConversation(String number) {
+  Future<void> _openConversation(String number) async {
     final trimmed = number.trim();
     if (trimmed.isEmpty) return;
+    final channel = await _chooseMessagingChannel();
+    if (channel == null || !mounted) return; // cancelled
     setState(() {
       _selectedIndex = 2; // Messages tab
       _selectedContact = trimmed;
+      _selectedChannel = channel;
     });
+  }
+
+  /// Asks the user whether to start an SMS or a WhatsApp conversation. When the
+  /// configured number isn't a WhatsApp sender there's no choice to make, so it
+  /// returns [Channel.sms] immediately without a sheet — the feature guard that
+  /// keeps WhatsApp-less users from seeing choices they shouldn't. Returns null
+  /// if the user dismisses the sheet.
+  Future<Channel?> _chooseMessagingChannel() async {
+    if (!_twilioService.whatsappCapability.messagingEnabled) {
+      return Channel.sms;
+    }
+    final l10n = AppLocalizations.of(context)!;
+    return showModalBottomSheet<Channel>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: Text(
+                l10n.chooseChannelTitle,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.sms_outlined),
+              title: Text(l10n.channelSms),
+              onTap: () => Navigator.of(context).pop(Channel.sms),
+            ),
+            ListTile(
+              leading: const Icon(Icons.chat, color: Color(0xFF25D366)),
+              title: Text(l10n.channelWhatsapp),
+              onTap: () => Navigator.of(context).pop(Channel.whatsapp),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -674,7 +739,10 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         leading: (_selectedIndex == 2 && _selectedContact != null)
             ? IconButton(
                 icon: const Icon(Icons.arrow_back),
-                onPressed: () => setState(() => _selectedContact = null),
+                onPressed: () => setState(() {
+                  _selectedContact = null;
+                  _selectedChannel = null;
+                }),
               )
             : null,
         title: _buildAppBarTitle(),
@@ -705,8 +773,9 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         onTap: (index) {
           setState(() {
             _selectedIndex = index;
-            _selectedContact =
-                null; // Reset selected contact when changing tabs
+            // Reset the open conversation when changing tabs.
+            _selectedContact = null;
+            _selectedChannel = null;
           });
         },
         type: BottomNavigationBarType.fixed,
@@ -871,8 +940,11 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           key: _messagesKey,
           twilioService: _twilioService,
           selectedContact: _selectedContact,
-          onSelectContact: (number) =>
-              setState(() => _selectedContact = number),
+          selectedChannel: _selectedChannel,
+          onSelectConversation: (number, channel) => setState(() {
+            _selectedContact = number;
+            _selectedChannel = channel;
+          }),
           onStartConversation: _startNewConversation,
           onCall: _makeCall,
         );

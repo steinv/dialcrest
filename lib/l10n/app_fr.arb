@@ -161,5 +161,8 @@
   "onboardingDoneBodyNoNumber": "Ajoutez un numéro de téléphone dans les Réglages quand vous serez prêt à recevoir des appels.",
   "onboardingDoneTitleIncomplete": "Presque terminé",
   "onboardingDoneIncompleteIntro": "Vous pouvez terminer maintenant, mais les éléments suivants nécessitent encore votre attention avant de pouvoir passer et recevoir des appels :",
-  "onboardingDoneIncompleteHint": "Revenez en arrière pour les configurer maintenant, ou faites-le plus tard dans les Réglages."
+  "onboardingDoneIncompleteHint": "Revenez en arrière pour les configurer maintenant, ou faites-le plus tard dans les Réglages.",
+  "chooseChannelTitle": "Envoyer avec",
+  "channelSms": "SMS",
+  "channelWhatsapp": "WhatsApp"
 }

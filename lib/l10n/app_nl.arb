@@ -161,5 +161,8 @@
   "onboardingDoneBodyNoNumber": "Voeg een telefoonnummer toe bij Instellingen wanneer u klaar bent om oproepen te ontvangen.",
   "onboardingDoneTitleIncomplete": "Bijna klaar",
   "onboardingDoneIncompleteIntro": "U kunt nu voltooien, maar het volgende heeft nog aandacht nodig voordat u kunt bellen en gebeld worden:",
-  "onboardingDoneIncompleteHint": "Ga terug om dit nu in te stellen, of doe het later bij Instellingen."
+  "onboardingDoneIncompleteHint": "Ga terug om dit nu in te stellen, of doe het later bij Instellingen.",
+  "chooseChannelTitle": "Verstuur met",
+  "channelSms": "SMS",
+  "channelWhatsapp": "WhatsApp"
 }
