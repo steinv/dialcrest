@@ -536,5 +536,23 @@
   "@channelSms": {},
 
   "channelWhatsapp": "WhatsApp",
-  "@channelWhatsapp": {}
+  "@channelWhatsapp": {},
+
+  "attachImage": "Attach image",
+  "@attachImage": {},
+
+  "recordVoice": "Record voice message",
+  "@recordVoice": {},
+
+  "recording": "Recording…",
+  "@recording": {},
+
+  "takePhoto": "Take photo",
+  "@takePhoto": {},
+
+  "chooseFromGallery": "Choose from gallery",
+  "@chooseFromGallery": {},
+
+  "microphonePermissionDenied": "Microphone permission is required to record a voice message.",
+  "@microphonePermissionDenied": {}
 }

@@ -164,5 +164,11 @@
   "onboardingDoneIncompleteHint": "Ga terug om dit nu in te stellen, of doe het later bij Instellingen.",
   "chooseChannelTitle": "Verstuur met",
   "channelSms": "SMS",
-  "channelWhatsapp": "WhatsApp"
+  "channelWhatsapp": "WhatsApp",
+  "attachImage": "Afbeelding toevoegen",
+  "recordVoice": "Spraakbericht opnemen",
+  "recording": "Opnemen…",
+  "takePhoto": "Foto maken",
+  "chooseFromGallery": "Kies uit galerij",
+  "microphonePermissionDenied": "Toestemming voor de microfoon is vereist om een spraakbericht op te nemen."
 }

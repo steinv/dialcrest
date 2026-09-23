@@ -9,11 +9,22 @@ class MessageMedia {
   final String url;
   final String contentType;
 
-  MessageMedia({required this.url, required this.contentType});
+  /// A path to the attachment's bytes on this device, set only on an
+  /// optimistic just-sent message (the file the user picked/recorded) so it
+  /// renders instantly without a network round-trip. Device-transient and
+  /// never serialized: after the next history fetch the message is replaced by
+  /// Twilio's stored copy, which renders from [url] like inbound media.
+  final String? localPath;
+
+  MessageMedia({required this.url, required this.contentType, this.localPath});
 
   bool get isImage => contentType.startsWith('image/');
   bool get isVideo => contentType.startsWith('video/');
   bool get isAudio => contentType.startsWith('audio/');
+
+  /// Whether this attachment should render from [localPath] (an optimistic
+  /// send) rather than fetching [url] behind Twilio's Basic Auth.
+  bool get isLocal => localPath != null;
 
   Map<String, dynamic> toJson() => {
         'url': url,

@@ -164,5 +164,11 @@
   "onboardingDoneIncompleteHint": "Gehen Sie zurück, um dies jetzt einzurichten, oder erledigen Sie es später in den Einstellungen.",
   "chooseChannelTitle": "Senden mit",
   "channelSms": "SMS",
-  "channelWhatsapp": "WhatsApp"
+  "channelWhatsapp": "WhatsApp",
+  "attachImage": "Bild anhängen",
+  "recordVoice": "Sprachnachricht aufnehmen",
+  "recording": "Aufnahme…",
+  "takePhoto": "Foto aufnehmen",
+  "chooseFromGallery": "Aus Galerie wählen",
+  "microphonePermissionDenied": "Für die Aufnahme einer Sprachnachricht ist die Mikrofonberechtigung erforderlich."
 }

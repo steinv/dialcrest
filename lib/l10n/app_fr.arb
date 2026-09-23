@@ -164,5 +164,11 @@
   "onboardingDoneIncompleteHint": "Revenez en arrière pour les configurer maintenant, ou faites-le plus tard dans les Réglages.",
   "chooseChannelTitle": "Envoyer avec",
   "channelSms": "SMS",
-  "channelWhatsapp": "WhatsApp"
+  "channelWhatsapp": "WhatsApp",
+  "attachImage": "Joindre une image",
+  "recordVoice": "Enregistrer un message vocal",
+  "recording": "Enregistrement…",
+  "takePhoto": "Prendre une photo",
+  "chooseFromGallery": "Choisir dans la galerie",
+  "microphonePermissionDenied": "L'autorisation du microphone est requise pour enregistrer un message vocal."
 }

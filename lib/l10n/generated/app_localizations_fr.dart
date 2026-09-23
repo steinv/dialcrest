@@ -584,4 +584,23 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get channelWhatsapp => 'WhatsApp';
+
+  @override
+  String get attachImage => 'Joindre une image';
+
+  @override
+  String get recordVoice => 'Enregistrer un message vocal';
+
+  @override
+  String get recording => 'Enregistrement…';
+
+  @override
+  String get takePhoto => 'Prendre une photo';
+
+  @override
+  String get chooseFromGallery => 'Choisir dans la galerie';
+
+  @override
+  String get microphonePermissionDenied =>
+      'L\'autorisation du microphone est requise pour enregistrer un message vocal.';
 }
