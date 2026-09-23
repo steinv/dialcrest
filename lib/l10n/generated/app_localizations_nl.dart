@@ -391,15 +391,6 @@ class AppLocalizationsNl extends AppLocalizations {
   String get vacationMode => 'Vakantiemodus';
 
   @override
-  String get timeFormatTitle => 'Tijdnotatie';
-
-  @override
-  String get timeFormat24h => '24-uurs';
-
-  @override
-  String get timeFormat12h => 'AM/PM';
-
-  @override
   String get phoneNumberTitle => 'Telefoonnummer';
 
   @override

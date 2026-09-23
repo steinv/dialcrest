@@ -110,18 +110,6 @@ class StorageService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Whether clock times (message/call timestamps) are shown in 24-hour
-  /// ("14:30") rather than 12-hour AM/PM ("2:30 PM") form. A purely local
-  /// display preference — device-wide, not per-account. Defaults to 24-hour.
-  bool getUse24hTime() {
-    return _prefs.getBool('use_24h_time') ?? true;
-  }
-
-  Future<void> setUse24hTime(bool use24h) async {
-    await _prefs.setBool('use_24h_time', use24h);
-    notifyListeners();
-  }
-
   /// Whether this device has already run the one-time "configure the caller-id
   /// number for incoming too" onboarding for [accountSid] (see
   /// TwilioService._ensureIncomingConfigured). Set once onboarding succeeds so

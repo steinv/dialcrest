@@ -825,44 +825,12 @@ class SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    // Device-wide clock-format preference (24-hour vs AM/PM); watched so the
-    // segmented button reflects and drives StorageService.getUse24hTime.
-    final use24h = context.watch<StorageService>().getUse24hTime();
     return RefreshIndicator(
       onRefresh: () => Future.wait([_loadData(), _loadSubscription()]),
       child: ListView(
         padding: const EdgeInsets.symmetric(vertical: 10),
         children: [
           ..._buildLicenseSection(),
-          const Divider(height: 32),
-          _buildSectionHeader(
-            icon: Icons.schedule,
-            title: l10n.timeFormatTitle,
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: SegmentedButton<bool>(
-              // Match the vacation-mode toggle: the segment icons already
-              // distinguish the selection, so drop the redundant checkmark.
-              showSelectedIcon: false,
-              segments: [
-                ButtonSegment(
-                  value: true,
-                  label: Text(l10n.timeFormat24h),
-                  icon: const Icon(Icons.schedule),
-                ),
-                ButtonSegment(
-                  value: false,
-                  label: Text(l10n.timeFormat12h),
-                  icon: const Icon(Icons.access_time),
-                ),
-              ],
-              selected: {use24h},
-              onSelectionChanged: (selection) =>
-                  Provider.of<StorageService>(context, listen: false)
-                      .setUse24hTime(selection.first),
-            ),
-          ),
           const Divider(height: 32),
           _buildSectionHeader(
             icon: _vacationMode
