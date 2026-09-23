@@ -603,4 +603,12 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String get microphonePermissionDenied =>
       'L\'autorisation du microphone est requise pour enregistrer un message vocal.';
+
+  @override
+  String get mediaTooLarge =>
+      'Cette pièce jointe est trop volumineuse pour être envoyée (max. 16 Mo).';
+
+  @override
+  String get recordingLimitReached =>
+      'Durée d\'enregistrement maximale atteinte.';
 }

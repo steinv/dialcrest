@@ -170,5 +170,7 @@
   "recording": "Aufnahme…",
   "takePhoto": "Foto aufnehmen",
   "chooseFromGallery": "Aus Galerie wählen",
-  "microphonePermissionDenied": "Für die Aufnahme einer Sprachnachricht ist die Mikrofonberechtigung erforderlich."
+  "microphonePermissionDenied": "Für die Aufnahme einer Sprachnachricht ist die Mikrofonberechtigung erforderlich.",
+  "mediaTooLarge": "Dieser Anhang ist zu groß zum Senden (max. 16 MB).",
+  "recordingLimitReached": "Maximale Aufnahmedauer erreicht."
 }

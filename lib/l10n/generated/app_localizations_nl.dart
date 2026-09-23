@@ -604,4 +604,11 @@ class AppLocalizationsNl extends AppLocalizations {
   @override
   String get microphonePermissionDenied =>
       'Toestemming voor de microfoon is vereist om een spraakbericht op te nemen.';
+
+  @override
+  String get mediaTooLarge =>
+      'Die bijlage is te groot om te versturen (max. 16 MB).';
+
+  @override
+  String get recordingLimitReached => 'Maximale opnameduur bereikt.';
 }

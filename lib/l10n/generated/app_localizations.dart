@@ -1081,6 +1081,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Microphone permission is required to record a voice message.'**
   String get microphonePermissionDenied;
+
+  /// No description provided for @mediaTooLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'That attachment is too large to send (max 16 MB).'**
+  String get mediaTooLarge;
+
+  /// No description provided for @recordingLimitReached.
+  ///
+  /// In en, this message translates to:
+  /// **'Maximum recording length reached.'**
+  String get recordingLimitReached;
 }
 
 class _AppLocalizationsDelegate

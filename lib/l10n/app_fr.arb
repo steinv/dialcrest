@@ -170,5 +170,7 @@
   "recording": "Enregistrement…",
   "takePhoto": "Prendre une photo",
   "chooseFromGallery": "Choisir dans la galerie",
-  "microphonePermissionDenied": "L'autorisation du microphone est requise pour enregistrer un message vocal."
+  "microphonePermissionDenied": "L'autorisation du microphone est requise pour enregistrer un message vocal.",
+  "mediaTooLarge": "Cette pièce jointe est trop volumineuse pour être envoyée (max. 16 Mo).",
+  "recordingLimitReached": "Durée d'enregistrement maximale atteinte."
 }

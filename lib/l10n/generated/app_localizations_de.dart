@@ -604,4 +604,11 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get microphonePermissionDenied =>
       'Für die Aufnahme einer Sprachnachricht ist die Mikrofonberechtigung erforderlich.';
+
+  @override
+  String get mediaTooLarge =>
+      'Dieser Anhang ist zu groß zum Senden (max. 16 MB).';
+
+  @override
+  String get recordingLimitReached => 'Maximale Aufnahmedauer erreicht.';
 }

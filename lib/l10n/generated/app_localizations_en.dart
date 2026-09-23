@@ -599,4 +599,11 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get microphonePermissionDenied =>
       'Microphone permission is required to record a voice message.';
+
+  @override
+  String get mediaTooLarge =>
+      'That attachment is too large to send (max 16 MB).';
+
+  @override
+  String get recordingLimitReached => 'Maximum recording length reached.';
 }

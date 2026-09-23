@@ -170,5 +170,7 @@
   "recording": "Opnemen…",
   "takePhoto": "Foto maken",
   "chooseFromGallery": "Kies uit galerij",
-  "microphonePermissionDenied": "Toestemming voor de microfoon is vereist om een spraakbericht op te nemen."
+  "microphonePermissionDenied": "Toestemming voor de microfoon is vereist om een spraakbericht op te nemen.",
+  "mediaTooLarge": "Die bijlage is te groot om te versturen (max. 16 MB).",
+  "recordingLimitReached": "Maximale opnameduur bereikt."
 }

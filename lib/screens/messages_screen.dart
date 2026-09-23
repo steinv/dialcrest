@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -83,6 +84,16 @@ class MessagesScreenState extends State<MessagesScreen> {
   final AudioRecorder _recorder = AudioRecorder();
   bool _recording = false;
   String? _recordPath;
+  // Auto-stops (and sends) a voice note at the length cap so a recording can't
+  // grow an unbounded file.
+  Timer? _recordLimitTimer;
+
+  /// Hard cap on a staged attachment, matching the Storage rules' size check so
+  /// the client fails fast with a clear message instead of a rules rejection.
+  static const int _maxMediaBytes = 16 * 1024 * 1024;
+
+  /// Longest a single voice note may record (~5 MB of AAC at this cap).
+  static const Duration _maxRecordingDuration = Duration(minutes: 5);
 
   // Tracks the open thread so we only auto-scroll to the newest message when
   // the conversation changes or a message is added, not on every rebuild.
@@ -104,6 +115,7 @@ class MessagesScreenState extends State<MessagesScreen> {
     _scrollController.dispose();
     _threadScrollController.dispose();
     _messageController.dispose();
+    _recordLimitTimer?.cancel();
     _recorder.dispose();
     super.dispose();
   }
@@ -242,6 +254,12 @@ class MessagesScreenState extends State<MessagesScreen> {
     OutgoingMedia? media,
   }) async {
     if (_sending) return;
+    // Reject an oversized attachment up front (matches the Storage rules cap)
+    // so the user gets a clear message rather than a mid-upload failure.
+    if (media != null && await media.file.length() > _maxMediaBytes) {
+      if (mounted) _showError(AppLocalizations.of(context)!.mediaTooLarge);
+      return;
+    }
     setState(() => _sending = true);
     try {
       final message = await widget.twilioService
@@ -318,8 +336,9 @@ class MessagesScreenState extends State<MessagesScreen> {
   }
 
   /// Starts recording a voice note into a temp file. No-op if the mic
-  /// permission is denied (surfaces a message instead).
-  Future<void> _startRecording() async {
+  /// permission is denied (surfaces a message instead). Auto-stops and sends at
+  /// [_maxRecordingDuration] so a recording can't grow an unbounded file.
+  Future<void> _startRecording(String number, Channel channel) async {
     final l10n = AppLocalizations.of(context)!;
     try {
       if (!await _recorder.hasPermission()) {
@@ -340,6 +359,12 @@ class MessagesScreenState extends State<MessagesScreen> {
         _recording = true;
         _recordPath = path;
       });
+      _recordLimitTimer?.cancel();
+      _recordLimitTimer = Timer(_maxRecordingDuration, () {
+        if (!mounted || !_recording) return;
+        _showInfo(l10n.recordingLimitReached);
+        _stopAndSendRecording(number, channel);
+      });
     } catch (e) {
       if (!mounted) return;
       _showError(l10n.failedToSendMessage(e.toString()));
@@ -348,6 +373,7 @@ class MessagesScreenState extends State<MessagesScreen> {
 
   /// Stops the recorder and sends the captured voice note over WhatsApp.
   Future<void> _stopAndSendRecording(String number, Channel channel) async {
+    _recordLimitTimer?.cancel();
     String? path;
     try {
       path = await _recorder.stop();
@@ -368,6 +394,7 @@ class MessagesScreenState extends State<MessagesScreen> {
 
   /// Stops the recorder and discards the captured file without sending.
   Future<void> _cancelRecording() async {
+    _recordLimitTimer?.cancel();
     try {
       await _recorder.stop();
     } catch (_) {}
@@ -898,7 +925,8 @@ class MessagesScreenState extends State<MessagesScreen> {
           IconButton(
             tooltip: AppLocalizations.of(context)!.recordVoice,
             icon: Icon(Icons.mic, color: colorScheme.primary),
-            onPressed: _sending ? null : _startRecording,
+            onPressed:
+                _sending ? null : () => _startRecording(contact, channel),
           ),
         ],
         Expanded(

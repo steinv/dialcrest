@@ -554,5 +554,11 @@
   "@chooseFromGallery": {},
 
   "microphonePermissionDenied": "Microphone permission is required to record a voice message.",
-  "@microphonePermissionDenied": {}
+  "@microphonePermissionDenied": {},
+
+  "mediaTooLarge": "That attachment is too large to send (max 16 MB).",
+  "@mediaTooLarge": {},
+
+  "recordingLimitReached": "Maximum recording length reached.",
+  "@recordingLimitReached": {}
 }
