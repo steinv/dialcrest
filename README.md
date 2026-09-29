@@ -50,6 +50,34 @@ Localized strings live in `lib/l10n/*.arb` (English, German, French, Spanish,
 Dutch) — run `flutter gen-l10n` after editing them to regenerate
 `lib/l10n/generated/`.
 
+## Store screenshots (demo data)
+
+For store/website screenshots, build with `STORE_DEMO` to replace call
+history, messages, contact names and the WhatsApp capability with fixed fake
+data from `lib/services/store_demo.dart` — no real Twilio traffic needed, and
+nothing from the signed-in account's history is shown. You still need to be
+signed in to a Twilio account (its number appears in Settings).
+
+```bash
+flutter build apk --debug --dart-define=STORE_DEMO=true
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
+
+# Clean status bar (fixed 9:41 clock, full battery/signal, no notifications)
+adb shell settings put global sysui_demo_allowed 1
+adb shell am broadcast -a com.android.systemui.demo -e command enter
+adb shell am broadcast -a com.android.systemui.demo -e command clock -e hhmm 0941
+adb shell am broadcast -a com.android.systemui.demo -e command notifications -e visible false
+
+adb shell cmd uimode night yes   # or `no` for light mode
+adb exec-out screencap -p > screen.png
+```
+
+Without the define the flag is a compile-time `false`, so normal builds are
+unaffected. If you change `PhoneCall`, `Message` or `WhatsappCapability`,
+update `store_demo.dart` to match. The finished Play Store graphics live in
+`store_assets/play/` (upload `01.png` and `02.png` first, in order — they
+form one continuous image).
+
 ## Cloud Functions
 
 All functions are defined in `functions/src/index.ts` (region `europe-west1`,

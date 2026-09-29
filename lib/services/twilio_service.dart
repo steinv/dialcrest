@@ -22,6 +22,7 @@ import '../l10n/generated/app_localizations.dart';
 import '../l10n/generated/app_localizations_en.dart';
 import 'account_auth_service.dart';
 import 'storage_service.dart';
+import 'store_demo.dart';
 
 /// Looks up the localized strings for the device's current locale without a
 /// [BuildContext] (this file is a plain service, not a widget) — falls back
@@ -887,6 +888,11 @@ class TwilioService {
         whatsappCapability = const WhatsappCapability.none();
         return;
       }
+      if (StoreDemo.enabled) {
+        whatsappCapability =
+            WhatsappCapability(messagingEnabled: true, senderNumber: number);
+        return;
+      }
       final response = await _dio.get(
         'https://messaging.twilio.com/v2/Channels/Senders',
         queryParameters: {'Channel': 'whatsapp', 'PageSize': 100},
@@ -1148,6 +1154,9 @@ class TwilioService {
   }
 
   Future<CallHistoryPage> getCallHistory({int pageSize = 50, String? pageUrl}) async {
+    if (StoreDemo.enabled) {
+      return CallHistoryPage(calls: StoreDemo.calls(currentPhoneNumber));
+    }
     try {
       final response = pageUrl != null
           ? await _dio.get(pageUrl)
@@ -1476,6 +1485,9 @@ class TwilioService {
   /// pages remain.
   /// https://www.twilio.com/docs/sms/api/message-resource#read-multiple-message-resources
   Future<MessagePage> getMessages({int pageSize = 50, String? pageUrl}) async {
+    if (StoreDemo.enabled) {
+      return MessagePage(messages: StoreDemo.messages(currentPhoneNumber));
+    }
     try {
       final response = pageUrl != null
           ? await _dio.get(pageUrl)

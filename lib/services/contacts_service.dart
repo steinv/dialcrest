@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 
 import '../models/PhoneNumber.dart';
+import 'store_demo.dart';
 
 /// A single dialable entry from the device address book.
 class ContactEntry {
@@ -43,6 +44,21 @@ class ContactsService extends ChangeNotifier {
   /// Requests permission (read-only) and (re)loads the address book. Safe to
   /// call repeatedly — e.g. on app resume to pick up edits made elsewhere.
   Future<void> load() async {
+    if (StoreDemo.enabled) {
+      _permissionGranted = true;
+      _nameByNumber
+        ..clear()
+        ..addAll({
+          for (final e in StoreDemo.contacts.entries) _normalize(e.key): e.value,
+        });
+      _entries = [
+        for (final e in StoreDemo.contacts.entries)
+          ContactEntry(name: e.value, number: e.key),
+      ]..sort((a, b) => a.name.compareTo(b.name));
+      _loaded = true;
+      notifyListeners();
+      return;
+    }
     try {
       final status =
           await FlutterContacts.permissions.request(PermissionType.read);
