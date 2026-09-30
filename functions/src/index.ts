@@ -27,7 +27,7 @@ import './slowBufferShim';
 import { HttpsError, onRequest, onCall } from 'firebase-functions/v2/https';
 import { onMessagePublished } from 'firebase-functions/v2/pubsub';
 import { defineSecret, defineString } from 'firebase-functions/params';
-import { lastValueFrom, switchMap, throwError } from 'rxjs';
+import { lastValueFrom, map, switchMap, throwError } from 'rxjs';
 import {
     callbackCallStatusChanges,
     callbackIncomingCall,
@@ -39,6 +39,7 @@ import {
     configureSelectedNumbers,
     registerMessagingDevice,
     linkTwilioAccount,
+    rememberAuthToken,
 } from './twilio';
 import {
     AppleConfig,
@@ -151,12 +152,14 @@ exports.twilioRegister = onCall({ enforceAppCheck: true, region: REGION, cors: t
     (req) => {
         const { androidFcmSecret, iosApnPrivateKey } = pushSecrets();
         const accountSid = req.data['accountSid'];
+        const authToken = req.data['authToken'];
         return lastValueFrom(
             ensureAccountCreated(accountSid).pipe(
                 switchMap(() => ensureTrialStarted(accountSid)),
                 switchMap(() => createOrUpdatePushCredentials(
-                    accountSid, req.data['authToken'], iosApnCertificate.value(), iosApnPrivateKey, androidFcmSecret,
+                    accountSid, authToken, iosApnCertificate.value(), iosApnPrivateKey, androidFcmSecret,
                 )),
+                switchMap((result) => rememberAuthToken(accountSid, authToken).pipe(map(() => result))),
             ),
         );
     }
@@ -178,11 +181,13 @@ exports.twilioAccessToken = onCall(
     { enforceAppCheck: true, region: REGION, cors: true, timeoutSeconds: 30, secrets: [twilioPebletSecret] },
     (req) => {
         const accountSid = req.data['accountSid'];
+        const authToken = req.data['authToken'];
         return lastValueFrom(
             isSubscriptionActive(accountSid, presentedEntitlement(req.data), subscriptionReverificationConfig()).pipe(
                 switchMap((active) => active ?
-                    accessToken(accountSid, req.data['authToken'], req.data['callerId']) :
+                    accessToken(accountSid, authToken, req.data['callerId']) :
                     throwError(() => new HttpsError('failed-precondition', 'subscription-expired'))),
+                switchMap((jwt) => rememberAuthToken(accountSid, authToken).pipe(map(() => jwt))),
             ),
         );
     }

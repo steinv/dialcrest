@@ -5,6 +5,12 @@
     ".write": false,
     "twilio": {
       "$accountSid": {
+        /* Twilio Auth Token, stored for webhook X-Twilio-Signature validation.
+           Cloud Functions (Admin SDK) only — never readable/writable by clients. */
+        "secret": {
+          ".read": false,
+          ".write": false
+        },
         "trial": {
           ".read": "auth.token.accountSid === $accountSid"
         },
