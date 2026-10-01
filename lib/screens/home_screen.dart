@@ -309,14 +309,20 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// (which also uses the SID as the id); falls back to a synthetic id only when
   /// the push omitted the SID. [to] is the account's own number the SMS came in
   /// on, stored as [Message.localNumber] for outgoing-number scoping.
+  ///
+  /// WhatsApp pushes carry a `whatsapp:` prefix on both [from] and [to] (the
+  /// backend forwards Twilio's raw addresses). Mirror [_messageFromTwilio]:
+  /// derive the channel from that prefix and strip it so the message groups,
+  /// scopes and renders exactly like its REST-fetched counterpart.
   Message _incomingMessage(String from, String body, String messageSid, String to) {
     return Message(
       id: messageSid.isNotEmpty ? messageSid : UniqueKey().toString(),
-      phoneNumber: from,
+      phoneNumber: ChannelAddress.stripPrefix(from),
       content: body,
       timestamp: DateTime.now(),
       isIncoming: true,
-      localNumber: to,
+      localNumber: ChannelAddress.stripPrefix(to),
+      channel: ChannelAddress.channelOf(from),
     );
   }
 
@@ -337,12 +343,14 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return;
     }
 
+    // Resolve the name from the bare number (message.phoneNumber), never the
+    // raw `from`, which for WhatsApp still carries the `whatsapp:` prefix.
     final contactName =
         Provider.of<ContactsService>(
           context,
           listen: false,
-        ).getContactName(from) ??
-        from;
+        ).getContactName(message.phoneNumber) ??
+        message.phoneNumber;
 
     setState(() {
       _showNotification = true;

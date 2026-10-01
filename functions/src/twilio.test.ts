@@ -1,7 +1,7 @@
 import { createHmac } from 'crypto';
 import { lastValueFrom } from 'rxjs';
 import admin from 'firebase-admin';
-import { isValidTwilioSignature, rememberAuthToken } from './twilio';
+import { isValidTwilioSignature, rememberAuthToken, resetAuthTokenCacheForTests } from './twilio';
 
 jest.mock('firebase-admin');
 
@@ -42,6 +42,7 @@ function fakeRequest(opts: { signature?: string; body?: Record<string, string> }
 
 beforeEach(() => {
     (admin as unknown as { __resetDatabase: () => void }).__resetDatabase();
+    resetAuthTokenCacheForTests();
 });
 
 describe('isValidTwilioSignature', () => {
@@ -89,6 +90,29 @@ describe('isValidTwilioSignature', () => {
         const bodyWithoutSid = { From: '+3210000000', To: '+3220000000', CallStatus: 'completed' };
         const signature = twilioSignature(AUTH_TOKEN, WEBHOOK_URL, bodyWithoutSid);
         expect(await isValidTwilioSignature(fakeRequest({ signature, body: bodyWithoutSid }), WEBHOOK_URL)).toBe(false);
+    });
+
+    it('serves a token from the in-memory cache without re-reading RTDB on the next webhook', async () => {
+        await seedAuthToken('AC1', AUTH_TOKEN);
+        const signature = twilioSignature(AUTH_TOKEN, WEBHOOK_URL, PARAMS);
+        // First call reads RTDB and caches AUTH_TOKEN for AC1.
+        expect(await isValidTwilioSignature(fakeRequest({ signature, body: PARAMS }), WEBHOOK_URL)).toBe(true);
+        // Rotate the stored token: a cache hit must still validate the original signature,
+        // proving the second call never consulted RTDB.
+        await seedAuthToken('AC1', 'a-rotated-token');
+        expect(await isValidTwilioSignature(fakeRequest({ signature, body: PARAMS }), WEBHOOK_URL)).toBe(true);
+    });
+
+    it('fails open (allows) when the Auth Token read throws, rather than 500-ing the call path', async () => {
+        const spy = jest.spyOn(admin, 'database').mockReturnValue({
+            ref: () => ({ once: () => Promise.reject(new Error('RTDB unavailable')) }),
+        } as unknown as ReturnType<typeof admin.database>);
+        try {
+            const signature = twilioSignature(AUTH_TOKEN, WEBHOOK_URL, PARAMS);
+            expect(await isValidTwilioSignature(fakeRequest({ signature, body: PARAMS }), WEBHOOK_URL)).toBe(true);
+        } finally {
+            spy.mockRestore();
+        }
     });
 });
 

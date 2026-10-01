@@ -256,6 +256,12 @@ class TwilioService {
   /// changes. Read synchronously by the UI to gate every WhatsApp affordance.
   WhatsappCapability whatsappCapability = const WhatsappCapability.none();
 
+  /// The in-flight [refreshWhatsappCapability] run, if one is already underway.
+  /// A number switch triggers two refreshes (setCurrentPhoneNumber fires one
+  /// fire-and-forget, the switcher UI awaits another); they share this single
+  /// Senders API call instead of racing two writes of [whatsappCapability].
+  Future<void>? _whatsappRefreshInFlight;
+
   /// Account-level "advanced number config" flag, stored in RTDB (not per-device)
   /// because it governs account-wide incoming/outgoing behavior — see
   /// [advancedNumberConfig]. Cached here after the first read; defaults to false
@@ -880,7 +886,17 @@ class TwilioService {
   /// this service is pinned to, so the call passes an absolute URL (Dio then
   /// ignores [Dio.options.baseUrl]) while still sending the account's Basic Auth
   /// header. No special permissions beyond the account credentials are needed.
-  Future<void> refreshWhatsappCapability() async {
+  ///
+  /// Concurrent callers coalesce onto a single in-flight run (see
+  /// [_whatsappRefreshInFlight]) so one number switch makes one Senders API
+  /// call, and the fire-and-forget and awaited callers can't write conflicting
+  /// capabilities.
+  Future<void> refreshWhatsappCapability() {
+    return _whatsappRefreshInFlight ??= _refreshWhatsappCapability()
+        .whenComplete(() => _whatsappRefreshInFlight = null);
+  }
+
+  Future<void> _refreshWhatsappCapability() async {
     try {
       await ensureCurrentPhoneNumberResolved();
       final number = currentPhoneNumber;

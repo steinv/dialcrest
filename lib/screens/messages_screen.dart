@@ -88,8 +88,11 @@ class MessagesScreenState extends State<MessagesScreen> {
   // grow an unbounded file.
   Timer? _recordLimitTimer;
 
-  /// Hard cap on a staged attachment, matching the Storage rules' size check so
-  /// the client fails fast with a clear message instead of a rules rejection.
+  /// Hard cap on a staged attachment, matching the Storage rules' size check
+  /// (`request.resource.size < 16 * 1024 * 1024`) so the client fails fast with
+  /// a clear message instead of a rules rejection. Rejected at `>=` the cap, so
+  /// a file of exactly this size is refused on both sides rather than passing
+  /// the pre-check and then being denied by the rules.
   static const int _maxMediaBytes = 16 * 1024 * 1024;
 
   /// Longest a single voice note may record (~5 MB of AAC at this cap).
@@ -256,7 +259,7 @@ class MessagesScreenState extends State<MessagesScreen> {
     if (_sending) return;
     // Reject an oversized attachment up front (matches the Storage rules cap)
     // so the user gets a clear message rather than a mid-upload failure.
-    if (media != null && await media.file.length() > _maxMediaBytes) {
+    if (media != null && await media.file.length() >= _maxMediaBytes) {
       if (mounted) _showError(AppLocalizations.of(context)!.mediaTooLarge);
       return;
     }

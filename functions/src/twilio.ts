@@ -57,12 +57,43 @@ export function rememberAuthToken(accountSid: string, authToken: string): Observ
 }
 
 /**
+ * Short-lived in-memory cache of a tenant's Auth Token, keyed by AccountSid. This
+ * lives in the function instance's global scope, so it survives across warm
+ * invocations and is empty again on every cold start; each instance keeps its own
+ * copy and nothing is shared across instances. It exists only to keep the webhook
+ * hot path off RTDB on back-to-back requests (one call fans out into an outgoing
+ * TwiML fetch plus several status callbacks within seconds). We cache only a token
+ * the DB actually returned — never the "no token" or read-failure cases — so a
+ * tenant that links for the first time starts enforcing on its next cold read
+ * rather than after this TTL. The TTL bounds staleness after an Auth Token
+ * rotation: until it expires, a stale cached token makes validateRequest reject
+ * genuine webhooks (403), so keep it short.
+ */
+const AUTH_TOKEN_CACHE_TTL_MS = 5 * 60 * 1000;
+const authTokenCache = new Map<string, { authToken: string; expires: number }>();
+
+function readCachedAuthToken(accountSid: string): string | null {
+    const entry = authTokenCache.get(accountSid);
+    if (!entry) return null;
+    if (entry.expires <= Date.now()) {
+        authTokenCache.delete(accountSid);
+        return null;
+    }
+    return entry.authToken;
+}
+
+/** Test-only: drop every cached Auth Token so one case's read can't leak into the next. */
+export function resetAuthTokenCacheForTests(): void {
+    authTokenCache.clear();
+}
+
+/**
  * True iff an inbound webhook may proceed. Twilio computes the signature over the
  * exact URL it was configured to call plus the POST params, so we pass the static
  * webhook URL constant (these carry no query string) rather than reconstructing
  * it from proxy-rewritten request headers. The signing key is the tenant's Auth
  * Token, looked up by the request's AccountSid from where rememberAuthToken
- * stored it.
+ * stored it (served from authTokenCache when a recent read is still fresh).
  *
  * Fail-open for tenants with no stored token: a tenant whose token isn't stored
  * (registered before this validation shipped, or never back through a callable)
@@ -73,6 +104,13 @@ export function rememberAuthToken(accountSid: string, authToken: string): Observ
  * and one appears the moment its app next hits a callable. Once a token IS stored,
  * enforcement is always strict: a missing header or bad signature is rejected.
  *
+ * Fail-open on a read error too: these webhooks sit on the call-setup hot path and
+ * previously did no DB work, so a transient RTDB outage must not turn every
+ * outgoing call / status callback into a 500. A failed read is treated like "no
+ * stored token" — allow, with an error log — which just falls back to the
+ * pre-hardening behavior for the duration of the outage. The catch is scoped to
+ * the read alone so a genuine bug in validation still surfaces.
+ *
  * A request without a usable AccountSid is rejected outright: a genuine Twilio
  * webhook always carries one, and without it there is no tenant to check.
  */
@@ -81,11 +119,20 @@ export async function isValidTwilioSignature(request: Request, signedUrl: string
     if (typeof accountSid !== 'string' || accountSid === '') {
         return false;
     }
-    const snapshot = await admin.database().ref(`/twilio/${accountSid}/secret/authToken`).once('value');
-    const authToken = snapshot.val() as string | null;
-    if (!authToken) {
-        console.warn(`Allowing Twilio webhook for ${accountSid}: no stored Auth Token (signature not checked)`);
-        return true;
+    let authToken = readCachedAuthToken(accountSid);
+    if (authToken === null) {
+        try {
+            const snapshot = await admin.database().ref(`/twilio/${accountSid}/secret/authToken`).once('value');
+            authToken = snapshot.val() as string | null;
+        } catch (error) {
+            console.error(`Allowing Twilio webhook for ${accountSid}: Auth Token read failed (signature not checked)`, error);
+            return true;
+        }
+        if (!authToken) {
+            console.warn(`Allowing Twilio webhook for ${accountSid}: no stored Auth Token (signature not checked)`);
+            return true;
+        }
+        authTokenCache.set(accountSid, { authToken, expires: Date.now() + AUTH_TOKEN_CACHE_TTL_MS });
     }
     const signature = request.header('X-Twilio-Signature');
     if (typeof signature !== 'string') {
