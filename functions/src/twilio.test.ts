@@ -3,6 +3,9 @@ import { lastValueFrom } from 'rxjs';
 import admin from 'firebase-admin';
 import twilio from 'twilio';
 import {
+    InvalidTwilioCredentialsError,
+    UNREGISTER_TOKEN_TTL_S,
+    accessToken,
     callbackIncomingCall,
     configureSelectedNumbers,
     ensureWebhooksCurrent,
@@ -10,6 +13,8 @@ import {
     isValidTwilioSignature,
     rememberAuthToken,
     resetAuthTokenCacheForTests,
+    unregisterOnlyToken,
+    verifyTwilioCredentials,
 } from './twilio';
 
 jest.mock('firebase-admin');
@@ -458,5 +463,86 @@ describe('callbackIncomingCall always rings', () => {
         };
         await callbackIncomingCall(fakeRequest({ signature, body }), response as unknown as Parameters<typeof callbackIncomingCall>[1]);
         expect(status).toBe(403);
+    });
+});
+
+describe('verifyTwilioCredentials', () => {
+    function rejectingClient() {
+        const client = fakeTwilioClient();
+        client.accountFetch.mockRejectedValue(Object.assign(new Error('Authenticate'), { status: 401 }));
+        return client;
+    }
+
+    it('accepts the stored token without a Twilio round-trip', async () => {
+        await seedAuthToken('AC1', AUTH_TOKEN);
+        await expect(verifyTwilioCredentials('AC1', AUTH_TOKEN)).resolves.toBeUndefined();
+        expect(twilioFactory()).not.toHaveBeenCalled();
+    });
+
+    it('rejects a token Twilio refuses — e.g. another tenant\'s AccountSid with a guessed token', async () => {
+        await seedAuthToken('AC1', AUTH_TOKEN);
+        twilioFactory().mockReturnValue(rejectingClient());
+        await expect(verifyTwilioCredentials('AC1', 'guessed')).rejects.toBeInstanceOf(InvalidTwilioCredentialsError);
+        expect(dbTree().twilio.AC1.secret.authToken).toBe(AUTH_TOKEN);
+    });
+
+    it('accepts and stores a rotated token once Twilio confirms it', async () => {
+        await seedAuthToken('AC1', 'old-token');
+        twilioFactory().mockReturnValue(fakeTwilioClient());
+        await verifyTwilioCredentials('AC1', 'new-token');
+        expect(twilioFactory()).toHaveBeenCalledWith('AC1', 'new-token');
+        expect(dbTree().twilio.AC1.secret.authToken).toBe('new-token');
+    });
+
+    it('verifies with Twilio when nothing is stored yet', async () => {
+        const client = fakeTwilioClient();
+        twilioFactory().mockReturnValue(client);
+        await verifyTwilioCredentials('AC1', AUTH_TOKEN);
+        expect(client.accountFetch).toHaveBeenCalled();
+        expect(dbTree().twilio.AC1.secret.authToken).toBe(AUTH_TOKEN);
+    });
+
+    it('rejects missing credentials outright', async () => {
+        await expect(verifyTwilioCredentials('AC1', '')).rejects.toBeInstanceOf(InvalidTwilioCredentialsError);
+        expect(twilioFactory()).not.toHaveBeenCalled();
+    });
+
+    it('propagates non-auth Twilio errors instead of calling them invalid credentials', async () => {
+        const client = fakeTwilioClient();
+        client.accountFetch.mockRejectedValue(Object.assign(new Error('Service unavailable'), { status: 503 }));
+        twilioFactory().mockReturnValue(client);
+        await expect(verifyTwilioCredentials('AC1', AUTH_TOKEN)).rejects.toThrow('Service unavailable');
+    });
+});
+
+describe('Voice tokens', () => {
+    function decodeVoiceToken(jwt: string) {
+        const payload = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url').toString());
+        return { payload, voice: payload.grants.voice, ttl: payload.exp - payload.iat };
+    }
+
+    beforeEach(async () => {
+        // Warm caches: a verified API key, the push credential and the outgoing TwiML App.
+        await admin.database().ref('/twilio/AC1/api-key').set({ sid: 'SK1', secret: 'api-secret' });
+        await admin.database().ref('/twilio/AC1/push-credential/android').set('CR1');
+        await seedTwimlApps('AC1', { outgoing: 'AP-out' });
+        twilioFactory().mockReturnValue(fakeTwilioClient());
+    });
+
+    it('a full token can dial out through our TwiML App and receive calls', async () => {
+        const { payload, voice, ttl } = decodeVoiceToken(await lastValueFrom(accessToken('AC1', AUTH_TOKEN, '+321')));
+        expect(payload.grants.identity).toBe('AC1');
+        expect(voice.outgoing).toMatchObject({ application_sid: 'AP-out' });
+        expect(voice.incoming).toEqual({ allow: true });
+        expect(voice.push_credential_sid).toBe('CR1');
+        expect(ttl).toBe(600);
+    });
+
+    it('an unregister-only token cannot dial out and lives just long enough to unregister', async () => {
+        const { payload, voice, ttl } = decodeVoiceToken(await lastValueFrom(unregisterOnlyToken('AC1', AUTH_TOKEN)));
+        expect(payload.grants.identity).toBe('AC1'); // same identity + push credential as the registration it removes
+        expect(voice.push_credential_sid).toBe('CR1');
+        expect(voice.outgoing).toBeUndefined();
+        expect(ttl).toBe(UNREGISTER_TOKEN_TTL_S);
     });
 });

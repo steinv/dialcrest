@@ -18,7 +18,14 @@ rules must not be broken:
 - **Only store an Auth Token Twilio has accepted.** `rememberAuthToken` verifies a
   changed token with an authenticated Twilio call before writing it; don't bypass
   that — the callables don't prove account ownership on their own.
-- **Callables keep `enforceAppCheck: true`.** Don't remove it.
+- **Callables keep `enforceAppCheck: true`.** Don't remove it. App Check proves a
+  genuine app, not account ownership: anything that mints a credential for an
+  account (`twilioAccessToken`, incl. its unregister-only token) must run
+  `verifyTwilioCredentials` first.
+- **Inbound calls are entitlement-gated per device, not in the webhook.** The
+  webhook can't tell devices apart (shared identity); a non-entitled device
+  removes its own registration with the unregister-only token. Never add an
+  account-level paid flag — one customer must not pay for the whole line.
 - **Validate against the URL the endpoint is served at — never reconstruct it**
   from request headers (`Host`, `X-Forwarded-Host`, …); those are spoofable. The
   functions validate only `FUNCTIONS_BASE_URL/<path>`; the Worker only

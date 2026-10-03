@@ -18,6 +18,10 @@ jest.mock('./twilio', () => ({
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     rememberAuthToken: jest.fn(() => require('rxjs').of(undefined)),
     accessToken: jest.fn().mockResolvedValue('fake-jwt-token'),
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    unregisterOnlyToken: jest.fn(() => require('rxjs').of('fake-unregister-token')),
+    verifyTwilioCredentials: jest.fn().mockResolvedValue(undefined),
+    InvalidTwilioCredentialsError: class InvalidTwilioCredentialsError extends Error {},
     createOrUpdatePushCredentials: jest.fn().mockResolvedValue({ androidSid: 'CR-android', iosSid: null }),
     getIncomingAppSid: jest.fn(),
     configureSelectedNumbers: jest.fn(),
@@ -157,6 +161,50 @@ describe('twilioAccessToken (subscription gating)', () => {
                 signedTransactionInfo: signedPayload({ originalTransactionId: 'missing', productId: 'monthly-dialcrest-license' }),
             },
         })).rejects.toMatchObject({ code: 'failed-precondition', message: 'subscription-expired' });
+        jest.useRealTimers();
+    });
+});
+
+describe('twilioAccessToken (credentials + unregister token)', () => {
+    it('refuses with permission-denied, minting nothing, when the Auth Token is not valid for the account', async () => {
+        const { InvalidTwilioCredentialsError } = twilioMocks();
+        twilioMocks().verifyTwilioCredentials.mockRejectedValueOnce(new InvalidTwilioCredentialsError('AC1'));
+        await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
+        await expect(functions.twilioAccessToken.run({ data: { accountSid: 'AC1', authToken: 'guessed', callerId: 'x' } }))
+            .rejects.toMatchObject({ code: 'permission-denied', message: 'invalid-twilio-credentials' });
+        expect(twilioMocks().accessToken).not.toHaveBeenCalled();
+        expect(twilioMocks().unregisterOnlyToken).not.toHaveBeenCalled();
+    });
+
+    it('verifies the credentials before checking the subscription', async () => {
+        await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
+        await functions.twilioAccessToken.run({ data: { accountSid: 'AC1', authToken: 'tok', callerId: 'x' } });
+        expect(twilioMocks().verifyTwilioCredentials).toHaveBeenCalledWith('AC1', 'tok');
+    });
+
+    it('hands a non-entitled device an unregister-only token with the refusal', async () => {
+        jest.useFakeTimers().setSystemTime(0);
+        await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
+        jest.setSystemTime(THIRTY_DAYS_MS + 1);
+        await expect(functions.twilioAccessToken.run({ data: { accountSid: 'AC1', authToken: 'tok', callerId: 'x' } }))
+            .rejects.toMatchObject({
+                code: 'failed-precondition', message: 'subscription-expired', details: { unregisterToken: 'fake-unregister-token' },
+            });
+        expect(twilioMocks().unregisterOnlyToken).toHaveBeenCalledWith('AC1', 'tok');
+        expect(twilioMocks().accessToken).not.toHaveBeenCalled();
+        jest.useRealTimers();
+    });
+
+    it('still refuses (without a token) if the unregister token cannot be minted', async () => {
+        jest.useFakeTimers().setSystemTime(0);
+        await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
+        jest.setSystemTime(THIRTY_DAYS_MS + 1);
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        twilioMocks().unregisterOnlyToken.mockImplementationOnce(() => require('rxjs').throwError(() => new Error('Twilio down')));
+        const error = await functions.twilioAccessToken.run({ data: { accountSid: 'AC1', authToken: 'tok', callerId: 'x' } })
+            .catch((e: unknown) => e);
+        expect(error).toMatchObject({ code: 'failed-precondition', message: 'subscription-expired' });
+        expect((error as { details?: unknown }).details ?? {}).toEqual({});
         jest.useRealTimers();
     });
 });

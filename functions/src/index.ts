@@ -28,7 +28,7 @@ import { setGlobalOptions } from 'firebase-functions/v2';
 import { HttpsError, onRequest, onCall } from 'firebase-functions/v2/https';
 import { onMessagePublished } from 'firebase-functions/v2/pubsub';
 import { defineSecret, defineString } from 'firebase-functions/params';
-import { lastValueFrom, map, switchMap, throwError } from 'rxjs';
+import { catchError, from, lastValueFrom, map, of, switchMap, throwError } from 'rxjs';
 import {
     callbackCallStatusChanges,
     callbackIncomingCall,
@@ -38,6 +38,9 @@ import {
     accessToken,
     getIncomingAppSid,
     configureSelectedNumbers,
+    InvalidTwilioCredentialsError,
+    unregisterOnlyToken,
+    verifyTwilioCredentials,
     ensureWebhooksCurrent,
     registerMessagingDevice,
     linkTwilioAccount,
@@ -178,9 +181,15 @@ exports.twilioRegister = onCall({ enforceAppCheck: true, region: REGION, cors: t
  * credential SID is read from the DB (persisted by twilioRegister) so incoming
  * calls reach this device.
  *
- * Gated on the account's subscription: an expired trial/subscription throws
- * 'failed-precondition' instead of minting a token, blocking both outgoing
- * calls and (by never registering a valid push binding) incoming calls.
+ * The caller must first prove it holds the account's Auth Token
+ * (verifyTwilioCredentials) — 'permission-denied' otherwise.
+ *
+ * Gated on the PERSON's subscription: the line's trial, or the store entitlement
+ * this device presents. When neither is active it throws 'failed-precondition'
+ * 'subscription-expired' instead of minting, blocking outgoing calls; the error's
+ * details carry an `unregisterToken` (unregisterOnlyToken) so the device can drop
+ * its own incoming-call registration. Other devices on the same line are
+ * unaffected — inbound calls themselves are not gated (see incomingCallTwiml).
  *
  * IOS https://github.com/twilio/voice-quickstart-ios#6-create-a-push-credential-with-your-voip-service-certificate
  * ANDROID https://github.com/twilio/voice-quickstart-android#7-create-a-push-credential-using-your-fcm-server-key
@@ -191,16 +200,35 @@ exports.twilioAccessToken = onCall(
         const accountSid = req.data['accountSid'];
         const authToken = req.data['authToken'];
         return lastValueFrom(
-            isSubscriptionActive(accountSid, presentedEntitlement(req.data), subscriptionReverificationConfig()).pipe(
+            from(verifyTwilioCredentials(accountSid, authToken)).pipe(
+                catchError((e) => throwError(() => e instanceof InvalidTwilioCredentialsError ?
+                    new HttpsError('permission-denied', 'invalid-twilio-credentials') :
+                    e)),
+                switchMap(() => isSubscriptionActive(accountSid, presentedEntitlement(req.data), subscriptionReverificationConfig())),
                 switchMap((active) => active ?
                     accessToken(accountSid, authToken, req.data['callerId']) :
-                    throwError(() => new HttpsError('failed-precondition', 'subscription-expired'))),
-                switchMap((jwt) => rememberAuthToken(accountSid, authToken).pipe(map(() => jwt))),
+                    subscriptionExpired(accountSid, authToken)),
                 switchMap((jwt) => ensureWebhooksCurrent(accountSid, authToken).pipe(map(() => jwt))),
             ),
         );
     }
 );
+
+/**
+ * The 'subscription-expired' refusal, carrying an unregister-only token in its
+ * details. If that token can't be minted the refusal is still thrown, just
+ * without it — the device then simply keeps its registration until next time.
+ */
+function subscriptionExpired(accountSid: string, authToken: string) {
+    return unregisterOnlyToken(accountSid, authToken).pipe(
+        map((unregisterToken): { unregisterToken?: string } => ({ unregisterToken })),
+        catchError((e) => {
+            console.error(`Failed to mint an unregister token for ${accountSid}`, e);
+            return of({});
+        }),
+        switchMap((details) => throwError(() => new HttpsError('failed-precondition', 'subscription-expired', details))),
+    );
+}
 
 /**
  * Verifies a subscription purchase the client just made against the App Store

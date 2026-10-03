@@ -193,11 +193,25 @@ only the trial silenced paying users once the trial ended, and an account-level
 paid flag (`/twilio/{sid}/paid`, tried and removed) let one customer's
 subscription cover everyone on the line.
 
-So inbound calls always ring, with or without a trial. Entitlement is enforced
-where the person is known — `twilioAccessToken` (outgoing calls, and minting the
-token a device needs to register for incoming calls). Accepted consequence: a
-device that registered while entitled keeps receiving inbound calls after its
-entitlement lapses (Twilio keeps an idle push binding for up to a year).
+So the webhook always rings, and entitlement is enforced per **device**, where
+the person is known — `twilioAccessToken`:
+
+- Entitled (line trial live, or this device presents an active store
+  entitlement): a normal Voice token — outgoing calls + incoming registration.
+- Not entitled: refused with `failed-precondition` / `subscription-expired`,
+  whose details carry an **unregister-only token** (no outgoing TwiML App,
+  60 s TTL). The app uses it to remove **this device's** incoming-call push
+  registration (`TwilioService._dropVoiceRegistration`) — on every launch / FCM
+  token refresh, when a dial is refused, and when enabling vacation mode.
+  Registrations are per device, so subscribed users on the same line keep
+  ringing. Twilio has no server-side API for Voice SDK registrations, which is
+  why the device does it.
+- Either way the caller must first prove the account's Auth Token
+  (`verifyTwilioCredentials`): `permission-denied` otherwise.
+
+Accepted consequence: if re-verifying a paying user's entitlement fails
+transiently (store outage, failed restore), their device unregisters until its
+next successful token mint (next launch / dial) re-registers it.
 
 Separately: a store notification (no account) no longer overwrites a paid
 record's `lastAccountSid` with null.

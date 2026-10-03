@@ -127,6 +127,13 @@ class BulkDeleteResult {
 /// makeCall's catch-all so this friendly message reaches the UI as-is instead
 /// of being buried in a generic "Failed to make call: ..." string.
 class SubscriptionExpiredException implements Exception {
+  SubscriptionExpiredException({this.unregisterToken});
+
+  /// A short-lived, outgoing-less Voice token the backend sends along with the
+  /// refusal, good only for removing this device's incoming-call registration
+  /// (see TwilioService._dropVoiceRegistration). Null if it couldn't be minted.
+  final String? unregisterToken;
+
   @override
   String toString() =>
       'Your Dialcrest subscription has expired. Open Settings to renew.';
@@ -755,6 +762,12 @@ class TwilioService {
       final accessToken = await _accessToken();
       final deviceToken = await FirebaseMessaging.instance.getToken();
       await TwilioVoicePlatform.instance.setTokens(accessToken: accessToken, deviceToken: deviceToken);
+    } on SubscriptionExpiredException catch (e) {
+      // This user isn't entitled (trial over, no subscription): rather than
+      // silently keeping a registration made while they were, remove it so
+      // this device stops ringing. Only this device's registration is
+      // dropped — subscribed users on the same Twilio account keep ringing.
+      await _dropVoiceRegistration(e.unregisterToken);
     } catch (e, stackTrace) {
       debugPrint('Error registering Twilio Voice: $e');
       debugPrintStack(stackTrace: stackTrace);
@@ -781,12 +794,37 @@ class TwilioService {
       try {
         final accessToken = await _accessToken();
         await TwilioVoicePlatform.instance.unregister(accessToken: accessToken);
+      } on SubscriptionExpiredException catch (e) {
+        // No regular token once the trial is over — use the unregister-only one.
+        await _dropVoiceRegistration(e.unregisterToken);
       } catch (e, stackTrace) {
         debugPrint('Error unregistering Twilio Voice for vacation mode: $e');
         debugPrintStack(stackTrace: stackTrace);
       }
     } else {
       await _registerVoice();
+    }
+  }
+
+  /// Removes this device's incoming-call push registration using the
+  /// unregister-only token from a 'subscription-expired' refusal. Twilio
+  /// registrations are per device, so other devices on the same account are
+  /// unaffected. Best-effort: without a token (or on failure) the device keeps
+  /// its registration until the next attempt (every launch / FCM token refresh).
+  Future<void> _dropVoiceRegistration(String? unregisterToken) async {
+    if (unregisterToken == null) return;
+    try {
+      // Pass the device token explicitly: on a cold start setTokens never ran
+      // (it was refused), so the plugin has no FCM token of its own to name the
+      // registration to remove. The timeout guards the iOS plugin, which never
+      // completes the call when it has no cached PushKit token.
+      final deviceToken = await FirebaseMessaging.instance.getToken();
+      await TwilioVoicePlatform.instance
+          .unregister(accessToken: unregisterToken, deviceToken: deviceToken)
+          .timeout(const Duration(seconds: 10));
+    } catch (e, stackTrace) {
+      debugPrint('Error removing Twilio Voice registration after subscription expiry: $e');
+      debugPrintStack(stackTrace: stackTrace);
     }
   }
 
@@ -855,7 +893,10 @@ class TwilioService {
       return token;
     } on FirebaseFunctionsException catch (e) {
       if (e.code == 'failed-precondition' && e.message == 'subscription-expired') {
-        throw SubscriptionExpiredException();
+        final details = e.details;
+        final unregisterToken =
+            details is Map ? details['unregisterToken'] as String? : null;
+        throw SubscriptionExpiredException(unregisterToken: unregisterToken);
       }
       rethrow;
     }
@@ -1378,7 +1419,10 @@ class TwilioService {
         from: currentPhoneNumber ?? '',
         to: toPhoneNumberWithDialCode,
       );
-    } on SubscriptionExpiredException {
+    } on SubscriptionExpiredException catch (e) {
+      // Not entitled any more: also stop this device ringing for incoming calls
+      // (in the background — the expiry message shouldn't wait on it).
+      unawaited(_dropVoiceRegistration(e.unregisterToken));
       rethrow;
     } catch (e, stackTrace) {
       debugPrint('Error making call: $e');

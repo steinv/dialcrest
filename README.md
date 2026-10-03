@@ -105,7 +105,7 @@ project `twilio-phone-peblet`), with business logic split out into
 | Function | What it does | Called from |
 | --- | --- | --- |
 | `twilioRegister` | Creates/updates the device's Twilio Voice push credential; also runs the "account onboarded" hook that records account creation and starts the 30-day trial. | `lib/services/twilio_service.dart` (`_register()`) |
-| `twilioAccessToken` | Mints a Twilio Voice access token, gated on an active trial/subscription. | `lib/services/twilio_service.dart` (`_mintAccessToken()`) |
+| `twilioAccessToken` | Verifies the caller's Auth Token, then mints a Twilio Voice access token if the line's trial is live or the device presents an active subscription. Otherwise refuses (`subscription-expired`) with an unregister-only token so the device can drop its own incoming-call registration. | `lib/services/twilio_service.dart` (`_mintAccessToken()`) |
 | `twilioVerifyApplePurchase` | Verifies an App Store transaction and persists the resulting entitlement/expiry. | `lib/services/subscription_service.dart` (`_verifyPurchase()`, iOS) |
 | `twilioVerifyGooglePurchase` | Verifies a Play purchase token and persists the resulting entitlement/expiry. | `lib/services/subscription_service.dart` (`_verifyPurchase()`, Android) |
 | `twilioRefreshSubscription` | Re-checks the stored entitlement and returns current subscription status (keeps Settings accurate). | `lib/services/subscription_service.dart` (`refreshPaidStatus()`) |

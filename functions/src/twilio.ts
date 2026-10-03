@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from 'crypto';
 import * as express from 'express';
 import twilio, { Twilio, validateRequest } from 'twilio';
 import { Request } from 'firebase-functions/https';
@@ -76,6 +77,50 @@ export function rememberAuthToken(accountSid: string, authToken: string): Observ
             return of(undefined);
         }),
     );
+}
+
+/** Thrown by verifyTwilioCredentials when Twilio rejects the presented Auth Token for the account. */
+export class InvalidTwilioCredentialsError extends Error {
+    constructor(accountSid: string) {
+        super(`Twilio rejected the presented credentials for ${accountSid}`);
+    }
+}
+
+function tokensEqual(a: string, b: string): boolean {
+    const digest = (value: string) => createHash('sha256').update(value, 'utf8').digest();
+    return timingSafeEqual(digest(a), digest(b));
+}
+
+/**
+ * Proves the caller holds a valid Auth Token for `accountSid`, before anything is
+ * minted for that account. Callables enforce App Check but not account ownership,
+ * and twilioAccessToken can otherwise succeed entirely from cached state (API key,
+ * TwiML App, push credential) without the token ever reaching Twilio — so without
+ * this, anyone could name another tenant's AccountSid and get a Voice token for it:
+ * registering their own device to receive (and answer) that tenant's calls, or
+ * dialing out on that tenant's Twilio bill.
+ *
+ * Cheap in the steady state: a token equal to the stored copy (in-memory cache or
+ * one RTDB read) is accepted without a round-trip — it was proven when it was
+ * stored. Anything else is checked with an authenticated Twilio fetch; on success
+ * it becomes the stored copy (a rotation), on a 401 InvalidTwilioCredentialsError
+ * is thrown. Other Twilio/RTDB errors propagate unchanged.
+ */
+export async function verifyTwilioCredentials(accountSid: string, authToken: string): Promise<void> {
+    if (typeof accountSid !== 'string' || accountSid === '' || typeof authToken !== 'string' || authToken === '') {
+        throw new InvalidTwilioCredentialsError(String(accountSid));
+    }
+    const ref = admin.database().ref(dbPaths.authToken(accountSid));
+    const stored = readCachedAuthToken(accountSid) ?? (await ref.once('value')).val() as string | null;
+    if (stored && tokensEqual(stored, authToken)) return;
+    try {
+        await twilio(accountSid, authToken).api.v2010.accounts(accountSid).fetch();
+    } catch (error) {
+        if ((error as { status?: number })?.status === 401) throw new InvalidTwilioCredentialsError(accountSid);
+        throw error;
+    }
+    await ref.set(authToken);
+    authTokenCache.set(accountSid, { authToken, expires: Date.now() + AUTH_TOKEN_CACHE_TTL_MS });
 }
 
 /**
@@ -562,22 +607,15 @@ async function getOrCreateApiKey(client: Twilio, accountSid: string): Promise<{ 
  * Mint a Twilio Voice access token for a tenant's account.
  * The push credential SID (created by twilioRegister) is read from the DB and
  * added to the VoiceGrant so this device can receive incoming-call pushes.
+ *
+ * Callers MUST have run verifyTwilioCredentials first: nothing here proves the
+ * caller owns the account when the API key and TwiML App are already cached.
  */
 export function accessToken(accountSid: string, authToken: string, callerId: string): Observable<string> {
     const client: Twilio = twilio(accountSid, authToken);
-    const db = admin.database();
-
-    // Reuse the cached API key (verifying it still authenticates), or mint one.
-    const apiKey$ = from(getOrCreateApiKey(client, accountSid));
-
-    // Push credential SID persisted by twilioRegister; required for incoming calls.
-    const pushCredentialSid$ = from(db.ref(`/twilio/${accountSid}/push-credential/android`).once('value')).pipe(
-        map((snapshot) => snapshot.val() as string | null),
-    );
-
     return forkJoin({
-        apiKeyInstance: apiKey$,
-        pushCredentialSid: pushCredentialSid$,
+        apiKeyInstance: from(getOrCreateApiKey(client, accountSid)), // reuse the cached API key (verified), or mint one
+        pushCredentialSid: pushCredentialSid(accountSid),
         appSid: getOrCreateTwimlApp(client, accountSid, 'outgoing', TWIML_APP_FRIENDLY_NAME_OUTGOING, webhookUrl(OUTGOING_CALL_PATH)),
     }).pipe(
         map(({ apiKeyInstance, pushCredentialSid, appSid }) => {
@@ -597,6 +635,48 @@ export function accessToken(accountSid: string, authToken: string, callerId: str
              */
             return token.toJwt();
         }),
+    );
+}
+
+/** Lifetime of an unregister-only token: just long enough for one Voice.unregister call. */
+export const UNREGISTER_TOKEN_TTL_S = 60;
+
+/**
+ * A minimal Voice token handed to a device whose user is NOT entitled (trial over,
+ * no subscription), so it can remove its own incoming-call push registration.
+ * Twilio offers no server-side API for Voice SDK registrations — only the device
+ * can drop one, and only with a valid token for the same identity and push
+ * credential. Registrations are per device, so this silences only the refused
+ * device; other devices on the same line, whose users are subscribed, keep
+ * ringing.
+ *
+ * Deliberately weak: no outgoing TwiML App (it cannot place calls) and a 60 s
+ * lifetime. A tampered app could still re-register with it, but only for an
+ * account whose Auth Token it just proved (verifyTwilioCredentials) — and that
+ * holder can mint Voice tokens on their own Twilio account anyway.
+ */
+export function unregisterOnlyToken(accountSid: string, authToken: string): Observable<string> {
+    const client: Twilio = twilio(accountSid, authToken);
+    return forkJoin({
+        apiKeyInstance: from(getOrCreateApiKey(client, accountSid)),
+        pushCredentialSid: pushCredentialSid(accountSid),
+    }).pipe(
+        map(({ apiKeyInstance, pushCredentialSid }) => {
+            const options: AccessTokenOptions = { ttl: UNREGISTER_TOKEN_TTL_S, identity: clientIdentity(accountSid) };
+            const token = new AccessToken(accountSid, apiKeyInstance.sid, apiKeyInstance.secret, options);
+            token.addGrant(new AccessToken.VoiceGrant({
+                incomingAllow: true,
+                ...(pushCredentialSid ? { pushCredentialSid } : {}),
+            }));
+            return token.toJwt();
+        }),
+    );
+}
+
+/** Push credential SID persisted by twilioRegister; required to (un)register for incoming calls. */
+function pushCredentialSid(accountSid: string): Observable<string | null> {
+    return from(admin.database().ref(`/twilio/${accountSid}/push-credential/android`).once('value')).pipe(
+        map((snapshot) => snapshot.val() as string | null),
     );
 }
 
