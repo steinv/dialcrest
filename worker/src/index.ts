@@ -176,8 +176,11 @@ async function handle(request: Request, env: Env): Promise<Response> {
     const typedRoute = route as Route;
 
     // Who an inbound call rings doesn't depend on the signature check, so those
-    // reads run in parallel with it — they're in the caller's dead air. Never
-    // awaited when the check fails; the catch keeps that from being unhandled.
+    // reads run in parallel with it — they're in the caller's dead air. This is
+    // the one sanctioned exception to "authenticate before any work" (AGENTS.md):
+    // read-only lookups for a well-formed AccountSid, whose results are used only
+    // after the signature validates; nothing is written or sent before that.
+    // Never awaited when the check fails; the catch keeps that from being unhandled.
     const now = Date.now();
     const callTargets = typedRoute === WEBHOOK_PATHS.incomingCall ? readEntitledDevices(firebase, accountSid, now) : null;
     callTargets?.catch(() => undefined);

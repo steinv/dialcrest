@@ -11,7 +11,12 @@ rules must not be broken:
 - **No unauthenticated public endpoint.** Every `onRequest` function (and every
   Worker route) must authenticate its payload before doing any work — Twilio
   `X-Twilio-Signature`, Apple JWS (`verifyAppleNotificationSignature`), or Pub/Sub
-  IAM. Never add a public endpoint that skips it.
+  IAM. Never add a public endpoint that skips it. One sanctioned exception: the
+  Worker's incoming-call route starts its **read-only** RTDB lookups (device
+  registry, trial, subscription expiries) in parallel with the signature check,
+  to cut call-setup latency — only for a well-formed AccountSid, with results
+  used only after the signature validates, and nothing written or sent before.
+  Don't extend it to writes, pushes, or other routes.
 - **Validate the AccountSid's format (`ACCOUNT_SID`) before it reaches an RTDB
   path** — in the functions and the Worker. A malformed SID can make the token
   lookup throw, and the transient-read-error allowance must never become a
