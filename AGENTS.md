@@ -19,9 +19,11 @@ rules must not be broken:
   changed token with an authenticated Twilio call before writing it; don't bypass
   that — the callables don't prove account ownership on their own.
 - **Callables keep `enforceAppCheck: true`.** Don't remove it. App Check proves a
-  genuine app, not account ownership: anything that mints a credential for an
-  account (`twilioAccessToken`, incl. its unregister-only token) must run
-  `verifyTwilioCredentials` first.
+  genuine app, not account ownership: anything that grants a device access to an
+  account — minting a credential (`twilioAccessToken`, incl. its unregister-only
+  token) or subscribing to its pushes (`twilioRegisterMessagingDevice`, whose
+  pushes carry message text) — must run `verifyTwilioCredentials` first
+  (`requireTwilioCredentials` in index.ts).
 - **Inbound calls are entitlement-gated per device, not in the webhook.** The
   webhook can't tell devices apart (shared identity); a non-entitled device
   removes its own registration with the unregister-only token. Never add an

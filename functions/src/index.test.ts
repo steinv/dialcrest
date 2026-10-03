@@ -27,7 +27,8 @@ jest.mock('./twilio', () => ({
     configureSelectedNumbers: jest.fn(),
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     ensureWebhooksCurrent: jest.fn(() => require('rxjs').of(undefined)),
-    registerMessagingDevice: jest.fn(),
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    registerMessagingDevice: jest.fn(() => require('rxjs').of(undefined)),
     callbackIncomingCall: jest.fn(),
     callbackOutgoingCall: jest.fn(),
     callbackCallStatusChanges: jest.fn(),
@@ -206,6 +207,40 @@ describe('twilioAccessToken (credentials + unregister token)', () => {
         expect(error).toMatchObject({ code: 'failed-precondition', message: 'subscription-expired' });
         expect((error as { details?: unknown }).details ?? {}).toEqual({});
         jest.useRealTimers();
+    });
+});
+
+describe('twilioRegisterMessagingDevice', () => {
+    const FCM = 'dAbC-123_x:APA91bExample';
+
+    it('registers the device once the Auth Token is verified for the account', async () => {
+        await functions.twilioRegisterMessagingDevice.run({ data: { accountSid: 'AC1', authToken: 'tok', fcmToken: FCM } });
+        expect(twilioMocks().verifyTwilioCredentials).toHaveBeenCalledWith('AC1', 'tok');
+        expect(twilioMocks().registerMessagingDevice).toHaveBeenCalledWith('AC1', FCM);
+    });
+
+    it('refuses another tenant\'s AccountSid without its Auth Token (no SMS interception)', async () => {
+        const { InvalidTwilioCredentialsError } = twilioMocks();
+        twilioMocks().verifyTwilioCredentials.mockRejectedValueOnce(new InvalidTwilioCredentialsError('AC-victim'));
+        await expect(functions.twilioRegisterMessagingDevice.run({ data: { accountSid: 'AC-victim', authToken: 'guessed', fcmToken: FCM } }))
+            .rejects.toMatchObject({ code: 'permission-denied', message: 'invalid-twilio-credentials' });
+        expect(twilioMocks().registerMessagingDevice).not.toHaveBeenCalled();
+    });
+
+    it('refuses a call that sends no Auth Token at all (pre-fix app builds)', async () => {
+        const { InvalidTwilioCredentialsError } = twilioMocks();
+        twilioMocks().verifyTwilioCredentials.mockRejectedValueOnce(new InvalidTwilioCredentialsError('AC1'));
+        await expect(functions.twilioRegisterMessagingDevice.run({ data: { accountSid: 'AC1', fcmToken: FCM } }))
+            .rejects.toMatchObject({ code: 'permission-denied' });
+        expect(twilioMocks().verifyTwilioCredentials).toHaveBeenCalledWith('AC1', undefined);
+        expect(twilioMocks().registerMessagingDevice).not.toHaveBeenCalled();
+    });
+
+    it.each(['', 'a/b', '../secret', 'tok.en', 'tok#1', 'tok$', 'tok[0]'])('rejects a malformed FCM token %p before anything else', async (fcmToken) => {
+        await expect(functions.twilioRegisterMessagingDevice.run({ data: { accountSid: 'AC1', authToken: 'tok', fcmToken } }))
+            .rejects.toMatchObject({ code: 'invalid-argument' });
+        expect(twilioMocks().verifyTwilioCredentials).not.toHaveBeenCalled();
+        expect(twilioMocks().registerMessagingDevice).not.toHaveBeenCalled();
     });
 });
 

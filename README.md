@@ -111,7 +111,7 @@ project `twilio-phone-peblet`), with business logic split out into
 | `twilioRefreshSubscription` | Re-checks the stored entitlement and returns current subscription status (keeps Settings accurate). | `lib/services/subscription_service.dart` (`refreshPaidStatus()`) |
 | `twilioGetIncomingAppSid` | Resolves (creating if needed) the tenant's incoming TwiML App SID. | `lib/services/twilio_service.dart` (`getIncomingAppSid()`) |
 | `twilioConfigureNumbers` | Wires the given number SIDs to ring this app, restoring any deselected number's original webhook config. | `lib/services/twilio_service.dart` (`configureNumbers()`) |
-| `twilioRegisterMessagingDevice` | Registers/refreshes the device's FCM token so incoming SMS can be pushed to it. | `lib/services/twilio_service.dart` (`_registerMessagingDevice()`) |
+| `twilioRegisterMessagingDevice` | Verifies the caller's Auth Token, then registers/refreshes the device's FCM token so incoming SMS can be pushed to it. | `lib/services/twilio_service.dart` (`_registerMessagingDevice()`) |
 | `twilioLinkAccount` | Verifies the caller's Twilio credentials and stamps their anonymous Firebase identity with an `accountSid` custom claim, which the RTDB rules use to authorize account-scoped reads/writes (see [Security](#security)). | `lib/services/account_auth_service.dart` (`link()` / `ensureLinked()`) |
 
 ### Webhook/trigger (invoked by Twilio, Apple, or Google — never called from the app)

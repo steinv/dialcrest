@@ -200,10 +200,7 @@ exports.twilioAccessToken = onCall(
         const accountSid = req.data['accountSid'];
         const authToken = req.data['authToken'];
         return lastValueFrom(
-            from(verifyTwilioCredentials(accountSid, authToken)).pipe(
-                catchError((e) => throwError(() => e instanceof InvalidTwilioCredentialsError ?
-                    new HttpsError('permission-denied', 'invalid-twilio-credentials') :
-                    e)),
+            requireTwilioCredentials(accountSid, authToken).pipe(
                 switchMap(() => isSubscriptionActive(accountSid, presentedEntitlement(req.data), subscriptionReverificationConfig())),
                 switchMap((active) => active ?
                     accessToken(accountSid, authToken, req.data['callerId']) :
@@ -213,6 +210,19 @@ exports.twilioAccessToken = onCall(
         );
     }
 );
+
+/**
+ * Proves the caller holds a valid Auth Token for `accountSid` (verifyTwilioCredentials)
+ * before a callable grants anything for that account — App Check proves a genuine
+ * app, not account ownership. 'permission-denied' when Twilio rejects the token.
+ */
+function requireTwilioCredentials(accountSid: unknown, authToken: unknown) {
+    return from(verifyTwilioCredentials(accountSid as string, authToken as string)).pipe(
+        catchError((e) => throwError(() => e instanceof InvalidTwilioCredentialsError ?
+            new HttpsError('permission-denied', 'invalid-twilio-credentials') :
+            e)),
+    );
+}
 
 /**
  * The 'subscription-expired' refusal, carrying an unregister-only token in its
@@ -355,11 +365,30 @@ exports.twilioConfigureNumbers = onCall({ enforceAppCheck: true, region: REGION,
 );
 
 /**
+ * FCM registration tokens are base64url-ish strings with ':' separators. Checked
+ * because the token becomes an RTDB key: anything else (notably '/') could write
+ * outside /twilio/{sid}/messaging-tokens/{token}.
+ */
+const FCM_TOKEN = /^[A-Za-z0-9_:-]{1,4096}$/;
+
+/**
  * Registers (or refreshes) this device's FCM token so twilioIncomingMessage's
- * webhook can push incoming-SMS notifications to it.
+ * webhook can push incoming-SMS notifications — including the message text — to
+ * it. Requires the account's Auth Token (requireTwilioCredentials): otherwise
+ * anyone passing App Check could name another tenant's AccountSid and receive
+ * that tenant's incoming messages on their own device.
  */
 exports.twilioRegisterMessagingDevice = onCall({ enforceAppCheck: true, region: REGION, cors: true, timeoutSeconds: 30 },
-    (req) => lastValueFrom(registerMessagingDevice(req.data['accountSid'], req.data['fcmToken']))
+    (req) => {
+        const accountSid = req.data['accountSid'];
+        const fcmToken = req.data['fcmToken'];
+        if (typeof fcmToken !== 'string' || !FCM_TOKEN.test(fcmToken)) {
+            throw new HttpsError('invalid-argument', 'invalid-fcm-token');
+        }
+        return lastValueFrom(requireTwilioCredentials(accountSid, req.data['authToken']).pipe(
+            switchMap(() => registerMessagingDevice(accountSid, fcmToken)),
+        ));
+    }
 );
 
 /**

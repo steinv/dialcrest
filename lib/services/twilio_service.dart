@@ -452,6 +452,9 @@ class TwilioService {
       if (token == null) return;
       await _firebaseFunctions.httpsCallable('twilioRegisterMessagingDevice').call({
         'accountSid': accountSid,
+        // Required: the backend only registers a device for an account whose
+        // Auth Token it can verify (pushes carry the message text).
+        'authToken': authToken,
         'fcmToken': token,
       });
     } catch (e) {
