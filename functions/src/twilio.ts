@@ -7,6 +7,8 @@ import { IncomingPhoneNumberInstance } from 'twilio/lib/rest/api/v2010/account/i
 import AccessToken, { AccessTokenOptions } from 'twilio/lib/jwt/AccessToken';
 import admin from 'firebase-admin';
 import { Database } from 'firebase-admin/database';
+import * as logger from 'firebase-functions/logger';
+import { FUNCTIONS_BASE_URL, isKnownWebhookUrl, isSignatureFailClosed, webhookPublicBaseUrl, webhookUrl } from './edge';
 
 // Friendly names used to find/create resources in each tenant's Twilio account.
 const IOS_APN_FRIENDLY_NAME = 'Dialcrest APN iOS';
@@ -15,31 +17,37 @@ const TWIML_APP_FRIENDLY_NAME_OUTGOING = 'Dialcrest Outgoing';
 const TWIML_APP_FRIENDLY_NAME_INCOMING = 'Dialcrest Incoming';
 const API_KEY_FRIENDLY_NAME = 'Dialcrest - Twilio Soft Phone';
 
-const FUNCTIONS_BASE_URL = 'https://europe-west1-twilio-phone-peblet.cloudfunctions.net';
-const OUTGOING_CALL_URL = `${FUNCTIONS_BASE_URL}/twilioOutgoingCall`;
-const INCOMING_CALL_URL = `${FUNCTIONS_BASE_URL}/twilioIncomingCall`;
-const STATUS_CALLBACK_URL = `${FUNCTIONS_BASE_URL}/twilioCallStatusChanges`;
-const INCOMING_MESSAGE_URL = `${FUNCTIONS_BASE_URL}/twilioIncomingMessage`;
+// Webhook paths = the exported function names in index.ts. The host written into
+// Twilio is config (edge.ts webhookUrl); these functions themselves always live
+// at FUNCTIONS_BASE_URL/<path>.
+const OUTGOING_CALL_PATH = 'twilioOutgoingCall';
+const INCOMING_CALL_PATH = 'twilioIncomingCall';
+const STATUS_CALLBACK_PATH = 'twilioCallStatusChanges';
+const INCOMING_MESSAGE_PATH = 'twilioIncomingMessage';
 
 /**
  * Persist a tenant's Twilio Auth Token so the inbound webhooks can validate
  * X-Twilio-Signature (see isValidTwilioSignature). Twilio signs webhooks with
  * the number-owning account's Auth Token, which we otherwise never store.
  *
- * Call this ONLY after an authenticated Twilio REST call has succeeded for
- * (accountSid, authToken) — the callables enforce App Check but not account
- * ownership, so a token that Twilio itself hasn't just accepted must not be
- * trusted: writing it unproven would let any caller poison another tenant's
- * stored secret (forge its webhooks, or break its genuine ones). Refreshing it
- * on each such call keeps the copy self-healing across Twilio token rotation.
+ * A token is only ever written after Twilio itself has accepted it for this
+ * account (an authenticated fetch of the account resource). The callables
+ * enforce App Check but not account ownership, and twilioAccessToken can succeed
+ * entirely from cached state without ever presenting the token to Twilio — so an
+ * unproven token must not be trusted: writing it would let any caller poison
+ * another tenant's stored secret (forge its webhooks, or — once
+ * TWILIO_SIGNATURE_FAIL_CLOSED is on — black-hole its genuine ones). The check
+ * costs a Twilio round-trip only when the token differs from the stored one (first
+ * link, or a rotation); refreshing it keeps the copy self-healing across rotation.
  *
  * Written under /twilio/{accountSid}/secret, which database.rules.json keeps
  * unreadable and unwritable by clients (Admin SDK bypasses those rules).
  *
  * Best-effort and side-effect-only: an empty/blank token is refused (an empty
  * stored value would silently disable enforcement), an unchanged token skips the
- * write (this runs on the hot access-token path), and any failure is logged and
- * swallowed so it can never break the callable that carried the token.
+ * write (this runs on the hot access-token path), and any failure — including
+ * Twilio rejecting the token — is logged and swallowed so it can never break the
+ * callable that carried the token.
  */
 export function rememberAuthToken(accountSid: string, authToken: string): Observable<void> {
     if (typeof accountSid !== 'string' || accountSid === '' || typeof authToken !== 'string' || authToken === '') {
@@ -48,7 +56,12 @@ export function rememberAuthToken(accountSid: string, authToken: string): Observ
     }
     const ref = admin.database().ref(`/twilio/${accountSid}/secret/authToken`);
     return from(ref.once('value')).pipe(
-        switchMap((snapshot) => (snapshot.val() === authToken ? of(undefined) : from(ref.set(authToken)))),
+        switchMap((snapshot) => snapshot.val() === authToken ?
+            of(undefined) :
+            from(twilio(accountSid, authToken).api.v2010.accounts(accountSid).fetch()).pipe(
+                switchMap(() => from(ref.set(authToken))),
+            )),
+        map(() => undefined),
         catchError((error) => {
             console.error(`Failed to persist Twilio Auth Token for ${accountSid}`, error);
             return of(undefined);
@@ -89,32 +102,36 @@ export function resetAuthTokenCacheForTests(): void {
 
 /**
  * True iff an inbound webhook may proceed. Twilio computes the signature over the
- * exact URL it was configured to call plus the POST params, so we pass the static
- * webhook URL constant (these carry no query string) rather than reconstructing
- * it from proxy-rewritten request headers. The signing key is the tenant's Auth
- * Token, looked up by the request's AccountSid from where rememberAuthToken
+ * exact URL it was configured to call plus the POST params, so we validate against
+ * the static URL this function is served at (FUNCTIONS_BASE_URL/<webhookPath>;
+ * these carry no query string) rather than reconstructing it from spoofable
+ * request headers. A tenant already re-pointed to the Worker never reaches this
+ * function, so its own URL is the only one to accept. The signing key is the tenant's
+ * Auth Token, looked up by the request's AccountSid from where rememberAuthToken
  * stored it (served from authTokenCache when a recent read is still fresh).
  *
- * Fail-open for tenants with no stored token: a tenant whose token isn't stored
- * (registered before this validation shipped, or never back through a callable)
- * has its signature check skipped, with a warning. This is not a new exposure —
- * these webhooks are already unauthenticated in production, so skipping the check
- * for such a tenant merely preserves today's behavior rather than dropping its
- * inbound calls/SMS; every tenant that HAS a stored token is strictly better off,
- * and one appears the moment its app next hits a callable. Once a token IS stored,
- * enforcement is always strict: a missing header or bad signature is rejected.
+ * No stored token: by default the check is skipped, with a warning — the grace
+ * period for tenants registered before validation shipped (their app stores the
+ * token the next time it hits a callable). With TWILIO_SIGNATURE_FAIL_CLOSED on,
+ * the request is rejected instead, so a made-up AccountSid can no longer pass
+ * (§6.1a). Either way it's logged as event twilio_webhook_tokenless, with whether
+ * the SID is a tenant we know, to tell when the flip is safe. Once a token IS
+ * stored, enforcement is always strict: a missing header or bad signature is
+ * rejected.
  *
  * Fail-open on a read error too: these webhooks sit on the call-setup hot path and
  * previously did no DB work, so a transient RTDB outage must not turn every
  * outgoing call / status callback into a 500. A failed read is treated like "no
  * stored token" — allow, with an error log — which just falls back to the
  * pre-hardening behavior for the duration of the outage. The catch is scoped to
- * the read alone so a genuine bug in validation still surfaces.
+ * the read alone so a genuine bug in validation still surfaces. This stays
+ * fail-open even with TWILIO_SIGNATURE_FAIL_CLOSED on: an outside caller can't
+ * induce an RTDB outage, so it isn't a bypass, and an outage shouldn't drop calls.
  *
  * A request without a usable AccountSid is rejected outright: a genuine Twilio
  * webhook always carries one, and without it there is no tenant to check.
  */
-export async function isValidTwilioSignature(request: Request, signedUrl: string): Promise<boolean> {
+export async function isValidTwilioSignature(request: Request, webhookPath: string): Promise<boolean> {
     const accountSid = request.body?.AccountSid;
     if (typeof accountSid !== 'string' || accountSid === '') {
         return false;
@@ -129,8 +146,7 @@ export async function isValidTwilioSignature(request: Request, signedUrl: string
             return true;
         }
         if (!authToken) {
-            console.warn(`Allowing Twilio webhook for ${accountSid}: no stored Auth Token (signature not checked)`);
-            return true;
+            return allowTokenlessWebhook(accountSid, webhookPath);
         }
         authTokenCache.set(accountSid, { authToken, expires: Date.now() + AUTH_TOKEN_CACHE_TTL_MS });
     }
@@ -138,7 +154,32 @@ export async function isValidTwilioSignature(request: Request, signedUrl: string
     if (typeof signature !== 'string') {
         return false;
     }
-    return validateRequest(authToken, signature, signedUrl, request.body ?? {});
+    return validateRequest(authToken, signature, `${FUNCTIONS_BASE_URL}/${webhookPath}`, request.body ?? {});
+}
+
+/**
+ * The no-stored-Auth-Token branch of isValidTwilioSignature: allow (grace period)
+ * or reject (TWILIO_SIGNATURE_FAIL_CLOSED), logging whether the SID belongs to a
+ * tenant we know (has a createdAt) — residual tokenless traffic from known
+ * tenants means the fail-closed flip would drop real calls; from unknown SIDs it
+ * is exactly the junk the flip exists to reject.
+ */
+async function allowTokenlessWebhook(accountSid: string, webhookPath: string): Promise<boolean> {
+    const failClosed = isSignatureFailClosed();
+    let knownTenant: boolean | null = null;
+    try {
+        knownTenant = (await admin.database().ref(`/twilio/${accountSid}/createdAt`).once('value')).exists();
+    } catch (error) {
+        // Diagnostic only; never let it change the outcome.
+    }
+    logger.warn(`${failClosed ? 'Rejecting' : 'Allowing'} Twilio webhook for ${accountSid}: no stored Auth Token`, {
+        event: 'twilio_webhook_tokenless',
+        accountSid,
+        path: webhookPath,
+        knownTenant,
+        outcome: failClosed ? 'rejected' : 'allowed',
+    });
+    return !failClosed;
 }
 
 /**
@@ -147,12 +188,12 @@ export async function isValidTwilioSignature(request: Request, signedUrl: string
  * any work. These endpoints are public and App-Check-exempt (Twilio can't send
  * an App Check token), so this signature check is their authentication.
  */
-async function twilioSignatureGuard(request: Request, response: express.Response, signedUrl: string): Promise<boolean> {
-    if (await isValidTwilioSignature(request, signedUrl)) {
+async function twilioSignatureGuard(request: Request, response: express.Response, webhookPath: string): Promise<boolean> {
+    if (await isValidTwilioSignature(request, webhookPath)) {
         return true;
     }
     console.warn('Rejected Twilio webhook with an invalid signature', {
-        url: signedUrl,
+        path: webhookPath,
         accountSid: request.body?.AccountSid ?? null,
     });
     response.status(403).type('text/plain').send('Invalid Twilio signature');
@@ -188,6 +229,10 @@ function twimlAppSidRef(accountSid: string, direction: 'outgoing' | 'incoming') 
  * update fails with error 22108 (Invalid Application SID), which clears the
  * cache (see configureSelectedNumbers). An empty cache then lands here and
  * find-or-create repoints it at a live app.
+ *
+ * An app found by name (rather than created) may predate a webhook host change,
+ * so its voiceUrl is corrected on the way into the cache — ensureWebhooksCurrent
+ * only re-points apps that are already cached.
  */
 function getOrCreateTwimlApp(
     client: Twilio, accountSid: string, direction: 'outgoing' | 'incoming', friendlyName: string, voiceUrl: string,
@@ -198,9 +243,11 @@ function getOrCreateTwimlApp(
             const cached = snapshot.val() as string | null;
             if (cached) return of(cached);
             return from(client.applications.list({ friendlyName, limit: 1 })).pipe(
-                switchMap((apps) => apps.length > 0 ?
-                    of(apps[0]) :
-                    from(client.applications.create({ friendlyName, voiceUrl, voiceMethod: 'POST' }))),
+                switchMap((apps) => {
+                    if (apps.length === 0) return from(client.applications.create({ friendlyName, voiceUrl, voiceMethod: 'POST' }));
+                    if (apps[0].voiceUrl === voiceUrl) return of(apps[0]);
+                    return from(client.applications(apps[0].sid).update({ voiceUrl, voiceMethod: 'POST' }));
+                }),
                 switchMap((app) => from(ref.set(app.sid)).pipe(map(() => app.sid))),
             );
         }),
@@ -215,7 +262,7 @@ function getOrCreateTwimlApp(
  */
 export function getIncomingAppSid(accountSid: string, authToken: string): Observable<string> {
     const client: Twilio = twilio(accountSid, authToken);
-    return getOrCreateTwimlApp(client, accountSid, 'incoming', TWIML_APP_FRIENDLY_NAME_INCOMING, INCOMING_CALL_URL);
+    return getOrCreateTwimlApp(client, accountSid, 'incoming', TWIML_APP_FRIENDLY_NAME_INCOMING, webhookUrl(INCOMING_CALL_PATH));
 }
 
 /**
@@ -296,9 +343,9 @@ function configureNumber(
         switchMap(() => from(client.incomingPhoneNumbers(number.sid).update({
             voiceApplicationSid: incomingAppSid,
             voiceUrl: '',
-            statusCallback: STATUS_CALLBACK_URL,
+            statusCallback: webhookUrl(STATUS_CALLBACK_PATH),
             statusCallbackMethod: 'POST',
-            smsUrl: INCOMING_MESSAGE_URL,
+            smsUrl: webhookUrl(INCOMING_MESSAGE_PATH),
             smsMethod: 'POST',
         }))),
         map(() => undefined),
@@ -343,21 +390,27 @@ export function configureSelectedNumbers(
     const selected = new Set(selectedSids);
 
     const attempt = (): Observable<{ configured: string[]; restored: string[] }> =>
-        getOrCreateTwimlApp(client, accountSid, 'incoming', TWIML_APP_FRIENDLY_NAME_INCOMING, INCOMING_CALL_URL).pipe(
+        getOrCreateTwimlApp(client, accountSid, 'incoming', TWIML_APP_FRIENDLY_NAME_INCOMING, webhookUrl(INCOMING_CALL_PATH)).pipe(
             switchMap((incomingAppSid) => from(client.incomingPhoneNumbers.list({ limit: 1000 })).pipe(
                 switchMap((numbers) => {
                     const changes = numbers.map((number) => {
                         // Both webhooks must match: a number voice-configured by an older build
                         // that predates SMS support has the right voiceApplicationSid but no
                         // smsUrl, and must be re-run through configureNumber to gain it.
-                        const isConfigured = number.voiceApplicationSid === incomingAppSid &&
-                            number.smsUrl === INCOMING_MESSAGE_URL;
+                        // isCurrent also requires the CURRENT host, so a selected number still
+                        // on a previous webhook host is re-pointed (its snapshot is kept);
+                        // isOurs accepts any host we've used, so deselecting such a number
+                        // still restores it.
+                        const isOurs = number.voiceApplicationSid === incomingAppSid &&
+                            isKnownWebhookUrl(number.smsUrl, INCOMING_MESSAGE_PATH);
+                        const isCurrent = number.voiceApplicationSid === incomingAppSid &&
+                            number.smsUrl === webhookUrl(INCOMING_MESSAGE_PATH);
                         const shouldBeConfigured = selected.has(number.sid);
-                        if (shouldBeConfigured && !isConfigured) {
+                        if (shouldBeConfigured && !isCurrent) {
                             return configureNumber(client, db, accountSid, number, incomingAppSid)
                                 .pipe(map(() => ({ sid: number.sid, action: 'configured' as const })));
                         }
-                        if (!shouldBeConfigured && isConfigured) {
+                        if (!shouldBeConfigured && isOurs) {
                             return restoreNumber(client, db, accountSid, number.sid)
                                 .pipe(map(() => ({ sid: number.sid, action: 'restored' as const })));
                         }
@@ -384,6 +437,97 @@ export function configureSelectedNumbers(
             return from(twimlAppSidRef(accountSid, 'incoming').remove()).pipe(switchMap(() => attempt()));
         }),
     );
+}
+
+function webhookBaseMarkerRef(accountSid: string) {
+    return admin.database().ref(`/twilio/${accountSid}/webhook-base-url`);
+}
+
+/**
+ * Self-heal a tenant's Twilio config onto the current webhook host
+ * (docs/edge-hardening-plan.md §6.3). Existing TwiML Apps and numbers keep
+ * whatever URL they were configured with — the cached app SID is never
+ * re-checked on hot paths and numbers carry statusCallback/smsUrl directly — so
+ * when WEBHOOK_PUBLIC_BASE_URL changes, each tenant is re-pointed the next time
+ * its app hits a callable, using the live credentials that callable carries.
+ *
+ * The marker /twilio/{accountSid}/webhook-base-url records the base URL the
+ * tenant was last re-pointed to. Comparing against the base URL itself (not a
+ * version counter) means a rollback of the param re-points tenants back with no
+ * extra step. When current — the steady state — this is one RTDB read.
+ *
+ * Only touches what is ours: the cached outgoing/incoming TwiML Apps, and on
+ * numbers routed to our incoming app only the statusCallback/smsUrl fields that
+ * still point at one of our known hosts (a webhook the tenant re-pointed
+ * elsewhere by hand is left alone). The restore snapshot is never touched.
+ *
+ * Best-effort like rememberAuthToken: failures are logged and swallowed so they
+ * can't break the callable; the marker is only advanced after every update
+ * succeeded, so a failure is retried on the next call.
+ */
+export function ensureWebhooksCurrent(accountSid: string, authToken: string): Observable<void> {
+    if (typeof accountSid !== 'string' || accountSid === '' || typeof authToken !== 'string' || authToken === '') {
+        return of(undefined);
+    }
+    const publicBase = webhookPublicBaseUrl();
+    const marker = webhookBaseMarkerRef(accountSid);
+    return from(marker.once('value')).pipe(
+        switchMap((snapshot) => snapshot.val() === publicBase ?
+            of(undefined) :
+            from(repointWebhooks(twilio(accountSid, authToken), accountSid)).pipe(
+                switchMap(() => from(marker.set(publicBase))),
+                map(() => console.log(`Re-pointed ${accountSid}'s Twilio webhooks to ${publicBase}`)),
+            )),
+        catchError((error) => {
+            console.error(`Failed to re-point ${accountSid}'s Twilio webhooks to ${publicBase}`, error);
+            return of(undefined);
+        }),
+    );
+}
+
+async function repointWebhooks(client: Twilio, accountSid: string): Promise<void> {
+    const [outgoingAppSid, incomingAppSid] = await Promise.all([
+        twimlAppSidRef(accountSid, 'outgoing').once('value').then((s) => s.val() as string | null),
+        twimlAppSidRef(accountSid, 'incoming').once('value').then((s) => s.val() as string | null),
+    ]);
+    await Promise.all([
+        outgoingAppSid ? repointTwimlApp(client, accountSid, 'outgoing', outgoingAppSid, webhookUrl(OUTGOING_CALL_PATH)) : undefined,
+        incomingAppSid ? repointTwimlApp(client, accountSid, 'incoming', incomingAppSid, webhookUrl(INCOMING_CALL_PATH)) : undefined,
+    ]);
+    if (!incomingAppSid) return; // no incoming app → no number of ours to re-point
+
+    const desired = { statusCallback: webhookUrl(STATUS_CALLBACK_PATH), smsUrl: webhookUrl(INCOMING_MESSAGE_PATH) };
+    const numbers = await client.incomingPhoneNumbers.list({ limit: 1000 });
+    await Promise.all(numbers
+        .filter((number) => number.voiceApplicationSid === incomingAppSid)
+        .map((number) => {
+            const update: { statusCallback?: string; statusCallbackMethod?: string; smsUrl?: string; smsMethod?: string } = {};
+            if (number.statusCallback !== desired.statusCallback && isKnownWebhookUrl(number.statusCallback, STATUS_CALLBACK_PATH)) {
+                update.statusCallback = desired.statusCallback;
+                update.statusCallbackMethod = 'POST';
+            }
+            if (number.smsUrl !== desired.smsUrl && isKnownWebhookUrl(number.smsUrl, INCOMING_MESSAGE_PATH)) {
+                update.smsUrl = desired.smsUrl;
+                update.smsMethod = 'POST';
+            }
+            return Object.keys(update).length === 0 ? undefined : client.incomingPhoneNumbers(number.sid).update(update);
+        }));
+}
+
+/**
+ * Point a cached TwiML App at `voiceUrl`. If the tenant deleted the app in the
+ * console (20404), drop the stale cache instead of failing: getOrCreateTwimlApp
+ * recreates it — with the current URL — the next time it's needed.
+ */
+async function repointTwimlApp(
+    client: Twilio, accountSid: string, direction: 'outgoing' | 'incoming', appSid: string, voiceUrl: string,
+): Promise<void> {
+    try {
+        await client.applications(appSid).update({ voiceUrl, voiceMethod: 'POST' });
+    } catch (error) {
+        if ((error as { code?: number })?.code !== 20404) throw error;
+        await twimlAppSidRef(accountSid, direction).remove();
+    }
 }
 
 /**
@@ -436,7 +580,7 @@ export function accessToken(accountSid: string, authToken: string, callerId: str
     return forkJoin({
         apiKeyInstance: apiKey$,
         pushCredentialSid: pushCredentialSid$,
-        appSid: getOrCreateTwimlApp(client, accountSid, 'outgoing', TWIML_APP_FRIENDLY_NAME_OUTGOING, OUTGOING_CALL_URL),
+        appSid: getOrCreateTwimlApp(client, accountSid, 'outgoing', TWIML_APP_FRIENDLY_NAME_OUTGOING, webhookUrl(OUTGOING_CALL_PATH)),
     }).pipe(
         map(({ apiKeyInstance, pushCredentialSid, appSid }) => {
             // TTL default 1h max 24h
@@ -476,7 +620,7 @@ export function accessToken(accountSid: string, authToken: string, callerId: str
  * @param response http response to be sent back to the caller
  */
 export async function callbackIncomingCall(request: Request, response: express.Response) {
-    if (!await twilioSignatureGuard(request, response, INCOMING_CALL_URL)) return;
+    if (!await twilioSignatureGuard(request, response, INCOMING_CALL_PATH)) return;
     const accountSid = request.body.AccountSid;
     const voiceResponse = new twiml.VoiceResponse();
 
@@ -499,7 +643,7 @@ export async function callbackIncomingCall(request: Request, response: express.R
  * as POST params; dial the destination with the account number as caller ID.
  */
 export async function callbackOutgoingCall(request: Request, response: express.Response) {
-    if (!await twilioSignatureGuard(request, response, OUTGOING_CALL_URL)) return;
+    if (!await twilioSignatureGuard(request, response, OUTGOING_CALL_PATH)) return;
     const voiceResponse = new twiml.VoiceResponse();
     const to: string | undefined = request.body.To;
     const callerId: string | undefined = request.body.From;
@@ -515,7 +659,7 @@ export async function callbackOutgoingCall(request: Request, response: express.R
 
 // https://www.twilio.com/docs/voice/api/call-resource#statuscallback
 export async function callbackCallStatusChanges(request: Request, response: express.Response) {
-    if (!await twilioSignatureGuard(request, response, STATUS_CALLBACK_URL)) return;
+    if (!await twilioSignatureGuard(request, response, STATUS_CALLBACK_PATH)) return;
     console.log('callbackCallStatusChanges %j', request.body);
     request.body.From;
     request.body.To;
@@ -542,7 +686,7 @@ export async function callbackCallStatusChanges(request: Request, response: expr
  * back to the sender, so the response is an empty MessagingResponse.
  */
 export async function callbackIncomingMessage(request: Request, response: express.Response) {
-    if (!await twilioSignatureGuard(request, response, INCOMING_MESSAGE_URL)) return;
+    if (!await twilioSignatureGuard(request, response, INCOMING_MESSAGE_PATH)) return;
     const accountSid = request.body.AccountSid;
     const from = request.body.From ?? '';
     const to = request.body.To ?? '';

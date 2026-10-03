@@ -30,30 +30,24 @@ App Store Connect API key with the right access, stored as `apple_iap_key`
 inside `TWILIO_PEBLET_SECRET`:
 
 ```json
-{ "issuerId": "...", "keyId": "...", "privateKey": "<PEM>", "bundleId": "..." }
+{ "issuerId": "...", "keyId": "...", "privateKey": "<PEM>", "bundleId": "...", "appAppleId": 1234567890 }
 ```
 
 Generate the key in App Store Connect → Users and Access → Integrations → keys,
 then `firebase functions:secrets:set TWILIO_PEBLET_SECRET` (see the header of
 `functions/src/index.ts`). Verification (`verifyApplePurchase`) needs this too,
-so nothing Apple-side works until it's set.
+so nothing Apple-side works until it's set. `appAppleId` is the app's numeric
+Apple ID (App Store Connect → App Information → Apple ID); without it, Production
+App Store Server Notifications fail signature verification and are rejected.
 
-## 3. Hardening: verify the Apple notification JWS signature (code TODO)
+## 3. ~~Hardening: verify the Apple notification JWS signature~~ (done)
 
-`twilioAppleNotifications` (`functions/src/index.ts`) →
-`handleAppleNotification` (`functions/src/subscription.ts`) currently uses the
-**re-fetch-from-Apple trust model**: it decodes the notification only to read
-the `originalTransactionId`, then re-queries authoritative state from Apple. A
-forged notification therefore can't inject subscription state — the remaining
-gap is edge spam/DoS.
-
-To close it:
-- Add Apple's official `app-store-server-library` (npm) and use its
-  `SignedDataVerifier` to verify the `x5c` chain before processing.
-- It needs Apple's root CA certs (Apple Root CA - G3, etc.) bundled with the
-  function — download from https://www.apple.com/certificateauthority/.
-- Do **not** hand-roll a fingerprint check from memory; use the library or
-  bundle the real certs.
+`twilioAppleNotifications` now verifies the `x5c` chain with
+`@apple/app-store-server-library`'s `SignedDataVerifier` against the bundled
+Apple Root CA - G3 (`functions/certs/`) before processing — see
+`verifyAppleNotificationSignature` in `functions/src/subscription.ts` and
+docs/edge-hardening-plan.md §6.4. Only needs `appAppleId` set (section 2) and a
+real Sandbox notification to confirm end to end.
 
 ## 4. UX: iOS auto-recover paid entitlement after reinstall (code TODO)
 

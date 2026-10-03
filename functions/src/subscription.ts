@@ -1,5 +1,11 @@
+// Must precede @apple/app-store-server-library, whose jsonwebtoken → jwa chain
+// reads buffer.SlowBuffer at load time (removed in Node 24+). See slowBufferShim.ts.
+import './slowBufferShim';
 import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 import { google } from 'googleapis';
+import { Environment, SignedDataVerifier, VerificationException, VerificationStatus } from '@apple/app-store-server-library';
 import { catchError, from, map, Observable, of, switchMap } from 'rxjs';
 import admin from 'firebase-admin';
 
@@ -70,6 +76,12 @@ export interface AppleConfig {
     keyId: string;
     privateKey: string;
     bundleId: string;
+    /**
+     * The app's numeric Apple ID (App Store Connect → App Information → Apple ID).
+     * Required to verify PRODUCTION App Store Server Notifications; without it
+     * only Sandbox notifications verify (see verifyAppleNotificationSignature).
+     */
+    appAppleId?: number;
 }
 
 export interface ReverificationConfig {
@@ -445,6 +457,74 @@ export function refreshAppleByOriginalTransactionId(
     return refreshAppleSubscription(null, originalTransactionId, '', config).pipe(map(toStatus));
 }
 
+/**
+ * Apple Root CA - G3, which anchors every App Store JWS (x5c chain). Bundled with
+ * the function (functions/certs, downloaded from apple.com/certificateauthority;
+ * SHA-256 63:34:3A:BF:…:91:79) rather than fetched at runtime, so trust doesn't
+ * depend on the network. Read lazily, once per instance.
+ */
+let appleRootCertificates: Buffer[] | null = null;
+let appleOnlineChecks = true;
+
+function loadAppleRootCertificates(): Buffer[] {
+    if (appleRootCertificates === null) {
+        appleRootCertificates = [fs.readFileSync(path.join(__dirname, '..', 'certs', 'AppleRootCA-G3.cer'))];
+    }
+    return appleRootCertificates;
+}
+
+/**
+ * Test-only: trust `rootCertificates` instead of Apple's root, and skip the
+ * online checks (OCSP + "now" as the validity date) so fixtures signed by a
+ * throwaway CA verify offline. Pass null to restore the production behavior.
+ */
+export function setAppleVerificationForTests(rootCertificates: Buffer[] | null): void {
+    appleRootCertificates = rootCertificates;
+    appleOnlineChecks = rootCertificates === null;
+}
+
+/** Outcome of verifying an App Store Server Notification's signature. */
+export type AppleNotificationVerification = 'verified' | 'invalid' | 'retryable';
+
+/**
+ * Verifies an App Store Server Notification V2 `signedPayload` — its x5c chain
+ * up to Apple's root, the ES256 signature, and that it's for OUR app (bundleId,
+ * plus appAppleId in Production) — with Apple's app-store-server-library.
+ *
+ * Production and Sandbox notifications arrive at the same URL, and the library
+ * binds a verifier to one environment, so each configured environment is tried
+ * in turn; a payload is accepted if any of them verifies it. The Production
+ * verifier needs `appAppleId` — if it isn't configured, Production
+ * notifications are rejected (logged), not waved through.
+ *
+ * Online checks (OCSP revocation, validity against the current time) are on:
+ * this endpoint isn't latency-sensitive, and an unreachable OCSP responder comes
+ * back as 'retryable' so the caller can 5xx and let Apple redeliver.
+ */
+export async function verifyAppleNotificationSignature(
+    signedPayload: string, config: AppleConfig,
+): Promise<AppleNotificationVerification> {
+    const roots = loadAppleRootCertificates();
+    const verifiers: SignedDataVerifier[] = [new SignedDataVerifier(roots, appleOnlineChecks, Environment.SANDBOX, config.bundleId)];
+    if (typeof config.appAppleId === 'number') {
+        verifiers.unshift(new SignedDataVerifier(roots, appleOnlineChecks, Environment.PRODUCTION, config.bundleId, config.appAppleId));
+    } else {
+        console.warn('apple_iap_key.appAppleId not configured: only Sandbox App Store notifications can be verified');
+    }
+    const failures: Array<VerificationStatus | null> = [];
+    for (const verifier of verifiers) {
+        try {
+            await verifier.verifyAndDecodeNotification(signedPayload);
+            return 'verified';
+        } catch (error) {
+            failures.push(error instanceof VerificationException ? error.status : null);
+        }
+    }
+    console.warn('Apple notification failed signature verification',
+        failures.map((status) => (status === null ? 'unknown' : VerificationStatus[status])));
+    return failures.includes(VerificationStatus.RETRYABLE_VERIFICATION_FAILURE) ? 'retryable' : 'invalid';
+}
+
 interface AppleNotificationPayload {
     notificationType: string;
     subtype?: string;
@@ -459,10 +539,9 @@ interface AppleNotificationPayload {
  * (authenticated with our own key) — it never trusts the expiry/renewal values
  * the notification carries. So a forged notification cannot inject subscription
  * state; at worst it names a real transaction (which we'd refresh accurately)
- * or a bogus one (which 404s). The remaining reason to verify the JWS signature
- * is to reject spam/DoS at the edge — see the note in index.ts and
- * SUBSCRIPTION_NOTIFICATIONS.md for adding app-store-server-library-based
- * signature verification as hardening.
+ * or a bogus one (which 404s). On top of that, the twilioAppleNotifications
+ * webhook only calls this after verifyAppleNotificationSignature accepted the
+ * payload, so spam never reaches the Apple Server API lookup.
  */
 export function handleAppleNotification(signedPayload: string, config: AppleConfig): Observable<void> {
     const payload = decodeAppleSignedPayload<AppleNotificationPayload>(signedPayload);

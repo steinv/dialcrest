@@ -1,6 +1,8 @@
 import admin from 'firebase-admin';
 import { testAppleConfig, appleSubscriptionStatusesResponse, mockAppleFetch, signedPayload } from './testUtils/appleFixtures';
 import { googleSubscriptionV2Response } from './testUtils/googleFixtures';
+import { appleSignedJws, testAppleRootCertificate } from './testUtils/appleTestPki';
+import { setAppleVerificationForTests } from './subscription';
 
 jest.mock('firebase-admin');
 jest.mock('googleapis', () => require('./testUtils/googleFixtures').mockGoogleapisModule());
@@ -19,6 +21,8 @@ jest.mock('./twilio', () => ({
     createOrUpdatePushCredentials: jest.fn().mockResolvedValue({ androidSid: 'CR-android', iosSid: null }),
     getIncomingAppSid: jest.fn(),
     configureSelectedNumbers: jest.fn(),
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    ensureWebhooksCurrent: jest.fn(() => require('rxjs').of(undefined)),
     registerMessagingDevice: jest.fn(),
     callbackIncomingCall: jest.fn(),
     callbackOutgoingCall: jest.fn(),
@@ -65,13 +69,20 @@ function flushMicrotasks() {
     return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function makeReq(body: unknown) {
+    return { body };
+}
+
 beforeEach(() => {
     resetDb();
     process.env.TWILIO_PEBLET_SECRET = JSON.stringify({
         apple_iap_key: testAppleConfig,
         android_fcm: { type: 'service_account' },
     });
+    setAppleVerificationForTests([testAppleRootCertificate]);
 });
+
+afterAll(() => setAppleVerificationForTests(null));
 
 describe('twilioRegister', () => {
     it('creates the account, starts its trial, and provisions push credentials', async () => {
@@ -180,14 +191,17 @@ describe('twilioVerifyApplePurchase / twilioVerifyGooglePurchase', () => {
 });
 
 describe('twilioAppleNotifications webhook', () => {
-    it('responds 400 when the request carries no signedPayload', async () => {
-        const res = makeRes();
-        functions.twilioAppleNotifications({ body: {} }, res);
-        await flushMicrotasks();
-        expect(res.status).toHaveBeenCalledWith(400);
-    });
+    const signedTx = signedPayload({ transactionId: 't1', originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license', expiresDate: 12345 });
 
-    it('responds 200 and persists the refreshed state on a valid notification', async () => {
+    function notification(data: Record<string, unknown>) {
+        return { notificationType: 'DID_RENEW', notificationUUID: 'n1', version: '2.0', signedDate: Date.now(), data };
+    }
+
+    function sandboxNotification(overrides: Record<string, unknown> = {}) {
+        return notification({ environment: 'Sandbox', bundleId: testAppleConfig.bundleId, signedTransactionInfo: signedTx, ...overrides });
+    }
+
+    function mockRenewedSubscription() {
         mockAppleFetch({
             production: {
                 status: 200,
@@ -196,13 +210,81 @@ describe('twilioAppleNotifications webhook', () => {
                 }]),
             },
         });
-        const signedTx = signedPayload({ transactionId: 't1', originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license', expiresDate: 12345 });
-        const body = { signedPayload: signedPayload({ notificationType: 'DID_RENEW', data: { signedTransactionInfo: signedTx } }) };
+    }
+
+    async function post(body: unknown) {
         const res = makeRes();
-        functions.twilioAppleNotifications({ body }, res);
+        await functions.twilioAppleNotifications(makeReq(body), res);
         await flushMicrotasks();
+        return res;
+    }
+
+    it('responds 400 when the request carries no signedPayload', async () => {
+        const res = await post({});
+        expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('responds 200 and persists the refreshed state on a genuinely signed notification', async () => {
+        mockRenewedSubscription();
+        const res = await post({ signedPayload: appleSignedJws(sandboxNotification()) });
         expect(res.status).toHaveBeenCalledWith(200);
         expect(dbTree().subscriptions.apple.orig1.expiresAt).toBe(12345);
+    });
+
+    it('rejects an unsigned/forged notification with 401 before calling Apple or touching the DB', async () => {
+        const fetchMock = mockAppleFetch({});
+        const res = await post({ signedPayload: signedPayload(sandboxNotification()) });
+        expect(res.status).toHaveBeenCalledWith(401);
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(dbTree().subscriptions).toBeUndefined();
+    });
+
+    it('rejects a genuinely signed notification whose payload was altered afterwards', async () => {
+        const fetchMock = mockAppleFetch({});
+        const [header, , signature] = appleSignedJws(sandboxNotification()).split('.');
+        const altered = Buffer.from(JSON.stringify(sandboxNotification({ signedTransactionInfo: 'swapped' }))).toString('base64url');
+        const res = await post({ signedPayload: `${header}.${altered}.${signature}` });
+        expect(res.status).toHaveBeenCalledWith(401);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects a validly signed notification for a different app (bundleId)', async () => {
+        const res = await post({ signedPayload: appleSignedJws(sandboxNotification({ bundleId: 'com.someone.else' })) });
+        expect(res.status).toHaveBeenCalledWith(401);
+    });
+
+    it('rejects Production notifications while apple_iap_key.appAppleId is not configured', async () => {
+        const production = notification({ environment: 'Production', bundleId: testAppleConfig.bundleId, appAppleId: 42, signedTransactionInfo: signedTx });
+        const res = await post({ signedPayload: appleSignedJws(production) });
+        expect(res.status).toHaveBeenCalledWith(401);
+    });
+
+    it('accepts Production notifications for the configured appAppleId', async () => {
+        process.env.TWILIO_PEBLET_SECRET = JSON.stringify({ apple_iap_key: { ...testAppleConfig, appAppleId: 42 } });
+        mockRenewedSubscription();
+        const production = notification({ environment: 'Production', bundleId: testAppleConfig.bundleId, appAppleId: 42, signedTransactionInfo: signedTx });
+        const res = await post({ signedPayload: appleSignedJws(production) });
+        expect(res.status).toHaveBeenCalledWith(200);
+    });
+});
+
+describe('webhook self-heal triggers (ensureWebhooksCurrent)', () => {
+    it('twilioAccessToken re-points the tenant after minting', async () => {
+        await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
+        await functions.twilioAccessToken.run({ data: { accountSid: 'AC1', authToken: 'tok', callerId: 'x' } });
+        expect(twilioMocks().ensureWebhooksCurrent).toHaveBeenCalledWith('AC1', 'tok');
+    });
+
+    it('twilioConfigureNumbers self-heals before configuring numbers', async () => {
+        const order: string[] = [];
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { of } = require('rxjs');
+        twilioMocks().ensureWebhooksCurrent.mockImplementationOnce(() => { order.push('heal'); return of(undefined); });
+        twilioMocks().configureSelectedNumbers.mockImplementationOnce(() => {
+            order.push('configure'); return of({ configured: [], restored: [] });
+        });
+        await functions.twilioConfigureNumbers.run({ data: { accountSid: 'AC1', authToken: 'tok', selectedSids: [] } });
+        expect(order).toEqual(['heal', 'configure']);
     });
 });
 

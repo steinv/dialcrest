@@ -316,7 +316,11 @@ re-verifies the subscription against the App Store Server API.
 
 No extra secret is needed — the existing `apple_iap_key` inside
 `TWILIO_PEBLET_SECRET` (see [Secrets](#secrets)) authenticates the App Store
-Server API and is what notification signatures are validated against.
+Server API. Notification signatures are verified against Apple Root CA - G3
+(bundled in `functions/certs/`), checking the bundle id and, for Production, the
+app's numeric Apple ID: add it to `apple_iap_key` as `"appAppleId": <number>`
+(App Store Connect → App Information → Apple ID). Without it, Production
+notifications are rejected and only Sandbox ones are processed.
 
 ### Google — Real-time Developer Notifications (RTDN)
 

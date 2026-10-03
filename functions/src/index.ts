@@ -3,7 +3,7 @@
  * JSON with each individual secret as a property:
  *   { android_fcm: {<FCM v1 service-account JSON>},
  *     ios_apn_pk: "<APN private key PEM>",
- *     apple_iap_key: {issuerId, keyId, privateKey, bundleId} }
+ *     apple_iap_key: {issuerId, keyId, privateKey, bundleId, appAppleId} }
  * android_fcm doubles as the Google Play service account: it's also been
  * granted "View financial data" access in Play Console, so the same
  * credentials verify Play subscription purchases (see
@@ -24,6 +24,7 @@
 // Must be first: restores buffer.SlowBuffer (removed in Node 24+) before the
 // firebase-admin require chain below reads it at load time. See slowBufferShim.ts.
 import './slowBufferShim';
+import { setGlobalOptions } from 'firebase-functions/v2';
 import { HttpsError, onRequest, onCall } from 'firebase-functions/v2/https';
 import { onMessagePublished } from 'firebase-functions/v2/pubsub';
 import { defineSecret, defineString } from 'firebase-functions/params';
@@ -37,6 +38,7 @@ import {
     accessToken,
     getIncomingAppSid,
     configureSelectedNumbers,
+    ensureWebhooksCurrent,
     registerMessagingDevice,
     linkTwilioAccount,
     rememberAuthToken,
@@ -50,6 +52,7 @@ import {
     handleAppleNotification,
     handleGoogleNotification,
     isSubscriptionActive,
+    verifyAppleNotificationSignature,
     verifyApplePurchase,
     verifyEntitlement,
     verifyGooglePurchase,
@@ -57,6 +60,11 @@ import {
 import * as admin from 'firebase-admin';
 
 admin.initializeApp();
+
+// Cost ceiling (docs/edge-hardening-plan.md §6.6): a flood that reaches any
+// function — webhook or callable — scales to at most this many instances.
+// minInstances stays at the default 0.
+setGlobalOptions({ maxInstances: 10 });
 
 const twilioPebletSecret = defineSecret('TWILIO_PEBLET_SECRET');
 
@@ -188,6 +196,7 @@ exports.twilioAccessToken = onCall(
                     accessToken(accountSid, authToken, req.data['callerId']) :
                     throwError(() => new HttpsError('failed-precondition', 'subscription-expired'))),
                 switchMap((jwt) => rememberAuthToken(accountSid, authToken).pipe(map(() => jwt))),
+                switchMap((jwt) => ensureWebhooksCurrent(accountSid, authToken).pipe(map(() => jwt))),
             ),
         );
     }
@@ -222,29 +231,35 @@ exports.twilioVerifyGooglePurchase = onCall(
  * in App Store Connect — the Sandbox stream is what makes fast-renewing test
  * licenses update without opening the app.
  *
- * No enforceAppCheck (Apple can't send an App Check token). The handler doesn't
- * trust the payload's values — it re-fetches authoritative state from Apple by
- * transaction id (see handleAppleNotification). HARDENING TODO: verify the JWS
- * signature chain (app-store-server-library) to reject spam at the edge; see
- * SUBSCRIPTION_NOTIFICATIONS.md.
+ * No enforceAppCheck (Apple can't send an App Check token). Instead the JWS is
+ * verified against Apple's root CA before anything else (forged → 401, an
+ * unreachable OCSP responder → 500 so Apple redelivers), and even then the
+ * handler doesn't trust the payload's values — it re-fetches authoritative state
+ * from Apple by transaction id (see handleAppleNotification).
  */
 exports.twilioAppleNotifications = onRequest(
     { region: REGION, timeoutSeconds: 30, secrets: [twilioPebletSecret] },
-    (req, res) => {
+    async (req, res) => {
         const signedPayload = req.body?.signedPayload;
         if (typeof signedPayload !== 'string') {
             res.status(400).send('missing signedPayload');
             return;
         }
-        lastValueFrom(handleAppleNotification(signedPayload, appleConfig()))
-            .then(() => res.status(200).send('ok'))
+        try {
+            const verification = await verifyAppleNotificationSignature(signedPayload, appleConfig());
+            if (verification !== 'verified') {
+                res.status(verification === 'retryable' ? 500 : 401).send('unverified');
+                return;
+            }
+            await lastValueFrom(handleAppleNotification(signedPayload, appleConfig()));
+            res.status(200).send('ok');
+        } catch (e) {
             // 500 lets Apple retry a transient failure; handleAppleNotification
             // already swallows per-transaction refresh errors, so this only
             // fires on an unexpected/decoding failure.
-            .catch((e) => {
-                console.error('Apple notification handler error', e);
-                res.status(500).send('error');
-            });
+            console.error('Apple notification handler error', e);
+            res.status(500).send('error');
+        }
     }
 );
 
@@ -294,7 +309,9 @@ exports.twilioRefreshSubscription = onCall(
  * matches ours (i.e. whether it's configured to ring this app).
  */
 exports.twilioGetIncomingAppSid = onCall({ enforceAppCheck: true, region: REGION, cors: true, timeoutSeconds: 30 },
-    (req) => lastValueFrom(getIncomingAppSid(req.data['accountSid'], req.data['authToken']))
+    (req) => lastValueFrom(getIncomingAppSid(req.data['accountSid'], req.data['authToken']).pipe(
+        switchMap((sid) => ensureWebhooksCurrent(req.data['accountSid'], req.data['authToken']).pipe(map(() => sid))),
+    ))
 );
 
 /**
@@ -303,7 +320,10 @@ exports.twilioGetIncomingAppSid = onCall({ enforceAppCheck: true, region: REGION
  * configureSelectedNumbers in twilio.ts for the snapshot/restore behavior.
  */
 exports.twilioConfigureNumbers = onCall({ enforceAppCheck: true, region: REGION, cors: true, timeoutSeconds: 30 },
-    (req) => lastValueFrom(configureSelectedNumbers(req.data['accountSid'], req.data['authToken'], req.data['selectedSids']))
+    // Self-heal first, so the two never update the same number concurrently.
+    (req) => lastValueFrom(ensureWebhooksCurrent(req.data['accountSid'], req.data['authToken']).pipe(
+        switchMap(() => configureSelectedNumbers(req.data['accountSid'], req.data['authToken'], req.data['selectedSids'])),
+    ))
 );
 
 /**

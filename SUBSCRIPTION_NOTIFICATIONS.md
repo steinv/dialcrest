@@ -29,7 +29,7 @@ Done:
 Pending:
 - **All Apple-side work is parked** (no Apple Developer account yet) and tracked
   in [`APPLE_TODO.md`](APPLE_TODO.md): App Store Connect notification URLs, the
-  `apple_iap_key` secret, JWS signature-verification hardening, iOS
+  `apple_iap_key` secret (incl. `appAppleId`), iOS
   `currentEntitlements` auto-recover, and sandbox testing. The Apple backend
   code is written and compiles; it just can't be exercised without the account.
 - **Part 5** — migration of any existing per-`accountSid` paid records.
@@ -203,12 +203,13 @@ belt-and-suspenders fallback for any missed notification.
   state — at worst it names a real transaction (refreshed accurately) or a bogus
   one (404). This is why the endpoint is safe without full signature
   verification.
-- **Hardening TODO (not yet done):** verify the JWS `x5c` signature chain
-  against Apple's root CAs to reject spam/DoS at the edge, using Apple's official
-  `app-store-server-library` (Node). This needs Apple's root CA certs bundled
-  with the function; deferred because it's edge-hardening, not a correctness gap.
-  Do *not* rely on `decodeAppleSignedPayload` for trust — it decodes without
-  verifying.
+- **Signature verification (done):** the JWS `x5c` chain is verified against
+  Apple Root CA - G3 (bundled in `functions/certs/`) with Apple's official
+  `@apple/app-store-server-library` before anything else runs
+  (`verifyAppleNotificationSignature`); forged → 401, OCSP unreachable → 500 so
+  Apple redelivers. Production verification needs `apple_iap_key.appAppleId`.
+  `decodeAppleSignedPayload` still decodes without verifying — never rely on it
+  for trust. See docs/edge-hardening-plan.md §6.4.
 - Payload gives `originalTransactionId` and a notification type
   (`DID_RENEW`, `DID_FAIL_TO_RENEW`, `EXPIRED`, `DID_CHANGE_RENEWAL_STATUS`,
   `REFUND`, `GRACE_PERIOD_EXPIRED`, …). For all of them, call
