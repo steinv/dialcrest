@@ -16,8 +16,17 @@ original name, pre-rebrand) — the app itself now ships as Dialcrest.
   status callbacks, managing push credentials (FCM/APN), and verifying
   App Store/Play subscription purchases (`functions/src/twilio.ts`,
   `functions/src/subscription.ts`).
-- **`public/`** — the small static site served by Firebase Hosting (currently
-  just the privacy policy).
+- **`worker/`** — a Cloudflare Worker that takes over the four Twilio webhooks on
+  `dialcrest-hooks.peblet.be`, behind Cloudflare's WAF (see
+  [`worker/README.md`](worker/README.md) and
+  [`docs/edge-hardening-plan.md`](docs/edge-hardening-plan.md)). Its TwiML, RTDB
+  paths and push payload are shared with the functions via
+  `functions/src/shared/webhooks.ts`.
+- **`site/`** — the marketing site (home, FAQ, privacy policy), built with Vite
+  into `dist/` and served by Firebase Hosting (see [`site/README.md`](site/README.md)).
+- **`docs/`** — design docs and plans.
+- **`AGENTS.md`** — security invariants for anyone (human or agent) changing the
+  backend.
 - **`store_assets/`** — screenshots/graphics for the App Store and Play Store
   listings.
 
@@ -28,8 +37,9 @@ Messaging, App Check) ties the two together.
 ## Getting started
 
 Prerequisites: [Flutter SDK](https://docs.flutter.dev/get-started/install),
-a Firebase project with the Functions/Auth/Database/Hosting products enabled,
-and a Twilio account with a configured Voice-capable number/TwiML app.
+a Firebase project with the Functions/Auth/Database/Storage/Hosting products
+enabled, and a Twilio account with a Voice-capable number (the backend creates
+the TwiML Apps and wires the numbers itself).
 
 ```bash
 # Flutter app
@@ -40,6 +50,11 @@ flutter run
 npm install
 npm run serve     # build + run against the Firebase emulators
 npm run deploy     # deploy to the configured Firebase project
+
+# Cloudflare Worker (from worker/) — see worker/README.md for the one-time setup
+npm install
+npm test
+npm run deploy
 ```
 
 Firebase project IDs and app IDs are defined in `firebase.json`; regenerate
@@ -103,12 +118,21 @@ project `twilio-phone-peblet`), with business logic split out into
 
 | Function | What it does | Invoked by |
 | --- | --- | --- |
-| `twilioIncomingCall` | TwiML for an inbound PSTN call; dials the registered `<Client>` (the app) or says "temporarily unavailable" if the subscription lapsed. | Twilio, as the number's voice URL |
+| `twilioIncomingCall` | TwiML for an inbound PSTN call; dials the registered `<Client>` (the app) while the account's trial **or** paid subscription is live, otherwise says "temporarily unavailable". | Twilio, as the number's voice URL |
 | `twilioOutgoingCall` | TwiML for an outgoing call placed from the SDK; dials the destination using the account number as caller ID. | Twilio, as the TwiML App's outgoing voice URL |
 | `twilioCallStatusChanges` | Status-callback webhook that logs call lifecycle events. | Twilio, as a status callback |
 | `twilioIncomingMessage` | TwiML for inbound SMS/MMS; pushes an FCM notification to registered devices. | Twilio, as the number's SMS URL |
-| `twilioAppleNotifications` | App Store Server Notifications V2 webhook; re-verifies subscription state from Apple on any lifecycle event. | Apple (see [Subscription renewal notifications](#subscription-renewal-notifications-app-store--play)) |
+| `twilioAppleNotifications` | App Store Server Notifications V2 webhook; verifies the notification's JWS signature, then re-verifies subscription state from Apple on any lifecycle event. | Apple (see [Subscription renewal notifications](#subscription-renewal-notifications-app-store--play)) |
 | `onPlaySubscriptionNotification` | Pub/Sub-triggered; consumes Google Play Real-time Developer Notifications and re-verifies purchase-token state. | Google Play RTDN, via Pub/Sub (see below) |
+
+The four Twilio webhooks verify `X-Twilio-Signature` with the tenant's Auth Token
+(stored server-side for exactly that purpose, see [Security](#security)). They are
+being migrated to the Cloudflare Worker in `worker/`: the
+`WEBHOOK_PUBLIC_BASE_URL` param in `functions/.env.twilio-phone-peblet` decides
+which host gets written into tenants' Twilio config, and tenants re-point
+themselves on their next app session. `TWILIO_SIGNATURE_FAIL_CLOSED` in the same
+file rejects webhooks for accounts with no stored token once the rollout is done.
+Every function is capped at 10 instances (`setGlobalOptions` in `index.ts`).
 
 ## Security
 
@@ -136,10 +160,13 @@ custom claim**:
    Auth Token it actually holds.
 3. The app force-refreshes its ID token so the claim is live, then reads/writes RTDB
    **directly** (no function on the hot path).
-4. **`database.rules.json`** authorizes every account-scoped node (`trial`,
-   `configuration`) with `auth.token.accountSid === $accountSid` — so possession
-   of the verified claim, and nothing else, grants access. There are no publicly
-   readable/writable nodes.
+4. **`database.rules.json`** authorizes every client-readable account-scoped node
+   (`trial`, `twiml-app-sid`, `configuration`) with
+   `auth.token.accountSid === $accountSid` — so possession of the verified claim,
+   and nothing else, grants access. Everything else (including `secret`, which
+   holds the tenant's Auth Token for webhook signature validation, and the `paid`
+   subscription cache) is server-only. There are no publicly readable/writable
+   nodes.
 
 **Account switching** works because the claim is re-established on every login:
 logging into a different account re-runs `twilioLinkAccount` (re-verifying the new
@@ -173,7 +200,8 @@ function a single, consistent place to read credentials from.
     "issuerId": "...",
     "keyId": "...",
     "privateKey": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----",
-    "bundleId": "be.peblet.twilio_phone"
+    "bundleId": "be.peblet.twilioPhone",
+    "appAppleId": 1234567890
   }
 }
 ```
@@ -182,7 +210,7 @@ function a single, consistent place to read credentials from.
 | --- | --- | --- |
 | `android_fcm` | Firebase FCM v1 service-account JSON (shared across all tenants). Also doubles as the Google Play service account — see below | Firebase Console → Project settings → Service accounts → Generate new private key. |
 | `ios_apn_pk` | APN VoIP private key (PEM), paired with `IOS_APN_CERTIFICATE` | `apn_key.pem` — see "Enabling iOS push" below. |
-| `apple_iap_key` | App Store Connect "In-App Purchase" API key — used to call the App Store Server API to verify/re-verify subscription purchases | App Store Connect → Users and Access → Integrations → In-App Purchase → generate a key; `bundleId` is this app's iOS bundle ID. |
+| `apple_iap_key` | App Store Connect "In-App Purchase" API key — used to call the App Store Server API to verify/re-verify subscription purchases | App Store Connect → Users and Access → Integrations → In-App Purchase → generate a key; `bundleId` is this app's iOS bundle ID (`be.peblet.twilioPhone`); `appAppleId` is the app's numeric Apple ID (App Store Connect → App Information), needed to verify Production App Store notifications. |
 
 There's no separate Google Play service-account secret: the `android_fcm`
 service account is also linked in Google Play Console (Setup → API access)
@@ -260,11 +288,14 @@ when you renew.
 
 | Value             | What it is                  | Where it goes                                    | Why there                                             |
 | ----------------- | --------------------------- | ------------------------------------------------ | ----------------------------------------------------- |
-| `apn_cert.pem`    | Public VoIP certificate     | `IOS_APN_CERTIFICATE` string param (`functions/.env`) | Public, not secret — declared via `defineString`. |
+| `apn_cert.pem`    | Public VoIP certificate     | `IOS_APN_CERTIFICATE` string param (`functions/.env.twilio-phone-peblet`) | Public, not secret — declared via `defineString`. |
 | `apn_key.pem`     | Private key (sensitive)     | `ios_apn_pk` field inside `TWILIO_PEBLET_SECRET` | Secret — kept in Secret Manager via `defineSecret`.   |
 
-**Certificate** — add it to `functions/.env` (gitignored). PEM is multi-line, so
-quote it and use real newlines, e.g.:
+**Certificate** — set it in `functions/.env.twilio-phone-peblet`, replacing the
+existing empty `IOS_APN_CERTIFICATE=` line. (Don't put it in `functions/.env`:
+the project-specific file is loaded after it and its empty value would win,
+silently leaving iOS push disabled.) The certificate is public, so committing it
+is fine. PEM is multi-line, so quote it and use real newlines, e.g.:
 
 ```dotenv
 IOS_APN_CERTIFICATE="-----BEGIN CERTIFICATE-----

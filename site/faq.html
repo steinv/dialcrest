@@ -66,10 +66,12 @@
   <div class="faq-item" id="login">
     <h2>How do I log in?</h2>
     <p>On first launch, enter your Twilio <strong>Account SID</strong> and
-    <strong>Auth Token</strong>. Dialcrest verifies them with Twilio, then stores them
-    only in your device's encrypted storage (Android Keystore / iOS Keychain) — they're
-    never written to our database. From there the app registers your device so it can
-    make and receive calls on your Twilio number.</p>
+    <strong>Auth Token</strong>. Dialcrest verifies them with Twilio and stores them in
+    your device's encrypted storage (Android Keystore / iOS Keychain). Our backend also
+    keeps a server-only copy of the Auth Token, used solely to verify that call and
+    message notifications really come from Twilio for your account — see the
+    <a href="/privacy">Privacy Policy</a>. From there the app registers your device so it
+    can make and receive calls on your Twilio number.</p>
   </div>
 
   <div class="faq-item" id="outgoing">
@@ -171,15 +173,17 @@
 
   <div class="faq-item" id="privacy">
     <h2>What data does Dialcrest store?</h2>
-    <p>Very little, and never your call or message content — that stays with Twilio,
-    under your account. Full details, including exactly what's stored on-device versus
-    in Dialcrest's backend, are in the <a href="/privacy">Privacy Policy</a>.</p>
+    <p>Very little. Your calls are never recorded and your message history stays with
+    Twilio, under your account; the only message content our backend holds is WhatsApp
+    photos and voice notes you send, kept for 7 days so Twilio can deliver them. Full
+    details, including exactly what's stored on-device versus in Dialcrest's backend, are
+    in the <a href="/privacy">Privacy Policy</a>.</p>
   </div>
 
   <div class="faq-item" id="source">
     <h2>Where's the source code?</h2>
     <p>Dialcrest is open source under the GPLv3 license. The full app (Flutter) and
-    backend (Firebase Cloud Functions) source is available on
+    backend (Firebase Cloud Functions and a Cloudflare Worker) source is available on
     <a href="https://github.com/steinv/dialcrest" target="_blank" rel="noopener">GitHub</a>.</p>
   </div>
 </main>
