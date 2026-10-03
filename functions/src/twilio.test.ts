@@ -14,8 +14,10 @@ import {
     recordDeviceCheckIn,
     registerMessagingDevice,
     resetAuthTokenCacheForTests,
+    unregisterDevice,
     verifyTwilioCredentials,
 } from './twilio';
+import { DEVICE_STALE_MS } from './shared/webhooks';
 
 jest.mock('firebase-admin');
 // Only the REST client factory (the default export) is faked; validateRequest,
@@ -460,24 +462,26 @@ describe('callbackIncomingMessage notifies entitled devices only', () => {
         expect((await incomingSms()).tokens).toEqual(['same']);
     });
 
-    it('clears a device\'s token that FCM reports as unregistered', async () => {
-        await seedLine({ trialExpiresAt: Date.now() + DAY, devices: { devA: { fcmToken: 'dead' } } });
-        sendMock.mockRejectedValue({ code: 'messaging/registration-token-not-registered' });
+    it('deletes the record of a device whose token FCM reports as unregistered (its install is gone)', async () => {
+        await seedLine({ trialExpiresAt: Date.now() + DAY, devices: { devA: { fcmToken: 'dead' }, devB: { fcmToken: 'live' } } });
+        sendMock.mockImplementation(({ token }: { token: string }) => token === 'dead' ?
+            Promise.reject({ code: 'messaging/registration-token-not-registered' }) : Promise.resolve('ok'));
         await incomingSms();
-        expect(dbTree().twilio[SID].devices.devA.fcmToken).toBeUndefined();
-        expect(dbTree().twilio[SID].devices.devA.lastSeen).toEqual(expect.any(Number));
+        expect(dbTree().twilio[SID].devices.devA).toBeUndefined();
+        expect(dbTree().twilio[SID].devices.devB).toEqual(expect.objectContaining({ fcmToken: 'live' }));
     });
 });
 
 describe('device registry writes', () => {
     it('registerMessagingDevice drops records of the same install under older anonymous uids', async () => {
         const db = admin.database();
-        await db.ref(`/twilio/${SID}/devices/oldUid`).set({ fcmToken: 'fcmA', subscription: 'subscriptions/apple/orig1', lastSeen: 1 });
-        await db.ref(`/twilio/${SID}/devices/otherPhone`).set({ fcmToken: 'fcmB', lastSeen: 1 });
+        const seen = Date.now() - DAY;
+        await db.ref(`/twilio/${SID}/devices/oldUid`).set({ fcmToken: 'fcmA', subscription: 'subscriptions/apple/orig1', lastSeen: seen });
+        await db.ref(`/twilio/${SID}/devices/otherPhone`).set({ fcmToken: 'fcmB', lastSeen: seen });
         await lastValueFrom(registerMessagingDevice(SID, 'newUid', 'fcmA'));
         const devices = dbTree().twilio[SID].devices;
         expect(devices.oldUid).toBeUndefined(); // its pointer can no longer reach whoever uses this install now
-        expect(devices.otherPhone).toEqual({ fcmToken: 'fcmB', lastSeen: 1 });
+        expect(devices.otherPhone).toEqual({ fcmToken: 'fcmB', lastSeen: seen });
         expect(devices.newUid).toEqual({ fcmToken: 'fcmA', lastSeen: expect.any(Number) });
     });
 
@@ -496,16 +500,48 @@ describe('device registry writes', () => {
     });
 
     it('recordDeviceCheckIn stores the pointer and lastSeen without touching the FCM token', async () => {
-        await admin.database().ref(`/twilio/${SID}/devices/devA`).set({ fcmToken: 'fcmA', lastSeen: 1 });
+        await admin.database().ref(`/twilio/${SID}/devices/devA`).set({ fcmToken: 'fcmA', lastSeen: Date.now() - DAY });
         await lastValueFrom(recordDeviceCheckIn(SID, 'devA', 'subscriptions/apple/orig1'));
         expect(dbTree().twilio[SID].devices.devA).toEqual({
             fcmToken: 'fcmA', subscription: 'subscriptions/apple/orig1', lastSeen: expect.any(Number),
         });
     });
 
+    it('recordDeviceCheckIn given the install\'s FCM token drops its records under older anonymous uids', async () => {
+        const db = admin.database();
+        const seen = Date.now() - DAY;
+        await db.ref(`/twilio/${SID}/devices/oldUid`).set({ fcmToken: 'fcmA', subscription: 'subscriptions/apple/orig1', lastSeen: seen });
+        await db.ref(`/twilio/${SID}/devices/otherPhone`).set({ fcmToken: 'fcmB', lastSeen: seen });
+        await lastValueFrom(recordDeviceCheckIn(SID, 'newUid', null, 'fcmA'));
+        const devices = dbTree().twilio[SID].devices;
+        expect(devices.oldUid).toBeUndefined();
+        expect(devices.otherPhone).toEqual({ fcmToken: 'fcmB', lastSeen: seen });
+        expect(devices.newUid).toEqual({ fcmToken: 'fcmA', subscription: null, lastSeen: expect.any(Number) });
+    });
+
+    it.each([
+        ['recordDeviceCheckIn', () => recordDeviceCheckIn(SID, 'devA', null)],
+        ['registerMessagingDevice', () => registerMessagingDevice(SID, 'devA', 'fcmA')],
+    ])('%s prunes records past DEVICE_STALE_MS (the webhooks already ignore them)', async (_name, checkIn) => {
+        const db = admin.database();
+        await db.ref(`/twilio/${SID}/devices/stale`).set({ fcmToken: 'fcmS', lastSeen: Date.now() - DEVICE_STALE_MS - 1 });
+        await db.ref(`/twilio/${SID}/devices/noLastSeen`).set({ fcmToken: 'fcmN' });
+        await db.ref(`/twilio/${SID}/devices/recent`).set({ fcmToken: 'fcmR', lastSeen: Date.now() - DEVICE_STALE_MS + DAY });
+        await lastValueFrom(checkIn());
+        expect(Object.keys(dbTree().twilio[SID].devices).sort()).toEqual(['devA', 'recent']);
+    });
+
+    it('unregisterDevice deletes only that device\'s record', async () => {
+        const db = admin.database();
+        await db.ref(`/twilio/${SID}/devices/devA`).set({ fcmToken: 'fcmA', lastSeen: Date.now() });
+        await db.ref(`/twilio/${SID}/devices/devB`).set({ fcmToken: 'fcmB', lastSeen: Date.now() });
+        await lastValueFrom(unregisterDevice(SID, 'devA'));
+        expect(Object.keys(dbTree().twilio[SID].devices)).toEqual(['devB']);
+    });
+
     it('registerMessagingDevice stores the token on the device and migrates it off the legacy registry', async () => {
         await admin.database().ref(`/twilio/${SID}/messaging-tokens/fcmA`).set(true);
-        await admin.database().ref(`/twilio/${SID}/devices/devA`).set({ subscription: 'subscriptions/apple/orig1', lastSeen: 1 });
+        await admin.database().ref(`/twilio/${SID}/devices/devA`).set({ subscription: 'subscriptions/apple/orig1', lastSeen: Date.now() - DAY });
         await lastValueFrom(registerMessagingDevice(SID, 'devA', 'fcmA'));
         expect(dbTree().twilio[SID].devices.devA).toEqual({
             subscription: 'subscriptions/apple/orig1', fcmToken: 'fcmA', lastSeen: expect.any(Number),

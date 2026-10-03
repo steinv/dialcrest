@@ -11,8 +11,9 @@ import 'package:flutter/foundation.dart';
 /// verified. RTDB rules then authorize reads/writes with
 /// `auth.token.accountSid === $accountSid`.
 ///
-/// The identity is deliberately disposable: nothing is ever stored under its
-/// uid (all data is keyed by accountSid), and Firebase's anonymous-account
+/// The identity is deliberately disposable: account data is keyed by
+/// accountSid, not by its uid — the one exception being the server-only device
+/// record the backend keeps per uid and prunes itself — and Firebase's anonymous-account
 /// auto-cleanup deletes anon users ~30 days after creation regardless of
 /// activity. So this service re-establishes the identity on demand — if the user
 /// is signed out, the token lacks the expected `accountSid` claim, or the anon
@@ -163,6 +164,22 @@ class AccountAuthService {
     } catch (e) {
       debugPrint('Could not read ID token claims: $e');
       return false;
+    }
+  }
+
+  /// Takes this device off [accountSid]'s line (twilioUnregisterDevice deletes
+  /// its device record), so the line stops ringing it and pushing it messages —
+  /// call before dropping the identity at logout, or when the line's stored
+  /// credentials are discarded. Best-effort and bounded: offline, the backend
+  /// ages the record out on its own.
+  Future<void> unregisterDevice(String accountSid) async {
+    try {
+      await _functions
+          .httpsCallable('twilioUnregisterDevice')
+          .call({'accountSid': accountSid})
+          .timeout(const Duration(seconds: 10));
+    } catch (e) {
+      debugPrint('Error unregistering device from $accountSid: $e');
     }
   }
 

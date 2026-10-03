@@ -23,6 +23,7 @@ import {
     deviceSubscription,
     recordDeviceCheckIn,
     registerMessagingDevice,
+    unregisterDevice,
     linkTwilioAccount,
     rememberAuthToken,
 } from './twilio';
@@ -49,6 +50,7 @@ import {
     subscriptionReverificationConfig,
     twilioPebletSecret,
 } from './helpers';
+import { ACCOUNT_SID } from './shared/webhooks';
 import * as admin from 'firebase-admin';
 
 admin.initializeApp();
@@ -139,13 +141,17 @@ exports.twilioAccessToken = onCall(
         const accountSid = req.data['accountSid'];
         const authToken = req.data['authToken'];
         const uid = requireDeviceUid(req.auth?.uid);
+        // Optional (older apps don't send it): lets the check-in drop this install's
+        // records under older anonymous uids. A malformed one is ignored, not fatal.
+        const fcmToken = typeof req.data['fcmToken'] === 'string' && FCM_TOKEN.test(req.data['fcmToken']) ?
+            req.data['fcmToken'] : undefined;
         return lastValueFrom(
             requireTwilioCredentials(accountSid, authToken).pipe(
                 switchMap(() => deviceSubscription(accountSid, uid)),
                 switchMap((current) => resolveDeviceEntitlement(
                     accountSid, presentedEntitlement(req.data), current, subscriptionReverificationConfig(),
                 )),
-                switchMap(({ entitled, subscription }) => recordDeviceCheckIn(accountSid, uid, subscription).pipe(map(() => entitled))),
+                switchMap(({ entitled, subscription }) => recordDeviceCheckIn(accountSid, uid, subscription, fcmToken).pipe(map(() => entitled))),
                 switchMap((entitled) => entitled ?
                     accessToken(accountSid, authToken, req.data['callerId'], uid) :
                     throwError(() => new HttpsError('failed-precondition', 'subscription-expired'))),
@@ -294,6 +300,25 @@ exports.twilioRegisterMessagingDevice = onCall({ enforceAppCheck: true, region: 
         return lastValueFrom(requireTwilioCredentials(accountSid, req.data['authToken']).pipe(
             switchMap(() => registerMessagingDevice(accountSid, uid, fcmToken)),
         ));
+    }
+);
+
+/**
+ * Removes this device from a line at logout / account switch: deletes its record
+ * (/twilio/{sid}/devices/{uid}), so the inbound webhooks stop ringing it and
+ * pushing it the line's messages. Otherwise the record stays fresh — and the
+ * logged-out phone keeps ringing — for up to DEVICE_STALE_MS. Needs no Auth
+ * Token: a caller can only ever delete its OWN uid's record, and logging out
+ * must work even after the token was rotated.
+ */
+exports.twilioUnregisterDevice = onCall({ enforceAppCheck: true, region: REGION, cors: true, timeoutSeconds: 30 },
+    (req) => {
+        const accountSid = req.data['accountSid'];
+        if (typeof accountSid !== 'string' || !ACCOUNT_SID.test(accountSid)) {
+            throw new HttpsError('invalid-argument', 'invalid-account-sid');
+        }
+        const uid = requireDeviceUid(req.auth?.uid);
+        return lastValueFrom(unregisterDevice(accountSid, uid));
     }
 );
 

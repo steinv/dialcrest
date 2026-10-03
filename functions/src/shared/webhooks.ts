@@ -64,7 +64,6 @@ export const dbPaths = {
     /** Per-device registry (DeviceRecord), keyed by the device's Firebase uid. Server-only. */
     devices: (accountSid: string) => `/twilio/${accountSid}/devices`,
     device: (accountSid: string, uid: string) => `/twilio/${accountSid}/devices/${uid}`,
-    deviceFcmToken: (accountSid: string, uid: string) => `/twilio/${accountSid}/devices/${uid}/fcmToken`,
     /** `subscription` pointers are record paths without a leading slash, e.g. `subscriptions/apple/123`. */
     subscriptionExpiresAt: (recordPath: string) => `/${recordPath}/expiresAt`,
     /** LEGACY SMS-push registry (fcmToken → true) from before the per-device registry. */
@@ -171,7 +170,12 @@ export function incomingCallIdentities(
     return [...legacy, ...entitled.map(({ uid }) => deviceIdentity(accountSid, uid))].slice(0, MAX_DIAL_CLIENTS);
 }
 
-/** Where an inbound SMS push goes: an FCM token, and the RTDB path to clear if FCM reports it unregistered. */
+/**
+ * Where an inbound SMS push goes: an FCM token, and the RTDB path to delete if FCM
+ * reports it unregistered — for a device, its whole record: the install is gone
+ * (on Android its Voice pushes use the same token), so it shouldn't keep taking a
+ * ring slot until DEVICE_STALE_MS.
+ */
 export interface MessagingTarget {
     fcmToken: string;
     removePath: string;
@@ -192,7 +196,7 @@ export function incomingMessageTargets(
 ): MessagingTarget[] {
     const targets = new Map<string, MessagingTarget>();
     for (const { uid, record } of entitled) {
-        if (record.fcmToken) targets.set(record.fcmToken, { fcmToken: record.fcmToken, removePath: dbPaths.deviceFcmToken(accountSid, uid) });
+        if (record.fcmToken) targets.set(record.fcmToken, { fcmToken: record.fcmToken, removePath: dbPaths.device(accountSid, uid) });
     }
     if (trialLive(trialExpiresAt, now)) {
         for (const fcmToken of Object.keys(legacyTokens ?? {})) {

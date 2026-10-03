@@ -29,6 +29,8 @@ jest.mock('./twilio', () => ({
     configureSelectedNumbers: jest.fn(),
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     registerMessagingDevice: jest.fn(() => require('rxjs').of(undefined)),
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    unregisterDevice: jest.fn(() => require('rxjs').of(undefined)),
     callbackIncomingCall: jest.fn(),
     callbackOutgoingCall: jest.fn(),
     callbackCallStatusChanges: jest.fn(),
@@ -199,7 +201,15 @@ describe('twilioAccessToken (credentials + per-device registry)', () => {
     it('records the device check-in (no subscription pointer during a plain trial)', async () => {
         await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
         await functions.twilioAccessToken.run({ auth: DEVICE, data: { accountSid: 'AC1', authToken: 'tok', callerId: 'x' } });
-        expect(twilioMocks().recordDeviceCheckIn).toHaveBeenCalledWith('AC1', 'device1', null);
+        expect(twilioMocks().recordDeviceCheckIn).toHaveBeenCalledWith('AC1', 'device1', null, undefined);
+    });
+
+    it('passes the install\'s FCM token to the check-in, ignoring a malformed one', async () => {
+        await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
+        await functions.twilioAccessToken.run({ auth: DEVICE, data: { accountSid: 'AC1', authToken: 'tok', callerId: 'x', fcmToken: 'dAbC-123_x:APA91b' } });
+        expect(twilioMocks().recordDeviceCheckIn).toHaveBeenLastCalledWith('AC1', 'device1', null, 'dAbC-123_x:APA91b');
+        await functions.twilioAccessToken.run({ auth: DEVICE, data: { accountSid: 'AC1', authToken: 'tok', callerId: 'x', fcmToken: 'bad/token' } });
+        expect(twilioMocks().recordDeviceCheckIn).toHaveBeenLastCalledWith('AC1', 'device1', null, undefined);
     });
 
     it('points a paying device at its store record, so inbound calls/SMS keep reaching it after the trial', async () => {
@@ -222,7 +232,7 @@ describe('twilioAccessToken (credentials + per-device registry)', () => {
                 signedTransactionInfo: appleSignedTransaction({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }),
             },
         });
-        expect(twilioMocks().recordDeviceCheckIn).toHaveBeenCalledWith('AC1', 'device1', 'subscriptions/apple/orig1');
+        expect(twilioMocks().recordDeviceCheckIn).toHaveBeenCalledWith('AC1', 'device1', 'subscriptions/apple/orig1', undefined);
         jest.useRealTimers();
     });
 
@@ -232,9 +242,31 @@ describe('twilioAccessToken (credentials + per-device registry)', () => {
         jest.setSystemTime(THIRTY_DAYS_MS + 1);
         await expect(functions.twilioAccessToken.run({ auth: DEVICE, data: { accountSid: 'AC1', authToken: 'tok', callerId: 'x' } }))
             .rejects.toMatchObject({ code: 'failed-precondition', message: 'subscription-expired' });
-        expect(twilioMocks().recordDeviceCheckIn).toHaveBeenCalledWith('AC1', 'device1', null);
+        expect(twilioMocks().recordDeviceCheckIn).toHaveBeenCalledWith('AC1', 'device1', null, undefined);
         expect(twilioMocks().accessToken).not.toHaveBeenCalled();
         jest.useRealTimers();
+    });
+});
+
+describe('twilioUnregisterDevice', () => {
+    const SID = 'AC' + '0'.repeat(31) + '1';
+
+    it('deletes the caller\'s own device record on the line, without needing the Auth Token', async () => {
+        await functions.twilioUnregisterDevice.run({ auth: DEVICE, data: { accountSid: SID } });
+        expect(twilioMocks().unregisterDevice).toHaveBeenCalledWith(SID, 'device1');
+        expect(twilioMocks().verifyTwilioCredentials).not.toHaveBeenCalled();
+    });
+
+    it('requires a signed-in device', async () => {
+        await expect(functions.twilioUnregisterDevice.run({ data: { accountSid: SID } }))
+            .rejects.toMatchObject({ code: 'unauthenticated' });
+        expect(twilioMocks().unregisterDevice).not.toHaveBeenCalled();
+    });
+
+    it.each([undefined, '', 'AC1', 'AC/../secret'])('rejects a malformed AccountSid %p (it addresses an RTDB path)', async (accountSid) => {
+        await expect(functions.twilioUnregisterDevice.run({ auth: DEVICE, data: { accountSid } }))
+            .rejects.toMatchObject({ code: 'invalid-argument' });
+        expect(twilioMocks().unregisterDevice).not.toHaveBeenCalled();
     });
 });
 

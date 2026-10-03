@@ -176,14 +176,24 @@ anonymous identity so its claim can't be reused by the next user on the device.
 
 ### Disposable identity & anonymous auto-cleanup
 
-The anonymous identity is deliberately disposable — **all data is keyed by
-`accountSid`, never by `uid`** — so it's safe to enable Firebase's
+The anonymous identity is deliberately disposable — **account data is keyed by
+`accountSid`, not by `uid`** — so it's safe to enable Firebase's
 [anonymous-account auto-cleanup](https://firebase.blog/posts/2023/07/best-practices-for-anonymous-authentication)
 (which deletes anonymous users ~30 days after creation, regardless of activity;
 setting a custom claim does **not** exempt an account — only linking a real
 sign-in provider would). If the account is deleted, `AccountAuthService` detects the
 now-invalid identity and transparently re-creates it and re-links using the stored
 Twilio credentials. The user never has to re-authenticate, and no data is lost.
+
+The one thing keyed by `uid` is the server-only per-device registry
+(`/twilio/{accountSid}/devices/{uid}`), which the inbound webhooks read to ring /
+notify only entitled devices. Since every recycled uid starts a new record, each
+check-in (`twilioAccessToken`, `twilioRegisterMessagingDevice`) prunes the line's
+dead ones: records holding this install's FCM token under another uid, and
+records not seen for a year (`DEVICE_STALE_MS`, which the webhooks ignore anyway).
+A record is also deleted when FCM reports its token unregistered (the install is
+gone), and at logout (`twilioUnregisterDevice`), so a logged-out phone stops
+ringing for the line.
 
 ## Secrets
 

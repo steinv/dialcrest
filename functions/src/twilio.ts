@@ -12,6 +12,7 @@ import * as logger from 'firebase-functions/logger';
 import { FUNCTIONS_BASE_URL, isKnownWebhookUrl, isSignatureFailClosed, webhookUrl } from './edge';
 import {
     ACCOUNT_SID,
+    DEVICE_STALE_MS,
     DeviceRecord,
     StoredAuthTokens,
     WEBHOOK_PATHS,
@@ -607,10 +608,61 @@ export function deviceSubscription(accountSid: string, uid: string): Observable<
 
 /**
  * Records a device check-in from twilioAccessToken: its (store-verified)
- * subscription pointer and lastSeen. update() leaves fcmToken untouched.
+ * subscription pointer and lastSeen, plus the install's FCM token when the app
+ * sent one — which lets checkInDevice drop the install's records under older
+ * anonymous uids right away, not only at its next messaging registration.
+ * Without a token, update() leaves fcmToken untouched.
  */
-export function recordDeviceCheckIn(accountSid: string, uid: string, subscription: string | null): Observable<void> {
-    return from(admin.database().ref(dbPaths.device(accountSid, uid)).update({ subscription, lastSeen: Date.now() }));
+export function recordDeviceCheckIn(
+    accountSid: string, uid: string, subscription: string | null, fcmToken?: string,
+): Observable<void> {
+    return checkInDevice(accountSid, uid, fcmToken ? { subscription, fcmToken } : { subscription });
+}
+
+/**
+ * Deletes this device's record on a line (twilioUnregisterDevice, at logout or an
+ * account switch), so the line's inbound calls and SMS stop reaching it.
+ */
+export function unregisterDevice(accountSid: string, uid: string): Observable<void> {
+    return from(admin.database().ref(dbPaths.device(accountSid, uid)).remove());
+}
+
+/**
+ * The other records on a line to delete when `uid` checks in: those not seen for
+ * DEVICE_STALE_MS (the webhooks already ignore them), and — given this install's
+ * FCM token — any holding it under another uid. An FCM token belongs to one app
+ * install, so such a record is this install under an older anonymous uid
+ * (Firebase recycles those ~monthly): dropping it means its subscription pointer
+ * can't keep reaching whoever uses this install now.
+ */
+function deadDeviceRecords(
+    devices: Record<string, DeviceRecord> | null, uid: string, fcmToken: string | null | undefined, now: number,
+): string[] {
+    return Object.entries(devices ?? {})
+        .filter(([other, record]) => other !== uid && (
+            typeof record?.lastSeen !== 'number' || now - record.lastSeen >= DEVICE_STALE_MS ||
+            (!!fcmToken && record.fcmToken === fcmToken)))
+        .map(([other]) => other);
+}
+
+/**
+ * Writes `fields` and lastSeen onto this device's record and deletes the line's
+ * dead records (deadDeviceRecords), so /twilio/{sid}/devices — read whole by
+ * every inbound webhook — stays bounded as anonymous uids come and go.
+ */
+function checkInDevice(accountSid: string, uid: string, fields: Partial<DeviceRecord>): Observable<void> {
+    const db = admin.database();
+    return from(db.ref(dbPaths.devices(accountSid)).once('value')).pipe(
+        switchMap((snapshot) => {
+            const now = Date.now();
+            const dead = deadDeviceRecords(snapshot.val() as Record<string, DeviceRecord> | null, uid, fields.fcmToken, now);
+            return from(Promise.all([
+                db.ref(dbPaths.device(accountSid, uid)).update({ ...fields, lastSeen: now }),
+                ...dead.map((other) => db.ref(dbPaths.device(accountSid, other)).remove()),
+            ]));
+        }),
+        map(() => undefined),
+    );
 }
 
 /**
@@ -719,8 +771,9 @@ export async function callbackIncomingMessage(request: Request, response: expres
             apns: { headers: { 'apns-priority': '10' }, payload: { aps: { 'content-available': 1 } } },
         })));
 
-        // Drop tokens FCM reports as unregistered (uninstalled app / stale token) so
-        // this list doesn't grow unboundedly and future sends don't keep failing on them.
+        // Drop targets FCM reports as unregistered (uninstalled app / stale token) —
+        // a device's whole record (see MessagingTarget) — so future sends and calls
+        // don't keep going to them.
         await Promise.all(results.map((result, i) => {
             const isUnregistered = result.status === 'rejected' &&
                 String((result.reason as { code?: string })?.code ?? result.reason).includes('registration-token-not-registered');
@@ -742,24 +795,11 @@ export async function callbackIncomingMessage(request: Request, response: expres
  * entitledDevices). Every entitled device sharing the account gets notified.
  */
 export function registerMessagingDevice(accountSid: string, uid: string, fcmToken: string): Observable<void> {
-    const db = admin.database();
-    return from(db.ref(dbPaths.devices(accountSid)).once('value')).pipe(
-        switchMap((snapshot) => {
-            // An FCM token belongs to one app install. Another record holding it is
-            // the same install under an older anonymous uid (Firebase recycles those
-            // ~monthly): drop it, so its subscription pointer can't keep reaching
-            // whoever uses this install now, and dead records don't pile up.
-            const devices = (snapshot.val() ?? {}) as Record<string, DeviceRecord>;
-            const superseded = Object.keys(devices).filter((other) => other !== uid && devices[other]?.fcmToken === fcmToken);
-            return from(Promise.all([
-                db.ref(dbPaths.device(accountSid, uid)).update({ fcmToken, lastSeen: Date.now() }),
-                ...superseded.map((other) => db.ref(dbPaths.device(accountSid, other)).remove()),
-                // Migrated off the legacy registry, which would otherwise push to this token unconditionally during the trial.
-                db.ref(dbPaths.messagingToken(accountSid, fcmToken)).remove(),
-            ]));
-        }),
-        map(() => undefined),
-    );
+    return forkJoin([
+        checkInDevice(accountSid, uid, { fcmToken }),
+        // Migrated off the legacy registry, which would otherwise push to this token unconditionally during the trial.
+        from(admin.database().ref(dbPaths.messagingToken(accountSid, fcmToken)).remove()),
+    ]).pipe(map(() => undefined));
 }
 
 /**

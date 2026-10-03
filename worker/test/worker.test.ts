@@ -222,14 +222,14 @@ describe('twilioIncomingMessage (notifies entitled devices only)', () => {
         expect(google.fcmSent.map((m) => m.token)).toEqual(['tok:pay']);
     });
 
-    it('clears a device token FCM reports as unregistered', async () => {
+    it('deletes the record of a device whose token FCM reports as unregistered', async () => {
         seedLine({ trialExpiresAt: Date.now() + DAY, devices: { devA: { fcmToken: 'tok:dead' }, devB: { fcmToken: 'tok:live' } } });
         google.unregisteredTokens.add('tok:dead');
         await worker.fetch(post('twilioIncomingMessage', sms), env());
         const deletes = google.fetchMock.mock.calls
             .filter(([, init]) => init?.method === 'DELETE')
             .map(([input]) => decodeURIComponent(new URL(String(input)).pathname));
-        expect(deletes).toEqual([`/twilio/${SID}/devices/devA/fcmToken.json`]);
+        expect(deletes).toEqual([`/twilio/${SID}/devices/devA.json`]);
     });
 
     it('sends nothing for a forged message', async () => {

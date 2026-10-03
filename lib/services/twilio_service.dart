@@ -793,6 +793,23 @@ class TwilioService {
     }
   }
 
+  /// Takes this device off the line at logout, so the logged-out phone stops
+  /// ringing and receiving the line's messages: unregisters its Voice push
+  /// binding (already gone in vacation mode), then deletes its device record —
+  /// in that order, since getting the access token to unregister with records a
+  /// check-in. Best-effort: offline, the backend ages the record out on its own.
+  Future<void> unregisterDevice() async {
+    if (!isVacationMode) {
+      try {
+        final accessToken = await _accessToken().timeout(const Duration(seconds: 10));
+        await TwilioVoicePlatform.instance.unregister(accessToken: accessToken);
+      } catch (e) {
+        debugPrint('Error unregistering Twilio Voice at logout: $e');
+      }
+    }
+    await AccountAuthService.instance.unregisterDevice(accountSid);
+  }
+
   /// Re-registers this device for incoming calls and SMS notifications right
   /// away — called when a purchase has just been verified (see
   /// SubscriptionService.onEntitlementVerified). The backend only rings / notifies
@@ -881,11 +898,20 @@ class TwilioService {
   }
 
   Future<String> _mintAccessToken() async {
+    // Lets the backend drop this install's device records under older anonymous
+    // uids at once (see recordDeviceCheckIn). Best-effort: minting doesn't need it.
+    String? fcmToken;
+    try {
+      fcmToken = await FirebaseMessaging.instance.getToken();
+    } catch (e) {
+      debugPrint('Error reading FCM token for access-token check-in: $e');
+    }
     try {
       final response = await _callWithIdentityRecovery('twilioAccessToken', {
         'accountSid': accountSid,
         'authToken': authToken,
         'callerId': currentPhoneNumber ?? '',
+        'fcmToken': ?fcmToken,
         // Attach the device's paid store entitlement, if any, so the backend's
         // OR gate can grant access on an active subscription once the trial has
         // lapsed. Empty for trial-only devices.
