@@ -111,6 +111,8 @@ void main() async {
         storageService.authToken!,
       );
       if (!isValid) {
+        // The user may log into another line next: take this device off this one.
+        await AccountAuthService.instance.unregisterDevice(storageService.accountSid!);
         await storageService.clearCredentials();
       } else {
         // Bind the identity to this account so RTDB reads/writes are authorized.

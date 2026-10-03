@@ -121,7 +121,7 @@ class ContactsService extends ChangeNotifier {
   /// Filters the address book for the dial pad, where [digits] is whatever the
   /// user has typed so far (e.g. "047"). Matches when a contact's number
   /// contains [digits] anywhere in its national significant number — not just
-  /// as a prefix — so e.g. 0478394317, +32478394317 and 0032478394317 are all
+  /// as a prefix — so e.g. 0478334455, +32478334455 and 0032478334455 are all
   /// treated as the same number regardless of which form was typed or stored.
   ///
   /// A trunk/country prefix typed on its own (e.g. "0") normalizes away to

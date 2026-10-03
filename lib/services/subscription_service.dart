@@ -80,6 +80,12 @@ class SubscriptionService {
 
   bool get isSupported => Platform.isAndroid || Platform.isIOS;
 
+  /// Called after a purchase or restore verifies as active, so the device can
+  /// re-register for incoming calls and SMS notifications immediately (see
+  /// TwilioService.refreshRegistrations). Injected rather than reaching into
+  /// TwilioService, to keep the two services decoupled.
+  void Function()? onEntitlementVerified;
+
   SubscriptionService({
     required this.accountSid,
     required StorageService storageService,
@@ -288,6 +294,7 @@ class SubscriptionService {
           final status = await _verifyPurchase(purchase);
           _pendingPurchase = null;
           completer?.complete(status);
+          if (status.isActive) onEntitlementVerified?.call();
           return;
       }
     } catch (e) {

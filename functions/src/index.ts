@@ -1,32 +1,15 @@
 /**
- * All secrets live in a SINGLE Secret Manager secret, TWILIO_PEBLET_SECRET, as
- * JSON with each individual secret as a property:
- *   { android_fcm: {<FCM v1 service-account JSON>},
- *     ios_apn_pk: "<APN private key PEM>",
- *     apple_iap_key: {issuerId, keyId, privateKey, bundleId} }
- * android_fcm doubles as the Google Play service account: it's also been
- * granted "View financial data" access in Play Console, so the same
- * credentials verify Play subscription purchases (see
- * subscriptionReverificationConfig) — no separate Play-specific service
- * account needed.
- * One secret instead of several keeps Secret Manager cost down and gives every
- * function a single, consistent place to read credentials from. Locally it's
- * read from functions/.secret.local.
- * https://firebase.google.com/docs/functions/config-env#secrets
- *
- * Manage with:
- *   firebase functions:secrets:set     TWILIO_PEBLET_SECRET  # set / rotate
- *   firebase functions:secrets:access  TWILIO_PEBLET_SECRET  # view
- *   firebase functions:secrets:destroy TWILIO_PEBLET_SECRET  # delete
- *   firebase functions:secrets:prune                         # remove unreferenced
+ * The Cloud Functions themselves: each export is one deployed function. Shared
+ * helpers (secret/param access, entitlement parsing, request guards) live in
+ * helpers.ts; Twilio and subscription logic in twilio.ts / subscription.ts.
  */
 
 // Must be first: restores buffer.SlowBuffer (removed in Node 24+) before the
 // firebase-admin require chain below reads it at load time. See slowBufferShim.ts.
 import './slowBufferShim';
+import { setGlobalOptions } from 'firebase-functions/v2';
 import { HttpsError, onRequest, onCall } from 'firebase-functions/v2/https';
 import { onMessagePublished } from 'firebase-functions/v2/pubsub';
-import { defineSecret, defineString } from 'firebase-functions/params';
 import { lastValueFrom, map, switchMap, throwError } from 'rxjs';
 import {
     callbackCallStatusChanges,
@@ -37,87 +20,54 @@ import {
     accessToken,
     getIncomingAppSid,
     configureSelectedNumbers,
+    deviceSubscription,
+    recordDeviceCheckIn,
     registerMessagingDevice,
+    unregisterDevice,
     linkTwilioAccount,
     rememberAuthToken,
 } from './twilio';
 import {
-    AppleConfig,
-    PresentedEntitlement,
-    ReverificationConfig,
     ensureAccountCreated,
     ensureTrialStarted,
     handleAppleNotification,
     handleGoogleNotification,
-    isSubscriptionActive,
+    resolveDeviceEntitlement,
+    verifyAppleNotificationSignature,
     verifyApplePurchase,
     verifyEntitlement,
     verifyGooglePurchase,
 } from './subscription';
+import {
+    androidPackageName,
+    appleConfig,
+    iosApnCertificate,
+    pebletSecrets,
+    presentedEntitlement,
+    pushSecrets,
+    requireDeviceUid,
+    requireTwilioCredentials,
+    subscriptionReverificationConfig,
+    twilioPebletSecret,
+} from './helpers';
+import { ACCOUNT_SID } from './shared/webhooks';
 import * as admin from 'firebase-admin';
 
 admin.initializeApp();
 
-const twilioPebletSecret = defineSecret('TWILIO_PEBLET_SECRET');
-
-// Empty until iOS push is enabled — when empty, createOrUpdatePushCredentials skips the iOS branch.
-// See README "Enabling iOS push" for how to obtain and configure it.
-const iosApnCertificate = defineString('IOS_APN_CERTIFICATE', { default: '' });
-const androidPackageName = defineString('ANDROID_PACKAGE_NAME', { default: 'be.peblet.twilio_phone' });
-
-interface PebletSecrets {
-    android_fcm?: object;
-    ios_apn_pk?: string;
-    apple_iap_key?: AppleConfig;
-}
-
-function pebletSecrets(): PebletSecrets {
-    return JSON.parse(twilioPebletSecret.value()) as PebletSecrets;
-}
-
-function appleConfig(): AppleConfig {
-    return pebletSecrets().apple_iap_key ?? ({} as AppleConfig);
-}
+// Cost ceiling (docs/edge-hardening-plan.md §6.6): a flood that reaches any
+// function — webhook or callable — scales to at most this many instances.
+// minInstances stays at the default 0.
+setGlobalOptions({ maxInstances: 10 });
 
 /**
- * Reads the optional store entitlement a device attaches to a gated request
- * (twilioAccessToken) or a status refresh. iOS sends `signedTransactionInfo`
- * (a StoreKit JWS), Android sends `purchaseToken`; a trialing device that has
- * never purchased sends neither, and gets null.
+ * FCM registration tokens are base64url-ish strings with ':' separators. Checked
+ * because the token becomes an RTDB key: anything else (notably '/') could write
+ * outside the device record it is stored on.
  */
-function presentedEntitlement(data: Record<string, unknown>): PresentedEntitlement | null {
-    if (typeof data['signedTransactionInfo'] === 'string' && data['signedTransactionInfo']) {
-        return { store: 'app_store', signedTransactionInfo: data['signedTransactionInfo'] };
-    }
-    if (typeof data['purchaseToken'] === 'string' && data['purchaseToken']) {
-        return { store: 'play_store', purchaseToken: data['purchaseToken'] };
-    }
-    return null;
-}
-
-function subscriptionReverificationConfig(): ReverificationConfig {
-    return {
-        apple: appleConfig(),
-        googlePackageName: androidPackageName.value(),
-        // android_fcm doubles as the Google Play service account (granted
-        // "View financial data" access in Play Console) — see the file header.
-        googleServiceAccountJson: JSON.stringify(pebletSecrets().android_fcm ?? {}),
-    };
-}
-
-/**
- * Unpack the combined secret into the individual values the Twilio helpers want.
- * androidFcmSecret must be the FCM service-account JSON as a string.
- */
-function pushSecrets(): { androidFcmSecret: string; iosApnPrivateKey: string } {
-    const parsed = pebletSecrets();
-    return {
-        androidFcmSecret: JSON.stringify(parsed.android_fcm ?? {}),
-        iosApnPrivateKey: parsed.ios_apn_pk ?? '',
-    };
-}
-
+const FCM_TOKEN = /^[A-Za-z0-9_:-]{1,4096}$/;
 const REGION = 'europe-west1';
+
 
 // https://europe-west1-twilio-phone-peblet.cloudfunctions.net/twilioIncomingCall
 exports.twilioIncomingCall = onRequest({ region: REGION, cors: true, timeoutSeconds: 30 },
@@ -166,13 +116,21 @@ exports.twilioRegister = onCall({ enforceAppCheck: true, region: REGION, cors: t
 );
 
 /**
- * Generate a Twilio Voice access token for the given account. The push
+ * Generate a Twilio Voice access token for THIS DEVICE (identity
+ * `<AccountSid>_<uid>`, uid = the caller's anonymous Firebase uid). The push
  * credential SID is read from the DB (persisted by twilioRegister) so incoming
  * calls reach this device.
  *
- * Gated on the account's subscription: an expired trial/subscription throws
- * 'failed-precondition' instead of minting a token, blocking both outgoing
- * calls and (by never registering a valid push binding) incoming calls.
+ * The caller must first prove it holds the account's Auth Token
+ * (verifyTwilioCredentials) — 'permission-denied' otherwise.
+ *
+ * Gated on the PERSON's subscription: the line's trial, or the store entitlement
+ * this device presents (resolveDeviceEntitlement). Every call also records the
+ * device's check-in and subscription pointer (/twilio/{sid}/devices/{uid}), which
+ * is what the inbound webhooks use to ring / notify only entitled devices — so an
+ * unsubscribed co-user on a shared line stops receiving calls and SMS
+ * notifications without affecting subscribed users. When not entitled it throws
+ * 'failed-precondition' 'subscription-expired' instead of minting.
  *
  * IOS https://github.com/twilio/voice-quickstart-ios#6-create-a-push-credential-with-your-voip-service-certificate
  * ANDROID https://github.com/twilio/voice-quickstart-android#7-create-a-push-credential-using-your-fcm-server-key
@@ -182,16 +140,26 @@ exports.twilioAccessToken = onCall(
     (req) => {
         const accountSid = req.data['accountSid'];
         const authToken = req.data['authToken'];
+        const uid = requireDeviceUid(req.auth?.uid);
+        // Optional (older apps don't send it): lets the check-in drop this install's
+        // records under older anonymous uids. A malformed one is ignored, not fatal.
+        const fcmToken = typeof req.data['fcmToken'] === 'string' && FCM_TOKEN.test(req.data['fcmToken']) ?
+            req.data['fcmToken'] : undefined;
         return lastValueFrom(
-            isSubscriptionActive(accountSid, presentedEntitlement(req.data), subscriptionReverificationConfig()).pipe(
-                switchMap((active) => active ?
-                    accessToken(accountSid, authToken, req.data['callerId']) :
+            requireTwilioCredentials(accountSid, authToken).pipe(
+                switchMap(() => deviceSubscription(accountSid, uid)),
+                switchMap((current) => resolveDeviceEntitlement(
+                    accountSid, presentedEntitlement(req.data), current, subscriptionReverificationConfig(),
+                )),
+                switchMap(({ entitled, subscription }) => recordDeviceCheckIn(accountSid, uid, subscription, fcmToken).pipe(map(() => entitled))),
+                switchMap((entitled) => entitled ?
+                    accessToken(accountSid, authToken, req.data['callerId'], uid) :
                     throwError(() => new HttpsError('failed-precondition', 'subscription-expired'))),
-                switchMap((jwt) => rememberAuthToken(accountSid, authToken).pipe(map(() => jwt))),
             ),
         );
     }
 );
+
 
 /**
  * Verifies a subscription purchase the client just made against the App Store
@@ -222,29 +190,35 @@ exports.twilioVerifyGooglePurchase = onCall(
  * in App Store Connect — the Sandbox stream is what makes fast-renewing test
  * licenses update without opening the app.
  *
- * No enforceAppCheck (Apple can't send an App Check token). The handler doesn't
- * trust the payload's values — it re-fetches authoritative state from Apple by
- * transaction id (see handleAppleNotification). HARDENING TODO: verify the JWS
- * signature chain (app-store-server-library) to reject spam at the edge; see
- * SUBSCRIPTION_NOTIFICATIONS.md.
+ * No enforceAppCheck (Apple can't send an App Check token). Instead the JWS is
+ * verified against Apple's root CA before anything else (forged → 401, an
+ * unreachable OCSP responder → 500 so Apple redelivers), and even then the
+ * handler doesn't trust the payload's values — it re-fetches authoritative state
+ * from Apple by transaction id (see handleAppleNotification).
  */
 exports.twilioAppleNotifications = onRequest(
     { region: REGION, timeoutSeconds: 30, secrets: [twilioPebletSecret] },
-    (req, res) => {
+    async (req, res) => {
         const signedPayload = req.body?.signedPayload;
         if (typeof signedPayload !== 'string') {
             res.status(400).send('missing signedPayload');
             return;
         }
-        lastValueFrom(handleAppleNotification(signedPayload, appleConfig()))
-            .then(() => res.status(200).send('ok'))
+        try {
+            const verification = await verifyAppleNotificationSignature(signedPayload, appleConfig());
+            if (verification !== 'verified') {
+                res.status(verification === 'retryable' ? 500 : 401).send('unverified');
+                return;
+            }
+            await lastValueFrom(handleAppleNotification(signedPayload, appleConfig()));
+            res.status(200).send('ok');
+        } catch (e) {
             // 500 lets Apple retry a transient failure; handleAppleNotification
             // already swallows per-transaction refresh errors, so this only
             // fires on an unexpected/decoding failure.
-            .catch((e) => {
-                console.error('Apple notification handler error', e);
-                res.status(500).send('error');
-            });
+            console.error('Apple notification handler error', e);
+            res.status(500).send('error');
+        }
     }
 );
 
@@ -308,10 +282,44 @@ exports.twilioConfigureNumbers = onCall({ enforceAppCheck: true, region: REGION,
 
 /**
  * Registers (or refreshes) this device's FCM token so twilioIncomingMessage's
- * webhook can push incoming-SMS notifications to it.
+ * webhook can push incoming-SMS notifications — including the message text — to
+ * it, on this device's record (/twilio/{sid}/devices/{uid}) — pushes then only
+ * go to it while its user is entitled (see callbackIncomingMessage). Requires the
+ * account's Auth Token (requireTwilioCredentials): otherwise anyone passing App
+ * Check could name another tenant's AccountSid and receive that tenant's incoming
+ * messages on their own device.
  */
 exports.twilioRegisterMessagingDevice = onCall({ enforceAppCheck: true, region: REGION, cors: true, timeoutSeconds: 30 },
-    (req) => lastValueFrom(registerMessagingDevice(req.data['accountSid'], req.data['fcmToken']))
+    (req) => {
+        const accountSid = req.data['accountSid'];
+        const fcmToken = req.data['fcmToken'];
+        if (typeof fcmToken !== 'string' || !FCM_TOKEN.test(fcmToken)) {
+            throw new HttpsError('invalid-argument', 'invalid-fcm-token');
+        }
+        const uid = requireDeviceUid(req.auth?.uid);
+        return lastValueFrom(requireTwilioCredentials(accountSid, req.data['authToken']).pipe(
+            switchMap(() => registerMessagingDevice(accountSid, uid, fcmToken)),
+        ));
+    }
+);
+
+/**
+ * Removes this device from a line at logout / account switch: deletes its record
+ * (/twilio/{sid}/devices/{uid}), so the inbound webhooks stop ringing it and
+ * pushing it the line's messages. Otherwise the record stays fresh — and the
+ * logged-out phone keeps ringing — for up to DEVICE_STALE_MS. Needs no Auth
+ * Token: a caller can only ever delete its OWN uid's record, and logging out
+ * must work even after the token was rotated.
+ */
+exports.twilioUnregisterDevice = onCall({ enforceAppCheck: true, region: REGION, cors: true, timeoutSeconds: 30 },
+    (req) => {
+        const accountSid = req.data['accountSid'];
+        if (typeof accountSid !== 'string' || !ACCOUNT_SID.test(accountSid)) {
+            throw new HttpsError('invalid-argument', 'invalid-account-sid');
+        }
+        const uid = requireDeviceUid(req.auth?.uid);
+        return lastValueFrom(unregisterDevice(accountSid, uid));
+    }
 );
 
 /**

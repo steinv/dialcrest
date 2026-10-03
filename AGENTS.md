@@ -1,0 +1,67 @@
+# AGENTS.md
+
+Guidance for coding agents working in this repo.
+
+## Security invariants — externally-reachable endpoints
+
+Read docs/edge-hardening-plan.md before touching functions/src/twilio.ts,
+functions/src/edge.ts, functions/src/index.ts or the Twilio-webhook Worker. These
+rules must not be broken:
+
+- **No unauthenticated public endpoint.** Every `onRequest` function (and every
+  Worker route) must authenticate its payload before doing any work — Twilio
+  `X-Twilio-Signature`, Apple JWS (`verifyAppleNotificationSignature`), or Pub/Sub
+  IAM. Never add a public endpoint that skips it. One sanctioned exception: the
+  Worker's incoming-call route starts its **read-only** RTDB lookups (device
+  registry, trial, subscription expiries) in parallel with the signature check,
+  to cut call-setup latency — only for a well-formed AccountSid, with results
+  used only after the signature validates, and nothing written or sent before.
+  Don't extend it to writes, pushes, or other routes.
+- **Validate the AccountSid's format (`ACCOUNT_SID`) before it reaches an RTDB
+  path** — in the functions and the Worker. A malformed SID can make the token
+  lookup throw, and the transient-read-error allowance must never become a
+  bypass.
+- **Don't reintroduce the signature fail-open.** Once `TWILIO_SIGNATURE_FAIL_CLOSED`
+  is on, an `AccountSid` with no stored Auth Token must be rejected, not allowed.
+  The fail-open is a one-time migration grace. Same policy in the Worker.
+- **Only store an Auth Token Twilio has accepted.** `rememberAuthToken` verifies a
+  changed token with an authenticated Twilio call before writing it; don't bypass
+  that — the callables don't prove account ownership on their own.
+- **Callables keep `enforceAppCheck: true`.** Don't remove it. App Check proves a
+  genuine app, not account ownership: anything that grants a device access to an
+  account — minting a credential (`twilioAccessToken`) or subscribing to its pushes (`twilioRegisterMessagingDevice`, whose
+  pushes carry message text) — must run `verifyTwilioCredentials` first
+  (`requireTwilioCredentials` in index.ts).
+- **Inbound calls and SMS pushes are entitlement-gated per device.** Each device
+  has its own Voice identity (`<AccountSid>_<uid>`) and a record in
+  `/twilio/{sid}/devices` whose `subscription` is a pointer to its user's store
+  record; the webhooks reach only entitled devices (`entitledDevices` in
+  `functions/src/shared/webhooks.ts`, used by both function and Worker). Never add
+  an account-level paid flag — one customer must not pay for the whole line — and
+  never copy subscription expiries onto device records (pointers keep renewals
+  current).
+- **Validate against the URL the endpoint is served at — never reconstruct it**
+  from request headers (`Host`, `X-Forwarded-Host`, …); those are spoofable. The
+  functions validate only `FUNCTIONS_BASE_URL/<path>`; the Worker only
+  `https://dialcrest-hooks.peblet.be/<path>`.
+- **`WEBHOOK_PUBLIC_BASE_URL` is only the host written into Twilio** for newly
+  configured TwiML Apps and numbers; existing tenants move only when
+  `functions/src/scripts/backfillWebhooks.ts` is run. It must never change what an
+  endpoint validates against. Keep the old endpoint running until its traffic
+  drains.
+- **Don't alter the webhook body, path, or query string** anywhere (code or
+  Cloudflare rules). The Twilio HMAC covers URL + sorted POST params.
+- **The backfill only touches what's ours.** Re-pointing updates our TwiML Apps and
+  only those number webhooks that still point at one of our hosts, and never
+  rewrites the `numbers/<sid>/original` restore snapshot.
+- **Worker and functions must not drift** while both exist: TwiML shapes,
+  `clientIdentity = accountSid`, RTDB paths and the FCM payload live in
+  `functions/src/shared/webhooks.ts`, imported by both (`worker/` bundles it).
+  Change them there; don't fork them. Keep that module dependency-free.
+- **The Worker never fails open on a misconfiguration.** Only transient
+  RTDB/Google errors (5xx, network) may skip the signature check; permission or
+  key errors must surface as 500.
+- **The Worker has no `*.workers.dev` alias** (`workers_dev = false`): the
+  WAF-protected Custom Domain must be the only way in.
+- **Cost ceiling**: `setGlobalOptions({ maxInstances })` in index.ts covers every
+  function — don't override it upward on a public endpoint without reason.

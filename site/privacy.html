@@ -30,7 +30,7 @@
 
 <main class="narrow">
   <h1>Privacy Policy for Dialcrest</h1>
-  <p class="updated">Last updated: August 6, 2026</p>
+  <p class="updated">Last updated: October 3, 2026</p>
 
   <p>Dialcrest ("the App") is developed by Peblet ("we", "us", "our"). This policy explains
   what information the App collects, how it's used, and your choices. Dialcrest lets you make
@@ -40,19 +40,35 @@
   <h2>Information you provide</h2>
   <p><strong>Twilio Account SID and Auth Token.</strong> When you connect your Twilio account,
   the App stores your Account SID and Auth Token in your device's secure, encrypted storage
-  (Android Keystore / iOS Keychain). They are never stored on our servers. They are sent, over
-  encrypted connections, to our backend (Firebase Cloud Functions) only at the moment it's
-  needed to act on your behalf with the Twilio API — for example, to generate a short-lived
-  Twilio access token, register your device for incoming calls, or configure which of your
-  numbers rings the App. Your Auth Token is used transiently for that single request and is not
-  written to our database.</p>
+  (Android Keystore / iOS Keychain). They are sent, over encrypted connections, to our backend
+  when it needs to act on your behalf with the Twilio API — for example, to generate a
+  short-lived Twilio access token, register your device for incoming calls, or configure which
+  of your numbers rings the App.</p>
+  <p>Our backend also keeps a copy of your <strong>Auth Token</strong>, associated with your
+  Account SID. Twilio signs every call and message notification it sends us with your Auth
+  Token, and we use the stored copy for one purpose only: to verify that those notifications
+  genuinely come from Twilio for your account, so nobody else can impersonate them. We store it
+  only after Twilio has confirmed it is valid for your account, update it when you rotate it,
+  and it can never be read by the App or any other client — only by our backend.</p>
 
   <h2>Information collected automatically</h2>
   <p><strong>Calls and messages.</strong> Your call history and text messages are fetched
   directly from your Twilio account and stored locally on your device so the App can display
-  them. We do not copy or retain the content of your calls or messages on our servers. The
-  actual calls and SMS/MMS traffic are carried and billed by Twilio under your own Twilio
-  account and are subject to
+  them. We do not record your calls or keep your message history on our servers. A few things
+  do pass through or briefly stay on our backend:</p>
+  <ul>
+    <li><strong>Incoming text messages</strong> pass through our backend so it can deliver the
+      notification (sender, recipient and message text) to your devices. They are not
+      stored.</li>
+    <li><strong>Photos and voice notes you send over WhatsApp</strong> are uploaded to our
+      storage so Twilio can fetch and deliver them. They are reachable only through an
+      unguessable link and are deleted automatically after 7 days.</li>
+    <li><strong>Call status updates</strong> from Twilio (phone numbers, call status and
+      duration — never call audio) are written to our server logs for troubleshooting and kept
+      for up to 30 days.</li>
+  </ul>
+  <p>The actual calls and SMS/MMS/WhatsApp traffic are carried and billed by Twilio under your
+  own Twilio account and are subject to
   <a href="https://www.twilio.com/en-us/legal/privacy" target="_blank" rel="noopener">Twilio's Privacy Policy</a>.</p>
 
   <p><strong>Contacts.</strong> With your permission, the App reads your device's contacts to
@@ -62,8 +78,8 @@
   <p><strong>Push notifications.</strong> To alert you of incoming calls and messages while the
   App isn't open, we use Firebase Cloud Messaging (Android) and Apple Push Notification service
   / Twilio's VoIP push (iOS). This requires registering a device push token with Twilio and
-  Firebase; this token identifies your device for delivering notifications, not you
-  personally.</p>
+  Firebase, which our backend stores associated with your Account SID; this token identifies
+  your device for delivering notifications, not you personally.</p>
 
   <p><strong>Subscription status.</strong> The App offers a free trial followed by a paid
   subscription, purchased through the Apple App Store or Google Play. When you subscribe, your
@@ -78,19 +94,42 @@
   <p>We do not use analytics, advertising, or crash-reporting SDKs, and we do not sell or share
   your information with third parties for advertising purposes.</p>
 
+  <h2>Service providers</h2>
+  <p>We use these providers to run the App's backend; each processes the data described above
+  only to provide its service to us:</p>
+  <ul>
+    <li><strong>Google Firebase</strong> (Cloud Functions, Realtime Database, Cloud Storage,
+      Cloud Messaging, App Check) — hosts our backend, database and file storage, and delivers
+      push notifications.</li>
+    <li><strong>Cloudflare</strong> — receives Twilio's call and message notifications for your
+      account, protects them against abuse, and forwards the resulting notifications to your
+      devices.</li>
+    <li><strong>Twilio</strong> — carries your calls and messages under your own Twilio
+      account.</li>
+    <li><strong>Apple</strong> and <strong>Google Play</strong> — process subscription
+      purchases and push notifications.</li>
+  </ul>
+
   <h2>Permissions the App requests</h2>
   <ul>
-    <li><strong>Microphone</strong> — required to place and receive calls.</li>
+    <li><strong>Microphone</strong> — required to place and receive calls, and to record
+      WhatsApp voice notes.</li>
     <li><strong>Contacts</strong> — required to show contact names for calls and messages
       (optional; the App works without it, showing phone numbers instead).</li>
     <li><strong>Notifications</strong> — required to alert you of incoming calls and
       messages.</li>
+    <li><strong>Camera and photos</strong> (iOS) — only when you choose to send a photo in a
+      WhatsApp message (optional).</li>
   </ul>
 
   <h2>Data retention and deletion</h2>
-  <p>Your Twilio credentials and local call/message cache are stored only on your device and
-  are deleted when you log out or uninstall the App. To delete your subscription record from
-  our database, or for any other privacy request, contact us using the details below.</p>
+  <p>The credentials and call/message cache on your device are deleted when you log out or
+  uninstall the App. On our backend we keep, per Twilio Account SID, your Auth Token, your
+  devices' push tokens, your trial and subscription records, and your number configuration
+  until you ask us to delete them. WhatsApp media is deleted after 7 days and logs after 30
+  days, as described above. To delete your data from our backend, or for any other privacy
+  request, contact us using the details below. You can also rotate your Auth Token in the
+  Twilio Console at any time, which immediately makes our stored copy useless.</p>
 
   <h2>Children's privacy</h2>
   <p>Dialcrest is not directed at children under 16 and we do not knowingly collect information

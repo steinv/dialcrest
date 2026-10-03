@@ -29,7 +29,7 @@ Done:
 Pending:
 - **All Apple-side work is parked** (no Apple Developer account yet) and tracked
   in [`APPLE_TODO.md`](APPLE_TODO.md): App Store Connect notification URLs, the
-  `apple_iap_key` secret, JWS signature-verification hardening, iOS
+  `apple_iap_key` secret (incl. `appAppleId`), iOS
   `currentEntitlements` auto-recover, and sandbox testing. The Apple backend
   code is written and compiles; it just can't be exercised without the account.
 - **Part 5** — migration of any existing per-`accountSid` paid records.
@@ -183,6 +183,75 @@ File: `functions/src/subscription.ts` (plus `functions/src/index.ts` wiring).
   from `req.data` into the gate. Keep the `failed-precondition`
   `'subscription-expired'` error for the false case.
 
+### Inbound calls and SMS notifications: per-device entitlement (decided)
+
+A paid subscription belongs to a person, but the inbound webhooks only know the
+line (`AccountSid`). Gating per line was wrong both ways: checking only the trial
+silenced paying users once the trial ended, and an account-level paid flag
+(`/twilio/{sid}/paid`, tried and removed) let one customer's subscription cover
+everyone on the line. So entitlement is resolved per **device**:
+
+- **Device registry** `/twilio/{sid}/devices/{uid}` (`DeviceRecord` in
+  `functions/src/shared/webhooks.ts`), keyed by the device's anonymous Firebase
+  uid, server-only: `{ subscription, fcmToken, lastSeen }`. `subscription` is a
+  **pointer** to the device user's store record (`subscriptions/{apple|google}/…`)
+  — never a copy, so renewals/refunds from store notifications apply without the
+  device checking in.
+- **`twilioAccessToken`** (after `verifyTwilioCredentials`) runs
+  `resolveDeviceEntitlement`: entitled = line trial live OR the presented
+  entitlement re-verifies as active; it records the pointer and `lastSeen`, and
+  mints a token with the device's **own Voice identity** `<AccountSid>_<uid>`.
+  During the trial a device presenting a purchase gets its pointer once, so it
+  keeps working the moment the trial ends. Not entitled → `subscription-expired`.
+- **`twilioRegisterMessagingDevice`** stores the device's FCM token on its record
+  (and removes the token from the legacy `messaging-tokens` registry).
+- **Inbound webhooks** (function and Worker share `entitledDevices`): while the
+  line's trial is live every fresh device is entitled; after it, only devices
+  whose pointed-at record hasn't expired. Calls `<Dial>` those devices'
+  identities (max 10, most recent first); SMS pushes go to their FCM tokens. So
+  an unsubscribed co-user on a shared line is neither rung nor notified, while
+  subscribed users are.
+- **Legacy** (apps that haven't updated: shared identity `<AccountSid>`,
+  `messaging-tokens` entries) is included **only while the trial is live** — it
+  can't be gated per person.
+- **Purchase hook**: a verified, active purchase/restore calls
+  `TwilioService.refreshRegistrations()` (via `SubscriptionService
+  .onEntitlementVerified`), re-registering calls and SMS at once instead of at
+  the next launch.
+
+- **Pointer survives a lapse**: whenever the store returns a record, the device
+  points at it even if it has currently lapsed — its expiry already decides
+  reachability, and a renewal arriving later (billing retry → store
+  notification) reaches the device again without it checking in.
+- **Pointer survives an empty check-in**: a token mint with no entitlement
+  attached (e.g. after an iOS reinstall wiped the stored entitlement but not the
+  uid) keeps the device's pointer instead of clearing it.
+- **Presented Apple entitlements are signature-verified**
+  (`verifyPresentedAppleTransaction`) before their `originalTransactionId` is
+  used, so a forged JWS can't borrow another customer's subscription. They are
+  verified **offline**, against their own `signedDate` (no OCSP, no "now"
+  validity): the app keeps re-presenting the same stored JWS for as long as the
+  subscription lasts, so online checks would eventually reject it, or lock
+  paying users out whenever Apple's OCSP responder is unreachable. Server
+  notifications are still verified online. Verifiers are built once per
+  instance (keeping the library's chain cache) and only the one for the
+  payload's claimed environment is tried.
+- **Firebase anonymous-account expiry** (~30 days, regardless of activity) has
+  no effect on entitlement: data is keyed by `accountSid`/store identity, never
+  by uid. If a callable rejects a deleted uid as `unauthenticated`, the app
+  recreates the identity and retries once (`_callWithIdentityRecovery`,
+  `AccountAuthService.recoverIdentity`); the device then registers under its new
+  uid/identity on that call. Registering its FCM token deletes the same install's
+  records under older uids, so a stale record's pointer can't keep notifying
+  whoever uses that install now.
+
+Accepted consequences: a store outage refuses outgoing calls beyond the trial
+but keeps the device's pointer (its record still governs ringing); devices not
+seen for a year are ignored.
+
+Separately: a store notification (no account) no longer overwrites a paid
+record's `lastAccountSid` with null.
+
 ---
 
 ## Part 3 — Backend: notification handlers
@@ -203,12 +272,13 @@ belt-and-suspenders fallback for any missed notification.
   state — at worst it names a real transaction (refreshed accurately) or a bogus
   one (404). This is why the endpoint is safe without full signature
   verification.
-- **Hardening TODO (not yet done):** verify the JWS `x5c` signature chain
-  against Apple's root CAs to reject spam/DoS at the edge, using Apple's official
-  `app-store-server-library` (Node). This needs Apple's root CA certs bundled
-  with the function; deferred because it's edge-hardening, not a correctness gap.
-  Do *not* rely on `decodeAppleSignedPayload` for trust — it decodes without
-  verifying.
+- **Signature verification (done):** the JWS `x5c` chain is verified against
+  Apple Root CA - G3 (bundled in `functions/certs/`) with Apple's official
+  `@apple/app-store-server-library` before anything else runs
+  (`verifyAppleNotificationSignature`); forged → 401, OCSP unreachable → 500 so
+  Apple redelivers. Production verification needs `apple_iap_key.appAppleId`.
+  `decodeAppleSignedPayload` still decodes without verifying — never rely on it
+  for trust. See docs/edge-hardening-plan.md §6.4.
 - Payload gives `originalTransactionId` and a notification type
   (`DID_RENEW`, `DID_FAIL_TO_RENEW`, `EXPIRED`, `DID_CHANGE_RENEWAL_STATUS`,
   `REFUND`, `GRACE_PERIOD_EXPIRED`, …). For all of them, call

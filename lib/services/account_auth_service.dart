@@ -11,8 +11,9 @@ import 'package:flutter/foundation.dart';
 /// verified. RTDB rules then authorize reads/writes with
 /// `auth.token.accountSid === $accountSid`.
 ///
-/// The identity is deliberately disposable: nothing is ever stored under its
-/// uid (all data is keyed by accountSid), and Firebase's anonymous-account
+/// The identity is deliberately disposable: account data is keyed by
+/// accountSid, not by its uid — the one exception being the server-only device
+/// record the backend keeps per uid and prunes itself — and Firebase's anonymous-account
 /// auto-cleanup deletes anon users ~30 days after creation regardless of
 /// activity. So this service re-establishes the identity on demand — if the user
 /// is signed out, the token lacks the expected `accountSid` claim, or the anon
@@ -65,6 +66,27 @@ class AccountAuthService {
   /// transparent recovery. Overwrites any previous binding, so switching Twilio
   /// accounts is just another link. Concurrent calls for the same account share
   /// one in-flight attempt.
+  /// Re-establishes this device's anonymous identity after a callable rejected
+  /// it as 'unauthenticated' — typically because Firebase's ~30-day anonymous
+  /// auto-cleanup deleted the user while a cached ID token still looked valid.
+  /// Forces an ID-token refresh (which surfaces the deletion), recreates the
+  /// anonymous user if it's gone, and re-links the account claim. Data is keyed
+  /// by accountSid and by store identity, never by uid, so nothing is lost: the
+  /// backend simply registers this device under its new uid on the next call.
+  Future<void> recoverIdentity(String accountSid, String authToken) async {
+    final user = _auth.currentUser;
+    try {
+      if (user == null) throw FirebaseAuthException(code: 'user-not-found');
+      await user.getIdToken(true);
+    } on FirebaseAuthException catch (e) {
+      if (!_recoverableIdentityErrors.contains(e.code)) rethrow;
+      debugPrint('Anon identity invalid (${e.code}); recreating before retrying.');
+      await _auth.signOut();
+      await _auth.signInAnonymously();
+    }
+    await link(accountSid, authToken);
+  }
+
   Future<void> link(String accountSid, String authToken) {
     if (_accountSid == accountSid && _linkInFlight != null) {
       return _linkInFlight!;
@@ -142,6 +164,22 @@ class AccountAuthService {
     } catch (e) {
       debugPrint('Could not read ID token claims: $e');
       return false;
+    }
+  }
+
+  /// Takes this device off [accountSid]'s line (twilioUnregisterDevice deletes
+  /// its device record), so the line stops ringing it and pushing it messages —
+  /// call before dropping the identity at logout, or when the line's stored
+  /// credentials are discarded. Best-effort and bounded: offline, the backend
+  /// ages the record out on its own.
+  Future<void> unregisterDevice(String accountSid) async {
+    try {
+      await _functions
+          .httpsCallable('twilioUnregisterDevice')
+          .call({'accountSid': accountSid})
+          .timeout(const Duration(seconds: 10));
+    } catch (e) {
+      debugPrint('Error unregistering device from $accountSid: $e');
     }
   }
 

@@ -1,0 +1,27 @@
+# Twilio webhooks on dialcrest-hooks.peblet.be — docs/edge-hardening-plan.md §14.
+name = "dialcrest-hooks"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+# Served only on the Custom Domain (Cloudflare provisions DNS + cert); no *.workers.dev
+# alias, so there is no second hostname that bypasses the zone's WAF rules.
+workers_dev = false
+preview_urls = false
+routes = [{ pattern = "dialcrest-hooks.peblet.be", custom_domain = true }]
+
+[vars]
+# The URL Twilio signs: webhooks validate against PUBLIC_BASE_URL/<path>, never the request's Host.
+PUBLIC_BASE_URL = "https://dialcrest-hooks.peblet.be"
+FIREBASE_PROJECT_ID = "twilio-phone-peblet"
+FIREBASE_DATABASE_URL = "https://twilio-phone-peblet-default-rtdb.europe-west1.firebasedatabase.app"
+# Reject webhooks for an AccountSid with no stored Auth Token (same policy as the functions' param).
+TWILIO_SIGNATURE_FAIL_CLOSED = "false"
+
+# Secret (not in this file): GOOGLE_SERVICE_ACCOUNT_JSON — see README.md.
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+
+[observability.traces]
+enabled = false

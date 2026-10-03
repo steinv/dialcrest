@@ -275,12 +275,12 @@ class TwilioService {
   // Callbacks for incoming communications
   Function(String from)? onIncomingCall;
 
-  /// Fires while the app is foregrounded and a text arrives — drives the
-  /// in-app [NotificationOverlay] banner. In practice this only fires on iOS:
-  /// on Android, incoming-message pushes are handled natively instead (see
-  /// [_incomingMessageChannel] below), because this app's Twilio Voice FCM
-  /// service is Android's one registered FirebaseMessagingService, so
-  /// [FirebaseMessaging.onMessage] never reaches Dart there.
+  /// Fires while the app is foregrounded and a text arrives — updates the open
+  /// conversation list/thread live and drives the in-app [NotificationOverlay]
+  /// banner. On iOS it comes from [FirebaseMessaging.onMessage]; on Android the
+  /// app's own FirebaseMessagingService handles the push natively (so
+  /// onMessage never reaches Dart there) and forwards it over
+  /// [_incomingMessageChannel] as `onForegroundMessage` while the app is resumed.
   Function(String from, String body, String messageSid, String to)?
       onIncomingMessage;
 
@@ -289,8 +289,9 @@ class TwilioService {
   /// just be opened directly — no banner moment, unlike [onIncomingMessage].
   Function(String from, String body)? onOpenConversation;
 
-  /// Android equivalent of `FirebaseMessaging.getInitialMessage()`/
-  /// `onMessageOpenedApp` — see IncomingMessageFcmHandler.kt/MainActivity.kt.
+  /// Android equivalent of `FirebaseMessaging.onMessage` (`onForegroundMessage`)
+  /// and `getInitialMessage()`/`onMessageOpenedApp` — see
+  /// IncomingMessageFcmHandler.kt/MainActivity.kt.
   static const _incomingMessageChannel =
       MethodChannel('be.peblet.twilio_phone/incoming_message');
 
@@ -362,7 +363,7 @@ class TwilioService {
   /// Sets up everything needed to notify the user of an incoming text: asks
   /// for notification permission, registers this device's FCM token so the
   /// twilioIncomingMessage webhook can reach it, and wires up both the
-  /// foreground banner path (onIncomingMessage, effectively iOS-only) and the
+  /// foreground live-update/banner path (onIncomingMessage) and the
   /// "tap a notification to open the conversation" path (onOpenConversation,
   /// covering a cold start and an already-running tap on both platforms).
   Future<void> _initializeIncomingMessageHandling() async {
@@ -390,7 +391,14 @@ class TwilioService {
       _onMessageSubscription = FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
 
       _incomingMessageChannel.setMethodCallHandler((call) async {
-        if (call.method == 'onIncomingMessage') _handleNativeExtras(call.arguments);
+        switch (call.method) {
+          case 'onIncomingMessage':
+            _handleNativeExtras(call.arguments);
+          case 'onForegroundMessage':
+            // The native side falls back to a system notification unless this is true.
+            return _handleNativeForegroundMessage(call.arguments);
+        }
+        return null;
       });
       final initialExtras = await _incomingMessageChannel
           .invokeMethod<Map<Object?, Object?>>('getInitialIncomingMessage');
@@ -410,6 +418,25 @@ class TwilioService {
       message.data['messageSid'] ?? '',
       message.data['to'] ?? '',
     );
+  }
+
+  /// Android's [_handleForegroundMessage]: an incoming-message push that
+  /// IncomingMessageFcmHandler.kt forwarded because the app is resumed. Returns
+  /// whether it was taken (or deliberately suppressed by vacation mode); false
+  /// — no UI listening yet — makes the native side post the system notification.
+  bool _handleNativeForegroundMessage(Object? arguments) {
+    if (isVacationMode) return true;
+    final handler = onIncomingMessage;
+    if (handler == null || arguments is! Map) return false;
+    final from = arguments['from'] as String?;
+    if (from == null || from.isEmpty) return false;
+    handler(
+      from,
+      (arguments['body'] as String?) ?? '',
+      (arguments['messageSid'] as String?) ?? '',
+      (arguments['to'] as String?) ?? '',
+    );
+    return true;
   }
 
   /// Extras from a tapped [IncomingMessageFcmHandler] Android notification,
@@ -443,8 +470,11 @@ class TwilioService {
     try {
       final token = await FirebaseMessaging.instance.getToken();
       if (token == null) return;
-      await _firebaseFunctions.httpsCallable('twilioRegisterMessagingDevice').call({
+      await _callWithIdentityRecovery('twilioRegisterMessagingDevice', {
         'accountSid': accountSid,
+        // Required: the backend only registers a device for an account whose
+        // Auth Token it can verify (pushes carry the message text).
+        'authToken': authToken,
         'fcmToken': token,
       });
     } catch (e) {
@@ -790,6 +820,44 @@ class TwilioService {
     }
   }
 
+  /// Takes this device off the line at logout, so the logged-out phone stops
+  /// ringing and receiving the line's messages: unregisters its Voice push
+  /// binding (already gone in vacation mode), then deletes its device record —
+  /// in that order, since getting the access token to unregister with records a
+  /// check-in. Best-effort: offline, the backend ages the record out on its own.
+  Future<void> unregisterDevice() async {
+    if (!isVacationMode) {
+      try {
+        final accessToken = await _accessToken().timeout(const Duration(seconds: 10));
+        await TwilioVoicePlatform.instance.unregister(accessToken: accessToken);
+      } catch (e) {
+        debugPrint('Error unregistering Twilio Voice at logout: $e');
+      }
+    }
+    await AccountAuthService.instance.unregisterDevice(accountSid);
+  }
+
+  /// Re-registers this device for incoming calls and SMS notifications right
+  /// away — called when a purchase has just been verified (see
+  /// SubscriptionService.onEntitlementVerified). The backend only rings / notifies
+  /// devices whose own user is entitled, recorded per device when it mints a
+  /// token; without this a user who subscribes after the trial would stay
+  /// unreachable until the next launch. Drops the cached access token so the
+  /// new entitlement is presented, and coalesces concurrent calls.
+  Future<void> refreshRegistrations() {
+    return _refreshRegistrations ??= () async {
+      try {
+        _cachedAccessToken = null;
+        _cachedAccessTokenExpiry = null;
+        await Future.wait([_registerVoice(), _registerMessagingDevice()]);
+      } finally {
+        _refreshRegistrations = null;
+      }
+    }();
+  }
+
+  Future<void>? _refreshRegistrations;
+
   /// Calls twilioRegister unless it already ran for this account within
   /// [_registerRevalidationInterval], per the timestamp persisted in
   /// [StorageService].
@@ -838,12 +906,39 @@ class TwilioService {
     }
   }
 
-  Future<String> _mintAccessToken() async {
+  /// Calls a callable that identifies this device by its anonymous Firebase uid
+  /// (twilioAccessToken, twilioRegisterMessagingDevice). If the backend rejects
+  /// the identity as 'unauthenticated' — the anonymous user was deleted by
+  /// Firebase's auto-cleanup mid-session — recreate/re-link it and retry once,
+  /// so an expired anonymous account never costs a user calls or notifications.
+  Future<HttpsCallableResult<dynamic>> _callWithIdentityRecovery(
+    String name,
+    Map<String, dynamic> data,
+  ) async {
     try {
-      final response = await _firebaseFunctions.httpsCallable('twilioAccessToken').call({
+      return await _firebaseFunctions.httpsCallable(name).call(data);
+    } on FirebaseFunctionsException catch (e) {
+      if (e.code != 'unauthenticated') rethrow;
+      await AccountAuthService.instance.recoverIdentity(accountSid, authToken);
+      return await _firebaseFunctions.httpsCallable(name).call(data);
+    }
+  }
+
+  Future<String> _mintAccessToken() async {
+    // Lets the backend drop this install's device records under older anonymous
+    // uids at once (see recordDeviceCheckIn). Best-effort: minting doesn't need it.
+    String? fcmToken;
+    try {
+      fcmToken = await FirebaseMessaging.instance.getToken();
+    } catch (e) {
+      debugPrint('Error reading FCM token for access-token check-in: $e');
+    }
+    try {
+      final response = await _callWithIdentityRecovery('twilioAccessToken', {
         'accountSid': accountSid,
         'authToken': authToken,
         'callerId': currentPhoneNumber ?? '',
+        'fcmToken': ?fcmToken,
         // Attach the device's paid store entitlement, if any, so the backend's
         // OR gate can grant access on an active subscription once the trial has
         // lapsed. Empty for trial-only devices.

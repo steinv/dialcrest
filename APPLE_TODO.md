@@ -30,30 +30,25 @@ App Store Connect API key with the right access, stored as `apple_iap_key`
 inside `TWILIO_PEBLET_SECRET`:
 
 ```json
-{ "issuerId": "...", "keyId": "...", "privateKey": "<PEM>", "bundleId": "..." }
+{ "issuerId": "...", "keyId": "...", "privateKey": "<PEM>", "bundleId": "...", "appAppleId": 1234567890 }
 ```
 
 Generate the key in App Store Connect → Users and Access → Integrations → keys,
 then `firebase functions:secrets:set TWILIO_PEBLET_SECRET` (see the header of
 `functions/src/index.ts`). Verification (`verifyApplePurchase`) needs this too,
-so nothing Apple-side works until it's set.
+so nothing Apple-side works until it's set. `appAppleId` is the app's numeric
+Apple ID (App Store Connect → App Information → Apple ID); without it, Production
+App Store Server Notifications **and Production purchases presented by the app**
+fail signature verification and are rejected.
 
-## 3. Hardening: verify the Apple notification JWS signature (code TODO)
+## 3. ~~Hardening: verify the Apple notification JWS signature~~ (done)
 
-`twilioAppleNotifications` (`functions/src/index.ts`) →
-`handleAppleNotification` (`functions/src/subscription.ts`) currently uses the
-**re-fetch-from-Apple trust model**: it decodes the notification only to read
-the `originalTransactionId`, then re-queries authoritative state from Apple. A
-forged notification therefore can't inject subscription state — the remaining
-gap is edge spam/DoS.
-
-To close it:
-- Add Apple's official `app-store-server-library` (npm) and use its
-  `SignedDataVerifier` to verify the `x5c` chain before processing.
-- It needs Apple's root CA certs (Apple Root CA - G3, etc.) bundled with the
-  function — download from https://www.apple.com/certificateauthority/.
-- Do **not** hand-roll a fingerprint check from memory; use the library or
-  bundle the real certs.
+`twilioAppleNotifications` now verifies the `x5c` chain with
+`@apple/app-store-server-library`'s `SignedDataVerifier` against the bundled
+Apple Root CA - G3 (`functions/certs/`) before processing — see
+`verifyAppleNotificationSignature` in `functions/src/subscription.ts` and
+docs/edge-hardening-plan.md §6.4. Only needs `appAppleId` set (section 2) and a
+real Sandbox notification to confirm end to end.
 
 ## 4. UX: iOS auto-recover paid entitlement after reinstall (code TODO)
 
@@ -98,12 +93,19 @@ post-trial problem** — it breaks the initial purchase verify too; it's only
 masked today because the whole Apple path is parked (no secret/account, §2), so
 nothing runs.
 
-Resolve before un-parking iOS. Preferred fix: enable **StoreKit 2** in the
+**Update:** the backend now *verifies* the presented `signedTransactionInfo`
+(`verifyPresentedAppleTransaction`: Apple chain, signature, bundle id,
+environment) before trusting its `originalTransactionId` — previously it only
+decoded it, so a forged JWS could name another customer's subscription. That makes
+a real StoreKit 2 JWS **required**: a StoreKit 1 receipt is rejected outright.
+Production transactions also need `appAppleId` (section 2).
+
+Resolve before un-parking iOS. Required fix: enable **StoreKit 2** in the
 plugin so `serverVerificationData` is the transaction's JWS — this also lines up
 with §4 (StoreKit 2 `currentEntitlements` for prompt-free recovery), so do both
-together. Alternative: keep StoreKit 1 and validate the receipt server-side via
-the App Store Server API receipt path instead of JWS-decoding it. Whichever is
-chosen, add a sandbox test that a real device-issued entitlement decodes.
+together. (Keeping StoreKit 1 would instead need a separate, server-side
+receipt-validation path.) Add a sandbox test that a real device-issued
+entitlement verifies.
 
 ## 6. Testing (needs the account + a sandbox tester)
 

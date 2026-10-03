@@ -1,5 +1,6 @@
+import { createHash, timingSafeEqual } from 'crypto';
 import * as express from 'express';
-import twilio, { Twilio, twiml, validateRequest } from 'twilio';
+import twilio, { Twilio, validateRequest } from 'twilio';
 import { Request } from 'firebase-functions/https';
 import { catchError, forkJoin, from, map, Observable, of, switchMap } from 'rxjs';
 import { CredentialInstance, CredentialPushType } from 'twilio/lib/rest/conversations/v1/credential';
@@ -7,6 +8,26 @@ import { IncomingPhoneNumberInstance } from 'twilio/lib/rest/api/v2010/account/i
 import AccessToken, { AccessTokenOptions } from 'twilio/lib/jwt/AccessToken';
 import admin from 'firebase-admin';
 import { Database } from 'firebase-admin/database';
+import * as logger from 'firebase-functions/logger';
+import { FUNCTIONS_BASE_URL, isKnownWebhookUrl, isSignatureFailClosed, webhookUrl } from './edge';
+import {
+    ACCOUNT_SID,
+    DEVICE_STALE_MS,
+    DeviceRecord,
+    StoredAuthTokens,
+    WEBHOOK_PATHS,
+    dbPaths,
+    deviceIdentity,
+    emptyMessagingTwiml,
+    entitledDevices,
+    incomingCallIdentities,
+    incomingCallTwiml,
+    incomingMessagePushData,
+    incomingMessageTargets,
+    outgoingCallTwiml,
+    subscriptionsToCheck,
+    webhookSigningTokens,
+} from './shared/webhooks';
 
 // Friendly names used to find/create resources in each tenant's Twilio account.
 const IOS_APN_FRIENDLY_NAME = 'Dialcrest APN iOS';
@@ -15,45 +36,130 @@ const TWIML_APP_FRIENDLY_NAME_OUTGOING = 'Dialcrest Outgoing';
 const TWIML_APP_FRIENDLY_NAME_INCOMING = 'Dialcrest Incoming';
 const API_KEY_FRIENDLY_NAME = 'Dialcrest - Twilio Soft Phone';
 
-const FUNCTIONS_BASE_URL = 'https://europe-west1-twilio-phone-peblet.cloudfunctions.net';
-const OUTGOING_CALL_URL = `${FUNCTIONS_BASE_URL}/twilioOutgoingCall`;
-const INCOMING_CALL_URL = `${FUNCTIONS_BASE_URL}/twilioIncomingCall`;
-const STATUS_CALLBACK_URL = `${FUNCTIONS_BASE_URL}/twilioCallStatusChanges`;
-const INCOMING_MESSAGE_URL = `${FUNCTIONS_BASE_URL}/twilioIncomingMessage`;
+// Webhook paths = the exported function names in index.ts. The host written into
+// Twilio is config (edge.ts webhookUrl); these functions themselves always live
+// at FUNCTIONS_BASE_URL/<path>.
+const OUTGOING_CALL_PATH = WEBHOOK_PATHS.outgoingCall;
+const INCOMING_CALL_PATH = WEBHOOK_PATHS.incomingCall;
+const STATUS_CALLBACK_PATH = WEBHOOK_PATHS.callStatusChanges;
+const INCOMING_MESSAGE_PATH = WEBHOOK_PATHS.incomingMessage;
 
 /**
  * Persist a tenant's Twilio Auth Token so the inbound webhooks can validate
  * X-Twilio-Signature (see isValidTwilioSignature). Twilio signs webhooks with
  * the number-owning account's Auth Token, which we otherwise never store.
  *
- * Call this ONLY after an authenticated Twilio REST call has succeeded for
- * (accountSid, authToken) — the callables enforce App Check but not account
- * ownership, so a token that Twilio itself hasn't just accepted must not be
- * trusted: writing it unproven would let any caller poison another tenant's
- * stored secret (forge its webhooks, or break its genuine ones). Refreshing it
- * on each such call keeps the copy self-healing across Twilio token rotation.
+ * A token is only ever written after Twilio itself has accepted it for this
+ * account (an authenticated fetch of the account resource). The callables
+ * enforce App Check but not account ownership, and twilioAccessToken can succeed
+ * entirely from cached state without ever presenting the token to Twilio — so an
+ * unproven token must not be trusted: writing it would let any caller poison
+ * another tenant's stored secret (forge its webhooks, or — once
+ * TWILIO_SIGNATURE_FAIL_CLOSED is on — black-hole its genuine ones). The check
+ * costs a Twilio round-trip only when the token differs from the stored one (first
+ * link, or a rotation); refreshing it keeps the copy self-healing across rotation.
  *
  * Written under /twilio/{accountSid}/secret, which database.rules.json keeps
  * unreadable and unwritable by clients (Admin SDK bypasses those rules).
  *
  * Best-effort and side-effect-only: an empty/blank token is refused (an empty
  * stored value would silently disable enforcement), an unchanged token skips the
- * write (this runs on the hot access-token path), and any failure is logged and
- * swallowed so it can never break the callable that carried the token.
+ * write (this runs on the hot access-token path), and any failure — including
+ * Twilio rejecting the token — is logged and swallowed so it can never break the
+ * callable that carried the token.
  */
 export function rememberAuthToken(accountSid: string, authToken: string): Observable<void> {
     if (typeof accountSid !== 'string' || accountSid === '' || typeof authToken !== 'string' || authToken === '') {
         console.error(`Refusing to persist a missing/empty Twilio Auth Token for account "${accountSid}"`);
         return of(undefined);
     }
-    const ref = admin.database().ref(`/twilio/${accountSid}/secret/authToken`);
-    return from(ref.once('value')).pipe(
-        switchMap((snapshot) => (snapshot.val() === authToken ? of(undefined) : from(ref.set(authToken)))),
+    return from(admin.database().ref(dbPaths.authToken(accountSid)).once('value')).pipe(
+        switchMap((snapshot) => snapshot.val() === authToken ?
+            of(undefined) :
+            from(twilio(accountSid, authToken).api.v2010.accounts(accountSid).fetch()).pipe(
+                switchMap(() => from(storeVerifiedAuthToken(accountSid, authToken))),
+            )),
+        map(() => undefined),
         catchError((error) => {
             console.error(`Failed to persist Twilio Auth Token for ${accountSid}`, error);
             return of(undefined);
         }),
     );
+}
+
+/** Thrown by verifyTwilioCredentials when Twilio rejects the presented Auth Token for the account. */
+export class InvalidTwilioCredentialsError extends Error {
+    constructor(accountSid: string) {
+        super(`Twilio rejected the presented credentials for ${accountSid}`);
+    }
+}
+
+function tokensEqual(a: string, b: string): boolean {
+    const digest = (value: string) => createHash('sha256').update(value, 'utf8').digest();
+    return timingSafeEqual(digest(a), digest(b));
+}
+
+/**
+ * Proves the caller holds a valid Auth Token for `accountSid`, before anything is
+ * minted for that account. Callables enforce App Check but not account ownership,
+ * and twilioAccessToken can otherwise succeed entirely from cached state (API key,
+ * TwiML App, push credential) without the token ever reaching Twilio — so without
+ * this, anyone could name another tenant's AccountSid and get a Voice token for it:
+ * registering their own device to receive (and answer) that tenant's calls, or
+ * dialing out on that tenant's Twilio bill.
+ *
+ * Cheap in the steady state: a token equal to the stored copy (in-memory cache or
+ * one RTDB read) is accepted without a round-trip — it was proven when it was
+ * stored. Anything else is checked with an authenticated Twilio fetch; on success
+ * it becomes the stored copy (a rotation), on a 401 InvalidTwilioCredentialsError
+ * is thrown. Other Twilio/RTDB errors propagate unchanged.
+ */
+export async function verifyTwilioCredentials(accountSid: string, authToken: string): Promise<void> {
+    // The SID is checked against ACCOUNT_SID before it reaches an RTDB path.
+    if (typeof accountSid !== 'string' || !ACCOUNT_SID.test(accountSid) || typeof authToken !== 'string' || authToken === '') {
+        throw new InvalidTwilioCredentialsError(String(accountSid));
+    }
+    // Only the LATEST stored token proves ownership without a round-trip; the
+    // previous one is kept for webhook signatures only and may since be revoked.
+    const stored = (await readStoredAuthTokens(accountSid)).authToken;
+    if (stored && tokensEqual(stored, authToken)) return;
+    try {
+        await twilio(accountSid, authToken).api.v2010.accounts(accountSid).fetch();
+    } catch (error) {
+        if ((error as { status?: number })?.status === 401) throw new InvalidTwilioCredentialsError(accountSid);
+        throw error;
+    }
+    await storeVerifiedAuthToken(accountSid, authToken);
+}
+
+/**
+ * Stores a token Twilio just accepted as the tenant's latest Auth Token, keeping
+ * the one it replaces as previousAuthToken. An account has a primary and, during
+ * a rotation, a secondary Auth Token; both authenticate API calls, but Twilio
+ * signs webhooks with the PRIMARY. If the app presents the secondary, storing it
+ * alone would make every webhook fail validation until the secondary is promoted
+ * — keeping both, and accepting a signature under either, avoids that. Done in a
+ * transaction so concurrent callables can't lose a token.
+ */
+async function storeVerifiedAuthToken(accountSid: string, authToken: string): Promise<void> {
+    const result = await admin.database().ref(dbPaths.secret(accountSid)).transaction((current: StoredAuthTokens | null) => {
+        if (current?.authToken === authToken) return current;
+        return { ...(current ?? {}), authToken, previousAuthToken: current?.authToken ?? current?.previousAuthToken ?? null };
+    });
+    const secret = { ...(result?.snapshot?.val() ?? { authToken }) } as StoredAuthTokens;
+    authTokenCache.set(accountSid, { secret, expires: Date.now() + AUTH_TOKEN_CACHE_TTL_MS });
+}
+
+/** The tenant's stored Auth Tokens, from authTokenCache or one RTDB read (only a non-empty result is cached). */
+async function readStoredAuthTokens(accountSid: string): Promise<StoredAuthTokens> {
+    const cached = readCachedAuthTokens(accountSid);
+    if (cached) return cached;
+    // Copied: the cache must not alias whatever object the snapshot handed back.
+    const secret = { ...((await admin.database().ref(dbPaths.secret(accountSid)).once('value')).val() ?? {}) } as StoredAuthTokens;
+    if (webhookSigningTokens(secret).length > 0) {
+        authTokenCache.set(accountSid, { secret, expires: Date.now() + AUTH_TOKEN_CACHE_TTL_MS });
+    }
+    return secret;
 }
 
 /**
@@ -70,16 +176,16 @@ export function rememberAuthToken(accountSid: string, authToken: string): Observ
  * genuine webhooks (403), so keep it short.
  */
 const AUTH_TOKEN_CACHE_TTL_MS = 5 * 60 * 1000;
-const authTokenCache = new Map<string, { authToken: string; expires: number }>();
+const authTokenCache = new Map<string, { secret: StoredAuthTokens; expires: number }>();
 
-function readCachedAuthToken(accountSid: string): string | null {
+function readCachedAuthTokens(accountSid: string): StoredAuthTokens | null {
     const entry = authTokenCache.get(accountSid);
     if (!entry) return null;
     if (entry.expires <= Date.now()) {
         authTokenCache.delete(accountSid);
         return null;
     }
-    return entry.authToken;
+    return entry.secret;
 }
 
 /** Test-only: drop every cached Auth Token so one case's read can't leak into the next. */
@@ -89,56 +195,89 @@ export function resetAuthTokenCacheForTests(): void {
 
 /**
  * True iff an inbound webhook may proceed. Twilio computes the signature over the
- * exact URL it was configured to call plus the POST params, so we pass the static
- * webhook URL constant (these carry no query string) rather than reconstructing
- * it from proxy-rewritten request headers. The signing key is the tenant's Auth
- * Token, looked up by the request's AccountSid from where rememberAuthToken
+ * exact URL it was configured to call plus the POST params, so we validate against
+ * the static URL this function is served at (FUNCTIONS_BASE_URL/<webhookPath>;
+ * these carry no query string) rather than reconstructing it from spoofable
+ * request headers. A tenant already re-pointed to the Worker never reaches this
+ * function, so its own URL is the only one to accept. The signing key is the tenant's
+ * Auth Token, looked up by the request's AccountSid from where rememberAuthToken
  * stored it (served from authTokenCache when a recent read is still fresh).
  *
- * Fail-open for tenants with no stored token: a tenant whose token isn't stored
- * (registered before this validation shipped, or never back through a callable)
- * has its signature check skipped, with a warning. This is not a new exposure —
- * these webhooks are already unauthenticated in production, so skipping the check
- * for such a tenant merely preserves today's behavior rather than dropping its
- * inbound calls/SMS; every tenant that HAS a stored token is strictly better off,
- * and one appears the moment its app next hits a callable. Once a token IS stored,
- * enforcement is always strict: a missing header or bad signature is rejected.
+ * No stored token: by default the check is skipped, with a warning — the grace
+ * period for tenants registered before validation shipped (their app stores the
+ * token the next time it hits a callable). With TWILIO_SIGNATURE_FAIL_CLOSED on,
+ * the request is rejected instead, so a made-up AccountSid can no longer pass
+ * (§6.1a). Either way it's logged as event twilio_webhook_tokenless, with whether
+ * the SID is a tenant we know, to tell when the flip is safe. Once a token IS
+ * stored, enforcement is always strict: a missing header or bad signature is
+ * rejected.
  *
  * Fail-open on a read error too: these webhooks sit on the call-setup hot path and
  * previously did no DB work, so a transient RTDB outage must not turn every
  * outgoing call / status callback into a 500. A failed read is treated like "no
  * stored token" — allow, with an error log — which just falls back to the
  * pre-hardening behavior for the duration of the outage. The catch is scoped to
- * the read alone so a genuine bug in validation still surfaces.
+ * the read alone so a genuine bug in validation still surfaces. This stays
+ * fail-open even with TWILIO_SIGNATURE_FAIL_CLOSED on: an outside caller can't
+ * induce an RTDB outage, so it isn't a bypass, and an outage shouldn't drop calls.
  *
- * A request without a usable AccountSid is rejected outright: a genuine Twilio
- * webhook always carries one, and without it there is no tenant to check.
+ * A request without a well-formed AccountSid (ACCOUNT_SID: "AC" + 32 hex) is
+ * rejected outright, before the SID touches an RTDB path: a genuine Twilio webhook
+ * always carries one, and a crafted one (e.g. containing '.') would otherwise make
+ * the lookup throw — turning the read-error allowance above into a bypass.
+ *
+ * A signature valid under EITHER stored token (latest or previous, see
+ * storeVerifiedAuthToken) is accepted: Twilio signs with the account's primary
+ * token while the app may have presented the secondary during a rotation.
  */
-export async function isValidTwilioSignature(request: Request, signedUrl: string): Promise<boolean> {
+export async function isValidTwilioSignature(request: Request, webhookPath: string): Promise<boolean> {
     const accountSid = request.body?.AccountSid;
-    if (typeof accountSid !== 'string' || accountSid === '') {
+    // Checked BEFORE the SID reaches an RTDB path: a malformed one (e.g. with '.')
+    // would make the lookup throw, and the read-error branch below allows.
+    if (typeof accountSid !== 'string' || !ACCOUNT_SID.test(accountSid)) {
         return false;
     }
-    let authToken = readCachedAuthToken(accountSid);
-    if (authToken === null) {
-        try {
-            const snapshot = await admin.database().ref(`/twilio/${accountSid}/secret/authToken`).once('value');
-            authToken = snapshot.val() as string | null;
-        } catch (error) {
-            console.error(`Allowing Twilio webhook for ${accountSid}: Auth Token read failed (signature not checked)`, error);
-            return true;
-        }
-        if (!authToken) {
-            console.warn(`Allowing Twilio webhook for ${accountSid}: no stored Auth Token (signature not checked)`);
-            return true;
-        }
-        authTokenCache.set(accountSid, { authToken, expires: Date.now() + AUTH_TOKEN_CACHE_TTL_MS });
+    let tokens: string[];
+    try {
+        tokens = webhookSigningTokens(await readStoredAuthTokens(accountSid));
+    } catch (error) {
+        console.error(`Allowing Twilio webhook for ${accountSid}: Auth Token read failed (signature not checked)`, error);
+        return true;
+    }
+    if (tokens.length === 0) {
+        return allowTokenlessWebhook(accountSid, webhookPath);
     }
     const signature = request.header('X-Twilio-Signature');
     if (typeof signature !== 'string') {
         return false;
     }
-    return validateRequest(authToken, signature, signedUrl, request.body ?? {});
+    const url = `${FUNCTIONS_BASE_URL}/${webhookPath}`;
+    return tokens.some((token) => validateRequest(token, signature, url, request.body ?? {}));
+}
+
+/**
+ * The no-stored-Auth-Token branch of isValidTwilioSignature: allow (grace period)
+ * or reject (TWILIO_SIGNATURE_FAIL_CLOSED), logging whether the SID belongs to a
+ * tenant we know (has a createdAt) — residual tokenless traffic from known
+ * tenants means the fail-closed flip would drop real calls; from unknown SIDs it
+ * is exactly the junk the flip exists to reject.
+ */
+async function allowTokenlessWebhook(accountSid: string, webhookPath: string): Promise<boolean> {
+    const failClosed = isSignatureFailClosed();
+    let knownTenant: boolean | null = null;
+    try {
+        knownTenant = (await admin.database().ref(dbPaths.createdAt(accountSid)).once('value')).exists();
+    } catch (error) {
+        // Diagnostic only; never let it change the outcome.
+    }
+    logger.warn(`${failClosed ? 'Rejecting' : 'Allowing'} Twilio webhook for ${accountSid}: no stored Auth Token`, {
+        event: 'twilio_webhook_tokenless',
+        accountSid,
+        path: webhookPath,
+        knownTenant,
+        outcome: failClosed ? 'rejected' : 'allowed',
+    });
+    return !failClosed;
 }
 
 /**
@@ -147,27 +286,16 @@ export async function isValidTwilioSignature(request: Request, signedUrl: string
  * any work. These endpoints are public and App-Check-exempt (Twilio can't send
  * an App Check token), so this signature check is their authentication.
  */
-async function twilioSignatureGuard(request: Request, response: express.Response, signedUrl: string): Promise<boolean> {
-    if (await isValidTwilioSignature(request, signedUrl)) {
+async function twilioSignatureGuard(request: Request, response: express.Response, webhookPath: string): Promise<boolean> {
+    if (await isValidTwilioSignature(request, webhookPath)) {
         return true;
     }
     console.warn('Rejected Twilio webhook with an invalid signature', {
-        url: signedUrl,
+        path: webhookPath,
         accountSid: request.body?.AccountSid ?? null,
     });
     response.status(403).type('text/plain').send('Invalid Twilio signature');
     return false;
-}
-
-/**
- * Voice SDK client identity for a tenant. Each user brings their own Twilio
- * account, so the account SID uniquely and stably identifies the tenant (across
- * devices and logins). Twilio sends this same AccountSid on inbound-call
- * webhooks, so callbackIncomingCall can route to the matching <Client> with no
- * extra lookup.
- */
-function clientIdentity(accountSid: string): string {
-    return accountSid;
 }
 
 function twimlAppSidRef(accountSid: string, direction: 'outgoing' | 'incoming') {
@@ -188,6 +316,9 @@ function twimlAppSidRef(accountSid: string, direction: 'outgoing' | 'incoming') 
  * update fails with error 22108 (Invalid Application SID), which clears the
  * cache (see configureSelectedNumbers). An empty cache then lands here and
  * find-or-create repoints it at a live app.
+ *
+ * An app found by name (rather than created) may predate a webhook host change,
+ * so its voiceUrl is corrected on the way into the cache.
  */
 function getOrCreateTwimlApp(
     client: Twilio, accountSid: string, direction: 'outgoing' | 'incoming', friendlyName: string, voiceUrl: string,
@@ -198,9 +329,11 @@ function getOrCreateTwimlApp(
             const cached = snapshot.val() as string | null;
             if (cached) return of(cached);
             return from(client.applications.list({ friendlyName, limit: 1 })).pipe(
-                switchMap((apps) => apps.length > 0 ?
-                    of(apps[0]) :
-                    from(client.applications.create({ friendlyName, voiceUrl, voiceMethod: 'POST' }))),
+                switchMap((apps) => {
+                    if (apps.length === 0) return from(client.applications.create({ friendlyName, voiceUrl, voiceMethod: 'POST' }));
+                    if (apps[0].voiceUrl === voiceUrl) return of(apps[0]);
+                    return from(client.applications(apps[0].sid).update({ voiceUrl, voiceMethod: 'POST' }));
+                }),
                 switchMap((app) => from(ref.set(app.sid)).pipe(map(() => app.sid))),
             );
         }),
@@ -215,7 +348,7 @@ function getOrCreateTwimlApp(
  */
 export function getIncomingAppSid(accountSid: string, authToken: string): Observable<string> {
     const client: Twilio = twilio(accountSid, authToken);
-    return getOrCreateTwimlApp(client, accountSid, 'incoming', TWIML_APP_FRIENDLY_NAME_INCOMING, INCOMING_CALL_URL);
+    return getOrCreateTwimlApp(client, accountSid, 'incoming', TWIML_APP_FRIENDLY_NAME_INCOMING, webhookUrl(INCOMING_CALL_PATH));
 }
 
 /**
@@ -296,9 +429,9 @@ function configureNumber(
         switchMap(() => from(client.incomingPhoneNumbers(number.sid).update({
             voiceApplicationSid: incomingAppSid,
             voiceUrl: '',
-            statusCallback: STATUS_CALLBACK_URL,
+            statusCallback: webhookUrl(STATUS_CALLBACK_PATH),
             statusCallbackMethod: 'POST',
-            smsUrl: INCOMING_MESSAGE_URL,
+            smsUrl: webhookUrl(INCOMING_MESSAGE_PATH),
             smsMethod: 'POST',
         }))),
         map(() => undefined),
@@ -343,21 +476,27 @@ export function configureSelectedNumbers(
     const selected = new Set(selectedSids);
 
     const attempt = (): Observable<{ configured: string[]; restored: string[] }> =>
-        getOrCreateTwimlApp(client, accountSid, 'incoming', TWIML_APP_FRIENDLY_NAME_INCOMING, INCOMING_CALL_URL).pipe(
+        getOrCreateTwimlApp(client, accountSid, 'incoming', TWIML_APP_FRIENDLY_NAME_INCOMING, webhookUrl(INCOMING_CALL_PATH)).pipe(
             switchMap((incomingAppSid) => from(client.incomingPhoneNumbers.list({ limit: 1000 })).pipe(
                 switchMap((numbers) => {
                     const changes = numbers.map((number) => {
                         // Both webhooks must match: a number voice-configured by an older build
                         // that predates SMS support has the right voiceApplicationSid but no
                         // smsUrl, and must be re-run through configureNumber to gain it.
-                        const isConfigured = number.voiceApplicationSid === incomingAppSid &&
-                            number.smsUrl === INCOMING_MESSAGE_URL;
+                        // isCurrent also requires the CURRENT host, so a selected number still
+                        // on a previous webhook host is re-pointed (its snapshot is kept);
+                        // isOurs accepts any host we've used, so deselecting such a number
+                        // still restores it.
+                        const isOurs = number.voiceApplicationSid === incomingAppSid &&
+                            isKnownWebhookUrl(number.smsUrl, INCOMING_MESSAGE_PATH);
+                        const isCurrent = number.voiceApplicationSid === incomingAppSid &&
+                            number.smsUrl === webhookUrl(INCOMING_MESSAGE_PATH);
                         const shouldBeConfigured = selected.has(number.sid);
-                        if (shouldBeConfigured && !isConfigured) {
+                        if (shouldBeConfigured && !isCurrent) {
                             return configureNumber(client, db, accountSid, number, incomingAppSid)
                                 .pipe(map(() => ({ sid: number.sid, action: 'configured' as const })));
                         }
-                        if (!shouldBeConfigured && isConfigured) {
+                        if (!shouldBeConfigured && isOurs) {
                             return restoreNumber(client, db, accountSid, number.sid)
                                 .pipe(map(() => ({ sid: number.sid, action: 'restored' as const })));
                         }
@@ -417,30 +556,25 @@ async function getOrCreateApiKey(client: Twilio, accountSid: string): Promise<{ 
 }
 
 /**
- * Mint a Twilio Voice access token for a tenant's account.
- * The push credential SID (created by twilioRegister) is read from the DB and
- * added to the VoiceGrant so this device can receive incoming-call pushes.
+ * Mint a Twilio Voice access token for ONE DEVICE of a tenant's account. Its
+ * identity is the device's own (`<AccountSid>_<uid>`, deviceIdentity), so the
+ * incoming-call TwiML can ring exactly the devices whose user is entitled. The
+ * push credential SID (created by twilioRegister) is read from the DB and added
+ * to the VoiceGrant so this device can receive incoming-call pushes.
+ *
+ * Callers MUST have run verifyTwilioCredentials first: nothing here proves the
+ * caller owns the account when the API key and TwiML App are already cached.
  */
-export function accessToken(accountSid: string, authToken: string, callerId: string): Observable<string> {
+export function accessToken(accountSid: string, authToken: string, callerId: string, uid: string): Observable<string> {
     const client: Twilio = twilio(accountSid, authToken);
-    const db = admin.database();
-
-    // Reuse the cached API key (verifying it still authenticates), or mint one.
-    const apiKey$ = from(getOrCreateApiKey(client, accountSid));
-
-    // Push credential SID persisted by twilioRegister; required for incoming calls.
-    const pushCredentialSid$ = from(db.ref(`/twilio/${accountSid}/push-credential/android`).once('value')).pipe(
-        map((snapshot) => snapshot.val() as string | null),
-    );
-
     return forkJoin({
-        apiKeyInstance: apiKey$,
-        pushCredentialSid: pushCredentialSid$,
-        appSid: getOrCreateTwimlApp(client, accountSid, 'outgoing', TWIML_APP_FRIENDLY_NAME_OUTGOING, OUTGOING_CALL_URL),
+        apiKeyInstance: from(getOrCreateApiKey(client, accountSid)), // reuse the cached API key (verified), or mint one
+        pushCredentialSid: pushCredentialSid(accountSid),
+        appSid: getOrCreateTwimlApp(client, accountSid, 'outgoing', TWIML_APP_FRIENDLY_NAME_OUTGOING, webhookUrl(OUTGOING_CALL_PATH)),
     }).pipe(
         map(({ apiKeyInstance, pushCredentialSid, appSid }) => {
             // TTL default 1h max 24h
-            const options: AccessTokenOptions = { ttl: 600, identity: clientIdentity(accountSid) };
+            const options: AccessTokenOptions = { ttl: 600, identity: deviceIdentity(accountSid, uid) };
             const token = new AccessToken(accountSid, apiKeyInstance.sid, apiKeyInstance.secret, options);
             token.addGrant(new AccessToken.VoiceGrant({
                 outgoingApplicationSid: appSid,
@@ -458,39 +592,117 @@ export function accessToken(accountSid: string, authToken: string, callerId: str
     );
 }
 
+/** Push credential SID persisted by twilioRegister; required to register for incoming calls. */
+function pushCredentialSid(accountSid: string): Observable<string | null> {
+    return from(admin.database().ref(`/twilio/${accountSid}/push-credential/android`).once('value')).pipe(
+        map((snapshot) => snapshot.val() as string | null),
+    );
+}
+
+/** The subscription pointer currently recorded for a device, or null. */
+export function deviceSubscription(accountSid: string, uid: string): Observable<string | null> {
+    return from(admin.database().ref(dbPaths.device(accountSid, uid)).once('value')).pipe(
+        map((snapshot) => (snapshot.val() as DeviceRecord | null)?.subscription ?? null),
+    );
+}
+
 /**
- * TwiML for an inbound PSTN call: ring the registered mobile app (Voice SDK
- * client). The <Client> name MUST match the access token identity, otherwise
- * Twilio has no registered endpoint to deliver the push to. Twilio sends the
- * number-owning AccountSid on the request, which is exactly our tenant identity.
- * <?xml version="1.0" encoding="UTF-8"?>
- * <Response><Dial><Client>{AccountSid}</Client></Dial></Response>
- *
- * Checked against the account's (cached) subscription expiry first: a device
- * can hold a push binding independent of its access token's short TTL, so an
- * expired account could otherwise keep ringing even though twilioAccessToken
- * refuses to mint it a fresh token. This only reads the cached expiresAt (no
- * live store re-check, to keep the webhook fast) — the authoritative,
- * re-verified check lives in twilioAccessToken.
+ * Records a device check-in from twilioAccessToken: its (store-verified)
+ * subscription pointer and lastSeen, plus the install's FCM token when the app
+ * sent one — which lets checkInDevice drop the install's records under older
+ * anonymous uids right away, not only at its next messaging registration.
+ * Without a token, update() leaves fcmToken untouched.
+ */
+export function recordDeviceCheckIn(
+    accountSid: string, uid: string, subscription: string | null, fcmToken?: string,
+): Observable<void> {
+    return checkInDevice(accountSid, uid, fcmToken ? { subscription, fcmToken } : { subscription });
+}
+
+/**
+ * Deletes this device's record on a line (twilioUnregisterDevice, at logout or an
+ * account switch), so the line's inbound calls and SMS stop reaching it.
+ */
+export function unregisterDevice(accountSid: string, uid: string): Observable<void> {
+    return from(admin.database().ref(dbPaths.device(accountSid, uid)).remove());
+}
+
+/**
+ * The other records on a line to delete when `uid` checks in: those not seen for
+ * DEVICE_STALE_MS (the webhooks already ignore them), and — given this install's
+ * FCM token — any holding it under another uid. An FCM token belongs to one app
+ * install, so such a record is this install under an older anonymous uid
+ * (Firebase recycles those ~monthly): dropping it means its subscription pointer
+ * can't keep reaching whoever uses this install now.
+ */
+function deadDeviceRecords(
+    devices: Record<string, DeviceRecord> | null, uid: string, fcmToken: string | null | undefined, now: number,
+): string[] {
+    return Object.entries(devices ?? {})
+        .filter(([other, record]) => other !== uid && (
+            typeof record?.lastSeen !== 'number' || now - record.lastSeen >= DEVICE_STALE_MS ||
+            (!!fcmToken && record.fcmToken === fcmToken)))
+        .map(([other]) => other);
+}
+
+/**
+ * Writes `fields` and lastSeen onto this device's record and deletes the line's
+ * dead records (deadDeviceRecords), so /twilio/{sid}/devices — read whole by
+ * every inbound webhook — stays bounded as anonymous uids come and go.
+ */
+function checkInDevice(accountSid: string, uid: string, fields: Partial<DeviceRecord>): Observable<void> {
+    const db = admin.database();
+    return from(db.ref(dbPaths.devices(accountSid)).once('value')).pipe(
+        switchMap((snapshot) => {
+            const now = Date.now();
+            const dead = deadDeviceRecords(snapshot.val() as Record<string, DeviceRecord> | null, uid, fields.fcmToken, now);
+            return from(Promise.all([
+                db.ref(dbPaths.device(accountSid, uid)).update({ ...fields, lastSeen: now }),
+                ...dead.map((other) => db.ref(dbPaths.device(accountSid, other)).remove()),
+            ]));
+        }),
+        map(() => undefined),
+    );
+}
+
+/**
+ * Reads what both inbound webhooks need to decide who is entitled: the device
+ * registry and the line's trial expiry, then the expiry of each subscription
+ * record a device points at (only when the trial is over). All reads parallel.
+ */
+async function readEntitledDevices(accountSid: string, now: number) {
+    const db = admin.database();
+    const [devices, trialExpiresAt] = await Promise.all([
+        db.ref(dbPaths.devices(accountSid)).once('value').then((s) => s.val() as Record<string, DeviceRecord> | null),
+        db.ref(dbPaths.trialExpiresAt(accountSid)).once('value').then((s) => s.val() as number | null),
+    ]);
+    const paths = subscriptionsToCheck(devices, trialExpiresAt, now);
+    const expiries = await Promise.all(paths.map((path) =>
+        db.ref(dbPaths.subscriptionExpiresAt(path)).once('value').then((s) => s.val() as number | null)));
+    const subscriptionExpiries = Object.fromEntries(paths.map((path, i) => [path, expiries[i]]));
+    return { trialExpiresAt, entitled: entitledDevices(devices, trialExpiresAt, subscriptionExpiries, now) };
+}
+
+/**
+ * TwiML for an inbound PSTN call: ring the devices of this line whose OWN user
+ * is entitled — the line's trial is live, or the device's subscription pointer
+ * (DeviceRecord.subscription) names a store record that hasn't expired. Each
+ * device registers under its own identity (deviceIdentity), so subscribed users
+ * keep ringing while an unsubscribed co-user on the same Twilio account doesn't.
+ * While the trial is live the legacy shared identity rings too, for apps that
+ * haven't updated yet. See shared/webhooks.ts incomingCallIdentities.
+ * <Response><Dial><Client>{AccountSid}_{uid}</Client>…</Dial></Response>
  * @param request http request that initiated this function
  * @param response http response to be sent back to the caller
  */
 export async function callbackIncomingCall(request: Request, response: express.Response) {
-    if (!await twilioSignatureGuard(request, response, INCOMING_CALL_URL)) return;
-    const accountSid = request.body.AccountSid;
-    const voiceResponse = new twiml.VoiceResponse();
-
-    const expiresAtSnapshot = await admin.database().ref(`/twilio/${accountSid}/trial/expiresAt`).once('value');
-    const expiresAt = expiresAtSnapshot.val() as number | null;
-    if (expiresAt === null || expiresAt <= Date.now()) {
-        voiceResponse.say('This number is temporarily unavailable.');
-    } else {
-        voiceResponse.dial().client(clientIdentity(accountSid));
-    }
-
+    if (!await twilioSignatureGuard(request, response, INCOMING_CALL_PATH)) return;
+    const accountSid: string = request.body.AccountSid;
+    const now = Date.now();
+    const { trialExpiresAt, entitled } = await readEntitledDevices(accountSid, now);
     response.type('text/xml')
         .status(200)
-        .send(voiceResponse.toString());
+        .send(incomingCallTwiml(incomingCallIdentities(accountSid, entitled, trialExpiresAt, now)));
 }
 
 /**
@@ -499,23 +711,15 @@ export async function callbackIncomingCall(request: Request, response: express.R
  * as POST params; dial the destination with the account number as caller ID.
  */
 export async function callbackOutgoingCall(request: Request, response: express.Response) {
-    if (!await twilioSignatureGuard(request, response, OUTGOING_CALL_URL)) return;
-    const voiceResponse = new twiml.VoiceResponse();
-    const to: string | undefined = request.body.To;
-    const callerId: string | undefined = request.body.From;
-    if (to) {
-        voiceResponse.dial({ callerId }, to);
-    } else {
-        voiceResponse.say('No destination number was provided.');
-    }
+    if (!await twilioSignatureGuard(request, response, OUTGOING_CALL_PATH)) return;
     response.type('text/xml')
         .status(200)
-        .send(voiceResponse.toString());
+        .send(outgoingCallTwiml(request.body.To, request.body.From));
 }
 
 // https://www.twilio.com/docs/voice/api/call-resource#statuscallback
 export async function callbackCallStatusChanges(request: Request, response: express.Response) {
-    if (!await twilioSignatureGuard(request, response, STATUS_CALLBACK_URL)) return;
+    if (!await twilioSignatureGuard(request, response, STATUS_CALLBACK_PATH)) return;
     console.log('callbackCallStatusChanges %j', request.body);
     request.body.From;
     request.body.To;
@@ -530,8 +734,11 @@ export async function callbackCallStatusChanges(request: Request, response: expr
 
 /**
  * TwiML webhook for an inbound SMS/MMS (configured as the number's smsUrl by
- * configureNumber). Pushes a silent/data-only FCM message to every device
- * registered for this tenant (registerMessagingDevice) so the client shows an
+ * configureNumber). Pushes a silent/data-only FCM message to every device of
+ * this tenant whose own user is entitled (registerMessagingDevice +
+ * entitledDevices; legacy messaging-tokens only while the trial is live) — so an
+ * unsubscribed co-user stops getting notifications while subscribed users on the
+ * same Twilio account keep them — and the client shows an
  * in-app banner (foreground) or an OS notification (background/terminated) —
  * sent directly via the Firebase Admin SDK rather than through Twilio's
  * Conversations/Notify push-credential system, which is Voice-specific (see
@@ -542,48 +749,57 @@ export async function callbackCallStatusChanges(request: Request, response: expr
  * back to the sender, so the response is an empty MessagingResponse.
  */
 export async function callbackIncomingMessage(request: Request, response: express.Response) {
-    if (!await twilioSignatureGuard(request, response, INCOMING_MESSAGE_URL)) return;
+    if (!await twilioSignatureGuard(request, response, INCOMING_MESSAGE_PATH)) return;
     const accountSid = request.body.AccountSid;
     const from = request.body.From ?? '';
     const to = request.body.To ?? '';
     const body = request.body.Body ?? '';
     const messageSid = request.body.MessageSid ?? '';
 
-    const tokensSnapshot = await admin.database().ref(`/twilio/${accountSid}/messaging-tokens`).once('value');
-    const tokens = Object.keys((tokensSnapshot.val() ?? {}) as Record<string, boolean>);
+    const now = Date.now();
+    const [{ trialExpiresAt, entitled }, legacyTokens] = await Promise.all([
+        readEntitledDevices(accountSid, now),
+        admin.database().ref(dbPaths.messagingTokens(accountSid)).once('value').then((s) => s.val() as Record<string, unknown> | null),
+    ]);
+    const targets = incomingMessageTargets(accountSid, entitled, legacyTokens, trialExpiresAt, now);
 
-    if (tokens.length > 0) {
-        const results = await Promise.allSettled(tokens.map((token) => admin.messaging().send({
-            token,
-            data: { dialcrest_type: 'incoming_message', accountSid, from, to, body, messageSid },
+    if (targets.length > 0) {
+        const results = await Promise.allSettled(targets.map(({ fcmToken }) => admin.messaging().send({
+            token: fcmToken,
+            data: incomingMessagePushData({ accountSid, from, to, body, messageSid }),
             android: { priority: 'high' },
             apns: { headers: { 'apns-priority': '10' }, payload: { aps: { 'content-available': 1 } } },
         })));
 
-        // Drop tokens FCM reports as unregistered (uninstalled app / stale token) so
-        // this list doesn't grow unboundedly and future sends don't keep failing on them.
+        // Drop targets FCM reports as unregistered (uninstalled app / stale token) —
+        // a device's whole record (see MessagingTarget) — so future sends and calls
+        // don't keep going to them.
         await Promise.all(results.map((result, i) => {
             const isUnregistered = result.status === 'rejected' &&
                 String((result.reason as { code?: string })?.code ?? result.reason).includes('registration-token-not-registered');
             return isUnregistered ?
-                admin.database().ref(`/twilio/${accountSid}/messaging-tokens/${tokens[i]}`).remove() :
+                admin.database().ref(targets[i].removePath).remove() :
                 Promise.resolve();
         }));
     }
 
     response.type('text/xml')
         .status(200)
-        .send(new twiml.MessagingResponse().toString());
+        .send(emptyMessagingTwiml());
 }
 
 /**
- * Registers (or refreshes) this device's FCM token so callbackIncomingMessage
- * can push incoming-SMS notifications to it. Stored as a set keyed by token
- * (rather than one token per account) so every device sharing this tenant's
- * Twilio account gets notified, not just the most recently registered one.
+ * Registers (or refreshes) this device's FCM token on its own device record
+ * (/twilio/{sid}/devices/{uid}), so callbackIncomingMessage can push incoming-SMS
+ * notifications to it — but only while this device's user is entitled (see
+ * entitledDevices). Every entitled device sharing the account gets notified.
  */
-export function registerMessagingDevice(accountSid: string, fcmToken: string): Observable<void> {
-    return from(admin.database().ref(`/twilio/${accountSid}/messaging-tokens/${fcmToken}`).set(true));
+export function registerMessagingDevice(accountSid: string, uid: string, fcmToken: string): Observable<void> {
+    return forkJoin([
+        checkInDevice(accountSid, uid, { fcmToken }),
+        // Migrated off the legacy registry, which would otherwise push to this token unconditionally during the trial.
+        from(admin.database().ref(dbPaths.messagingToken(accountSid, fcmToken)).remove()),
+    ]).pipe(map(() => undefined));
 }
 
 /**

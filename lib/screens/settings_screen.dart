@@ -479,6 +479,9 @@ class SettingsScreenState extends State<SettingsScreen> {
     if (confirmed != true) return;
 
     final storageService = Provider.of<StorageService>(context, listen: false);
+    // Stop this phone ringing / getting the line's messages once logged out —
+    // before the identity whose device record that is goes away.
+    await widget.twilioService.unregisterDevice();
     await storageService.clearCredentials();
     // Drop the anonymous Firebase identity so its account claim can't be reused
     // by whoever logs in next on this device.

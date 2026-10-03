@@ -6,21 +6,29 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import io.flutter.plugin.common.MethodChannel
 
 /**
  * Shows a system notification for an incoming-SMS FCM push. Called from
  * [DialcrestFirebaseMessagingService.onMessageReceived] so it only ever sees
  * payloads Twilio Voice's own `TwilioVoiceFcm.handleMessage` didn't claim.
  *
- * Always shows the notification, whether the app is foregrounded or not —
- * simpler than branching on process state, and Android already surfaces a
- * heads-up notification fine even while the app is open. The one exception is
- * this device being in vacation mode for the message's tenant (accountSid),
- * checked directly against the SharedPreferences file Flutter's
- * shared_preferences plugin writes to — this runs natively, with no Flutter
- * engine around to ask. Purely a per-device/per-install check: it never
+ * While the app is in the foreground ([MainActivity.foregroundChannel] is set)
+ * the message is handed to Dart instead, as `onForegroundMessage` — the Android
+ * equivalent of `FirebaseMessaging.onMessage` — so an open conversation list or
+ * thread updates live, exactly like on iOS. Dart answers true once it has taken
+ * the message; anything else (no handler yet, e.g. still on the login screen, or
+ * the app paused before the call landed) falls back to the system notification,
+ * so a text is never silently dropped.
+ *
+ * Nothing is shown at all when this device is in vacation mode for the
+ * message's tenant (accountSid), checked directly against the SharedPreferences
+ * file Flutter's shared_preferences plugin writes to — this runs natively, often
+ * with no Flutter engine around to ask. Purely a per-device/per-install check: it never
  * touches Twilio account config, so other devices on the same account keep
  * getting notified as normal, and the message itself is still delivered/
  * stored server-side regardless.
@@ -40,12 +48,39 @@ object IncomingMessageFcmHandler {
         val from = data["from"] ?: return
         val body = data["body"] ?: ""
         val messageSid = data["messageSid"] ?: ""
+        val to = data["to"] ?: ""
         val accountSid = data["accountSid"]
 
         val appContext = context.applicationContext
 
         if (accountSid != null && isVacationMode(appContext, accountSid)) return
 
+        // onMessageReceived runs on a background thread; the channel (and the
+        // foreground state it stands for) lives on the main thread.
+        Handler(Looper.getMainLooper()).post {
+            val channel = MainActivity.foregroundChannel
+            if (channel == null) {
+                showNotification(appContext, from, body, messageSid)
+                return@post
+            }
+            val arguments = mapOf("from" to from, "body" to body, "messageSid" to messageSid, "to" to to)
+            channel.invokeMethod("onForegroundMessage", arguments, object : MethodChannel.Result {
+                override fun success(result: Any?) {
+                    if (result != true) showNotification(appContext, from, body, messageSid)
+                }
+
+                override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
+                    showNotification(appContext, from, body, messageSid)
+                }
+
+                override fun notImplemented() {
+                    showNotification(appContext, from, body, messageSid)
+                }
+            })
+        }
+    }
+
+    private fun showNotification(appContext: Context, from: String, body: String, messageSid: String) {
         ensureChannel(appContext)
 
         val launchIntent = appContext.packageManager

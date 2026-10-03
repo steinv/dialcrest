@@ -1,772 +1,460 @@
-# Edge Hardening Plan — Cloudflare WAF in front of the Cloud Functions
+# Edge Hardening Plan — Twilio webhooks on a Cloudflare Worker
 
-Status: **planning** (no implementation yet)
+Status: **in progress** — function-side changes and Worker code done (§13); nothing deployed
 Author: stein
-Last updated: 2026-10-01
+Last updated: 2026-10-03
 
-Harden the externally-reachable Cloud Functions against abuse by fronting the
-inbound **webhooks** with Cloudflare (peblet.be) for rate limiting, bot
-mitigation, and a cheap edge check that `X-Twilio-Signature` is present —
-while keeping the cryptographic signature check in the function as the real
-gate. Includes a **zero-downtime migration** for existing users whose Twilio
-numbers already point at the current `*.cloudfunctions.net` URLs.
+Harden the externally-reachable endpoints against abuse by moving the four
+inbound **Twilio webhooks** off Cloud Functions onto a **Cloudflare Worker** at
+`dialcrest-hooks.peblet.be`, with Cloudflare's WAF / rate limiting / bot rules in
+front of it, then **deleting the functions** so no raw `*.cloudfunctions.net`
+webhook URL is left to bypass the WAF. Cryptographic checks (Twilio HMAC in the
+Worker, Apple JWS in the remaining function) stay the real gate. Includes a
+**zero-downtime migration** for existing tenants whose Twilio numbers point at
+the current `*.cloudfunctions.net` URLs.
+
+> **Correction (2026-10-03).** An earlier draft had an interim "Tier A" that
+> proxied `dialcrest-hooks.peblet.be` through Cloudflare *to the functions*
+> (Origin Rule host/SNI override, `X-Origin-Auth` origin-secret header, dual-URL
+> signature validation in the functions). That was a mistake:
+> `dialcrest-hooks.peblet.be` is the **Worker's** hostname and never lands on
+> Firebase. The interim layer is dropped — the functions only ever validate their
+> own URL, and there is no origin-secret header.
 
 ---
 
 ## 1. Guiding facts from the current codebase
 
 - **Gen2 functions** (`firebase-functions/v2`), project `twilio-phone-peblet`,
-  region `europe-west1`. Gen2 HTTP functions are Cloud Run services under the
-  hood — reachable at **both** `europe-west1-twilio-phone-peblet.cloudfunctions.net/<fn>`
-  **and** a `*.run.app` URL. Both are public by default.
+  region `europe-west1`, reachable at
+  `europe-west1-twilio-phone-peblet.cloudfunctions.net/<fn>` (and a `*.run.app`
+  URL). Both are public.
 - **Externally-reachable, unauthenticated HTTP endpoints** (`onRequest`, no App
-  Check — this is the abuse surface):
-  | Function | Role | Current guard |
-  |---|---|---|
-  | `twilioIncomingCall` | inbound PSTN voice (TwiML App `voiceUrl`) | signature guard, **fail-open** |
-  | `twilioOutgoingCall` | outbound voice (TwiML App `voiceUrl`) | signature guard, **fail-open** |
-  | `twilioCallStatusChanges` | voice status callback | signature guard, **fail-open** |
-  | `twilioIncomingMessage` | inbound SMS/MMS (`smsUrl`) | signature guard, **fail-open** |
-  | `twilioAppleNotifications` | App Store Server Notifications V2 | **none** — only checks `signedPayload` is a string (JWS verify is a TODO; `index.ts:229`) |
-- **All 9 `onCall` functions already enforce App Check** (`enforceAppCheck: true`)
-  and most are further gated (ownership proof in `linkTwilioAccount`,
-  subscription gate in `twilioAccessToken`). They are **out of scope** for the
-  Cloudflare fronting; App Check + a cost ceiling (§6.6) covers them.
-- `onPlaySubscriptionNotification` is **Pub/Sub-triggered**, not HTTP-exposed —
-  protected by IAM, nothing to do.
-- **Signature validation already exists** (`twilio.ts` `isValidTwilioSignature`,
-  `twilioSignatureGuard`) for the 4 Twilio webhooks. It validates against a
-  **static URL constant** (`FUNCTIONS_BASE_URL`, `twilio.ts:18`), deliberately
-  *not* reconstructing the URL from proxy-rewritten headers. **This is the single
-  most important fact for this plan** — it means putting a proxy in front does
-  not break validation, as long as the constant matches what Twilio is told to
-  call.
-- Validation is **fail-open** for tenants with no stored Auth Token, and
-  `rememberAuthToken` persists the token on `twilioRegister` / `twilioAccessToken`.
-  Since `twilioAccessToken` is on the hot path (600 s token TTL), **active users
-  already have, or imminently get, a stored token** — the fail-open window
-  closes on its own for anyone using the app.
-- **`FUNCTIONS_BASE_URL` is used for two distinct jobs:** (a) the URL written
-  *into* Twilio (`getOrCreateTwimlApp` `voiceUrl`, `configureNumber`
-  `statusCallback`/`smsUrl`), and (b) the URL we *validate against*. The
-  migration must treat these two jobs separately.
-- Twilio signs **HMAC-SHA1 over `URL + the alphabetically-sorted POST params`**,
-  base64. Consequences: the proxy must not alter the body, add query params, or
-  change the path, or every signature breaks.
+  Check — the abuse surface):
+  | Function | Role | Guard | End-state |
+  |---|---|---|---|
+  | `twilioIncomingCall` | inbound PSTN voice (TwiML App `voiceUrl`) | Twilio signature | → Worker |
+  | `twilioOutgoingCall` | outbound voice (TwiML App `voiceUrl`) | Twilio signature | → Worker |
+  | `twilioCallStatusChanges` | voice status callback | Twilio signature | → Worker |
+  | `twilioIncomingMessage` | inbound SMS/MMS (`smsUrl`) | Twilio signature | → Worker |
+  | `twilioAppleNotifications` | App Store Server Notifications V2 | Apple JWS (§6.4) | stays a function |
+- **All 9 `onCall` functions enforce App Check** and stay Cloud Functions; out of
+  scope apart from the cost ceiling (§6.6).
+- `onPlaySubscriptionNotification` is **Pub/Sub-triggered** — IAM-protected,
+  nothing to do.
+- **Twilio signs HMAC-SHA1 over `URL + the alphabetically-sorted POST params`**,
+  base64, with the number-owning account's Auth Token. So each endpoint validates
+  against the exact URL Twilio was told to call — the function against its
+  `*.cloudfunctions.net` URL, the Worker against `https://dialcrest-hooks.peblet.be/...`
+  — and nothing in between may alter the body, path or query string.
+- **The host written into Twilio is config** (`WEBHOOK_PUBLIC_BASE_URL`, §6.2) and
+  is deliberately separate from what the functions validate against
+  (`FUNCTIONS_BASE_URL`, fixed). Flipping the param moves tenants; it never
+  changes which URL a function accepts.
+- Auth Tokens are stored by `rememberAuthToken` (on `twilioRegister` /
+  `twilioAccessToken`) at `/twilio/<sid>/secret/authToken`, which both the
+  functions and the Worker read for validation.
 
 ---
 
 ## 2. Goals and non-goals
 
-The two objectives, and the layer each lives in:
-
-1. **Prevent unauthorized calls to the functions.** Enforced *in the function*,
-   so it holds on every path (through Cloudflare or direct to the origin): the
-   Twilio HMAC signature and Apple JWS are the authoritative gate — a forged call
-   can't produce a valid one. Requires (a) adding **Apple JWS verification**
-   (`twilioAppleNotifications` has none today), and (b) making the Twilio
-   signature check **fail-closed** once tokens are backfilled (§6.1a) — today it
-   fail-opens for an `AccountSid` with no stored token, so a made-up SID passes.
-2. **The option to block untrusted actors at the WAF.** Enforced *at Cloudflare*,
-   for traffic routed through `dialcrest-hooks.peblet.be`: IP/ASN/geo blocks,
-   rate limits, bot rules, and an edge drop of requests missing
-   `X-Twilio-Signature`. This is why the webhooks must be fronted at all — the WAF
-   can only act on traffic that passes through it.
+1. **Prevent unauthorized calls.** Enforced at the endpoint, on every path:
+   Twilio HMAC (functions now, Worker later) and Apple JWS. Requires (a) **Apple
+   JWS verification** (done, §6.4), (b) **fail-closed** signature checks once
+   tokens are backfilled (§6.1a) — today a made-up `AccountSid` with no stored
+   token passes — and (c) **only storing Auth Tokens Twilio has accepted** (done,
+   §6.1b), or fail-closed just turns token poisoning into a DoS.
+2. **Block untrusted actors at the WAF.** IP/ASN/geo blocks, rate limits, bot
+   rules and an edge drop of requests missing `X-Twilio-Signature`, in front of the
+   Worker on `dialcrest-hooks.peblet.be`. Effective only once the raw function
+   URLs are deleted (§14) — until then they remain a WAF bypass, guarded by the
+   signature check and the cost ceiling.
 
 Supporting goals: migrate existing tenants with **zero downtime** and a clean
-rollback; keep direct-to-origin from silently bypassing the WAF (the
-`X-Origin-Auth` header, §5.3).
+rollback; a hard cost ceiling on both platforms.
 
-**Non-goals (this round)**
-- Fronting the `onCall` callables through Cloudflare (App Check already gates
-  them; would require a Flutter client change). Covered only by a cost ceiling.
-- No **Google Load Balancer / Cloud Armor** anywhere. The raw-origin exposure is
-  removed instead by migrating the Twilio webhooks to a **Cloudflare Worker** and
-  deleting the functions (§14) — the WAF lives entirely at Cloudflare.
-- Edge-only authentication — Cloudflare can check the *presence* of a signature,
-  never its *validity* (it lacks each tenant's Auth Token), so the in-function
-  check stays the authority.
+**Non-goals**
+- Fronting the `onCall` callables (App Check gates them; would need a client
+  change). Covered by the cost ceiling only.
+- Fronting `twilioAppleNotifications` (§14 "Why Apple stays a Cloud Function").
+- Google Load Balancer / Cloud Armor / any proxy-to-functions setup.
+- Edge-only authentication — Cloudflare's WAF can check signature *presence*, not
+  validity; the Worker does the real HMAC check.
 
-**Threat model.** (a) Volumetric abuse / cost-amplification against the public
-webhook URLs; (b) forged webhook payloads driving call/SMS routing or
-subscription state; (c) scanner/bot noise. Not in scope: a compromised tenant
-Twilio account, or Google-infrastructure DoS.
+**Threat model.** (a) Volumetric abuse / cost-amplification against public
+webhook URLs; (b) forged webhook payloads driving call/SMS routing, push
+notifications or subscription state; (c) scanner/bot noise. Not in scope: a
+compromised tenant Twilio account, or Google-infrastructure DoS.
 
 ---
 
-## 3. The two constraints that shape everything
+## 3. Constraints
 
-1. **Validation URL must equal the configured URL.** If Twilio is told to call
-   `https://dialcrest-hooks.peblet.be/twilioIncomingCall`, the function must validate
-   against that exact string. Moving the host therefore requires changing both
-   the Twilio-side config (per tenant) and the validation constant — and because
-   those roll out at different speeds, the function must **accept both the old
-   and the new URL during the transition** (§6.1).
-
-2. **The origin stays directly reachable.** Pointing DNS at Cloudflare does not
-   stop anyone from hitting `*.cloudfunctions.net` / `*.run.app` directly and
-   bypassing the WAF. **Fronting is pointless for abuse protection unless the
-   origin is locked** so it only answers requests that came through Cloudflare
-   (§5.3). The in-function signature check still protects correctness on the
-   direct path, but *cost/volume* protection requires the origin lock.
+1. **Validation URL must equal the configured URL.** A tenant's TwiML Apps and
+   numbers point at exactly one host at a time; whichever endpoint serves that
+   host validates against its own URL. During migration both endpoints run in
+   parallel (old URL → function, new URL → Worker), each correct for its own URL —
+   no endpoint needs to accept two hosts.
+2. **The raw origin stays reachable until deleted.** The WAF only protects traffic
+   that goes through Cloudflare. The `*.cloudfunctions.net` webhooks stay
+   reachable (signature-checked, `maxInstances`-capped) until §14 step 5 deletes
+   them.
 
 ---
 
 ## 4. Target hostname
 
-Use a dedicated subdomain so WAF policy, caching, and bot rules are scoped away
-from the website (`dialcrest.peblet.be`):
-
 ```
-dialcrest-hooks.peblet.be   →  the webhooks, path-for-path
+dialcrest-hooks.peblet.be   →  Cloudflare Worker (Workers Custom Domain), path-for-path
 ```
 
-Path mapping is 1:1 with the function names, e.g.
-`https://dialcrest-hooks.peblet.be/twilioIncomingCall`. No path rewriting
-(rewriting would break the Twilio signature).
+Paths are 1:1 with the old function names, e.g.
+`https://dialcrest-hooks.peblet.be/twilioIncomingCall`, so `webhookUrl(path)` is
+the same code for both hosts.
 
-**Why this name and not `hooks.dialcrest.peblet.be`.** The nested name reads
-nicer (groups under the `dialcrest` product), but Cloudflare's free **Universal
-SSL** covers only `peblet.be` and **one** wildcard level, `*.peblet.be`:
-`dialcrest-hooks.peblet.be` is a first-level subdomain → **covered free**;
-`hooks.dialcrest.peblet.be` is second-level → **not** on that wildcard, so a
-proxied record there would need paid **Advanced Certificate Manager (~$10/mo)**.
-A **Workers Custom Domain** (§14) provisions a per-hostname cert and *may* issue
-the second-level name free — verify in the dashboard before choosing it. Default
-to the first-level name; it matches the cost priorities and is guaranteed free.
+**Why not `hooks.dialcrest.peblet.be`.** Cloudflare's free Universal SSL covers
+`peblet.be` and one wildcard level `*.peblet.be`; a second-level name needs paid
+Advanced Certificate Manager (~$10/mo) — unless the Workers Custom Domain's
+per-hostname cert covers it for free (verify in the dashboard). Default to the
+first-level name.
 
 ---
 
-## 5. Cloudflare architecture
+## 5. Cloudflare
 
-### 5.1 Fronting — how dialcrest-hooks.peblet.be reaches the functions
-
-**Decided: the cheap path (no GCP infra).** Orange-cloud
-`dialcrest-hooks.peblet.be`; a Cloudflare **Origin Rule** overrides the Host
-header / SNI to `europe-west1-twilio-phone-peblet.cloudfunctions.net` so Google's
-frontend routes the request. No Google Load Balancer, no serverless NEG — cost is
-just the Cloudflare plan. Origin lock is via the shared-secret header (§5.3),
-which works on this setup against both the `*.cloudfunctions.net` and `*.run.app`
-URLs.
-
-> End-state (§14): migrating the Twilio webhooks to a Cloudflare **Worker** and
-> deleting the functions **removes the raw `*.cloudfunctions.net` origin entirely**
-> — so there's nothing left to proxy, host-override, or origin-lock for those
-> paths. This §5 fronting is the **interim** hardening while the webhooks still
-> live on functions. ~$0–5/mo, no Google infra.
-
-SSL/TLS mode **Full (strict)**. Do **not** let any rule add query params or
-rewrite the body/path on these routes.
+### 5.1 Hosting
+The Worker is bound to `dialcrest-hooks.peblet.be` as a **Workers Custom Domain**
+(auto-provisions DNS + cert). No CNAME to Google, no Origin Rule, no Transform
+Rule. SSL/TLS **Full (strict)**. No rule may add query params or rewrite the
+body/path on this host.
 
 ### 5.2 WAF / rate-limit rules (scoped to dialcrest-hooks.peblet.be)
 
-Expression helper — the four Twilio paths:
+Twilio paths:
 `http.request.uri.path in {"/twilioIncomingCall" "/twilioOutgoingCall" "/twilioCallStatusChanges" "/twilioIncomingMessage"}`
 
-- **Require the signature header** (Twilio paths): if
-  `not any(http.request.headers["x-twilio-signature"][*] ne "")` → **block**.
-  Cheap edge drop of scanners; the function still does the real HMAC check.
-- **Method + content-type**: block non-`POST`; expect
-  `application/x-www-form-urlencoded`.
-- **Rate limiting**: a global per-path ceiling plus a per-IP rule. Note Twilio
-  calls arrive from a **bounded set of Twilio egress IPs**, so a naive per-IP
-  limit can throttle legit traffic — prefer a generous per-IP limit + a stricter
-  global path ceiling. On Business+ you can rate-limit by the `AccountSid` form
-  field (body-field matching) for per-tenant fairness. These rules run **before**
-  the origin/Worker and are flat-rate, so blocked abuse never invokes it — which
-  is also what shields the Workers-Free daily budget under attack (§14, "Hard cost
-  ceiling").
-- **Bots**: use **block, never JS/managed challenge**, on webhook paths — Twilio
-  and Apple won't solve challenges. Exclude these paths from Bot Fight / Super
-  Bot Fight Mode; set Security Level low here and rely on explicit rules.
-- **Optional IP allowlist**: restrict Twilio paths to Twilio's published webhook
-  IP ranges. Stronger, but Twilio **recommends signature validation over IP
-  allowlisting** because the ranges change — treat as optional, with a
-  maintenance owner, not the primary control.
-- **Apple path** (`/twilioAppleNotifications`): POST-only + small-body + rate
-  limit; the real gate is JWS verification (§6.4). Apple has no stable published
-  source range — do not IP-allowlist it.
-
-### 5.3 Origin lock (close the direct-to-origin bypass)
-
-**Interim measure (webhooks-still-on-functions only).** Cloudflare adds
-`X-Origin-Auth: <secret>` via a **Transform Rule**; the functions reject any
-request lacking it (§6.5). Works against both the `*.cloudfunctions.net` and
-`*.run.app` URLs. The secret can leak, so rotate it periodically — but combined
-with the in-function signature check it's solid for cost/abuse protection.
-
-This matters only while the webhooks live on Cloud Functions: relying on
-in-function signature validation **alone** keeps correctness safe but still lets
-attackers flood the origin directly and run up invocations. The **end-state
-(§14)** retires this header for the Twilio webhooks entirely — once they're a
-Worker and the functions are deleted, there is no separate origin to lock.
+- **Require the signature header**: block if
+  `not any(http.request.headers["x-twilio-signature"][*] ne "")`.
+- **Method**: block non-`POST`.
+- **Block everything else** on the host (any path not in the set above).
+- **Rate limiting**: a generous per-IP limit (Twilio egresses from a bounded IP
+  set, so a tight one throttles legit traffic) plus a stricter global per-path
+  ceiling. Per-`AccountSid` body-field limits need Business+. Rules run before the
+  Worker and are flat-rate, so blocked abuse never invokes it — this is what
+  shields the Workers-Free daily budget (§14 "Hard cost ceiling").
+- **Bots**: block, never JS/managed challenge — Twilio can't solve challenges.
+  Exclude this host from (Super) Bot Fight Mode; Security Level low.
+- **Optional IP allowlist** of Twilio's published ranges — opt-in, needs a
+  maintenance owner; Twilio recommends signature validation instead.
 
 ---
 
 ## 6. Code changes (functions/)
 
-### 6.1 Dual-URL signature validation — *do this first, it's purely additive*
-`twilio.ts`: replace the single `signedUrl` compare in `isValidTwilioSignature`
-with an **accept-list of base URLs**; return true if the signature validates
-against *any* of them. Seed the list with the legacy host and the new host.
-This is what makes the migration break-free: a number may call either host at
-any point in the transition and still validate.
+### 6.1a Fail-closed signature check — **done (flag off)**
+`isValidTwilioSignature` skips the check (grace period) for an `AccountSid` with
+no stored token. `TWILIO_SIGNATURE_FAIL_CLOSED=true` makes that a rejection. Every
+tokenless webhook logs `event: twilio_webhook_tokenless` with `knownTenant`
+(whether `/twilio/<sid>/createdAt` exists), so the flip can be timed (§8). An RTDB
+*read error* stays fail-open regardless — outsiders can't induce it, and an
+outage shouldn't drop calls. Changing the param is an `.env` edit + redeploy.
+The Worker implements the same policy.
 
-### 6.1a Close the fail-open — the core of "prevent unauthorized calls"
-`isValidTwilioSignature` currently returns `true` when the request's `AccountSid`
-has **no stored Auth Token** (migration grace; `twilio.ts`), so a made-up SID
-passes the guard today. Once the backfill (Phase 4) has stored tokens for the
-active base, flip this to **fail-closed**: no stored token → **reject**. Gate the
-flip behind a param (`TWILIO_SIGNATURE_FAIL_CLOSED`, default off) so it's a config
-change, not a redeploy, and so §8's "tokenless `AccountSid`" counter can confirm
-the active base is covered first. After the flip, every Twilio webhook call must
-carry a signature that validates against a *known* tenant's token — unknown or
-unsigned SIDs are rejected. This, not the WAF, is what actually prevents
-unauthorized calls (the WAF can't see the per-tenant token).
+### 6.1b Only store Auth Tokens Twilio accepted — **done**
+`twilioAccessToken` can succeed entirely from cached state (API key, TwiML App,
+push credential) without ever presenting the caller's `authToken` to Twilio, yet
+it called `rememberAuthToken` — so any App-Check-passing caller could overwrite
+another tenant's stored token (forge its webhooks, e.g. push fake SMS
+notifications to its devices; or, once fail-closed, black-hole its calls).
+`rememberAuthToken` now verifies a *changed* token with an authenticated
+`accounts(sid).fetch()` before writing; an unchanged token costs no round-trip.
 
-### 6.2 Config-drive the hosts (stop hardcoding)
-Introduce two params (`defineString`, env-overridable for emulator/staging):
-- `WEBHOOK_PUBLIC_BASE_URL` — the host we **write into** Twilio (and validate).
-  Defaults initially to the legacy cloudfunctions host, flips to
-  `https://dialcrest-hooks.peblet.be` at cutover.
-- `WEBHOOK_LEGACY_BASE_URLS` — extra hosts we still **accept** during migration
-  (the cloudfunctions host; add the `run.app` host if it was ever used).
+### 6.2 Config-driven webhook host — **done**
+`functions/src/edge.ts`:
+- `WEBHOOK_PUBLIC_BASE_URL` — the host **written into** Twilio. Defaults to the
+  functions host; set to `https://dialcrest-hooks.peblet.be` at cutover
+  (`functions/.env.twilio-phone-peblet`).
+- `FUNCTIONS_BASE_URL` — fixed; the only URL the functions validate against.
+- `isKnownWebhookUrl` — recognizes our webhook on any host we've used, so
+  re-pointing and restoring work on both sides of the cutover.
 
-`OUTGOING_CALL_URL` / `INCOMING_CALL_URL` / `STATUS_CALLBACK_URL` /
-`INCOMING_MESSAGE_URL` derive from `WEBHOOK_PUBLIC_BASE_URL`;
-`isValidTwilioSignature` validates against `{public} ∪ {legacy...}`.
+### 6.3 Backfill existing Twilio config — **done**
+Existing tenants are moved by an admin script, not by the callables (an earlier
+on-callable self-heal, `ensureWebhooksCurrent`, was removed):
+`functions/src/scripts/backfillWebhooks.ts`, run as
+`cd functions && npm run backfill:webhooks -- --to <host> [--account AC…] [--apply]`.
+- Dry run by default; `--to` must be one of our hosts; `--account` targets one
+  tenant (test tenant first).
+- Per tenant, with the stored Auth Token: update the cached outgoing/incoming
+  TwiML Apps' `voiceUrl`; on numbers whose `voiceApplicationSid` is our incoming
+  app, update `statusCallback` / `smsUrl` **only where they still point at one of
+  our hosts**. A deleted app (20404) just drops its cache. Never touches the
+  restore snapshot. Idempotent; also removes the old `webhook-base-url` marker.
+- Tenants with no stored token, or one Twilio rejects, are reported as skipped:
+  they move when they next run number configuration in the app.
+- Related fixes: `getOrCreateTwimlApp` corrects the `voiceUrl` of an app it finds
+  by name; `configureSelectedNumbers` re-points a selected number on an old host
+  and still restores a deselected one.
 
-### 6.3 Self-heal existing Twilio config to the new host
-Existing TwiML Apps and numbers keep the old URLs — the cached TwiML App SID's
-`voiceUrl` is never re-checked on hot paths, and numbers carry
-`statusCallback`/`smsUrl` directly. Add a cheap, idempotent re-point triggered
-from the callables the app already hits (`twilioAccessToken`,
-`twilioGetIncomingAppSid`, `twilioConfigureNumbers`):
-- Store a per-tenant `webhookUrlVersion` marker in RTDB. On a callable, one RTDB
-  read; if the marker is current, do nothing (bounds hot-path cost).
-- If stale: `applications(sid).update({voiceUrl})` for the tenant's **incoming
-  and outgoing** TwiML Apps, and `incomingPhoneNumbers(sid).update({statusCallback, smsUrl})`
-  for numbers this tenant configured (those with an `original` snapshot, or whose
-  `voiceApplicationSid` is our incoming app). Then set the marker.
-- Uses the **live token already passed to the callable** — so it needs no stored
-  token and self-migrates every active user. Re-running `configureNumber`'s
-  snapshot is already guarded ("write only if not exists"), so this won't corrupt
-  the restore snapshot.
+### 6.4 Apple JWS verification — **done**
+`verifyAppleNotificationSignature` (`subscription.ts`) uses
+`@apple/app-store-server-library`'s `SignedDataVerifier` against the bundled
+**Apple Root CA - G3** (`functions/certs/`, SHA-256 `63:34:3A:BF:…:91:79`), with
+online checks (OCSP, current date). Checks chain, signature, `bundleId`, and
+`appAppleId` + environment. Forged → **401**; unreachable OCSP → **500** (Apple
+redelivers). Sandbox and Production verifiers are both tried (same URL receives
+both).
+**Needs config:** add `appAppleId` (App Store Connect → App Information → Apple
+ID, a number) to `apple_iap_key` in `TWILIO_PEBLET_SECRET`; until then
+**Production notifications are rejected** (logged), Sandbox ones verify.
 
-### 6.4 Apple JWS verification (`twilioAppleNotifications`)
-Implement real verification with `app-store-server-library`
-(`SignedDataVerifier`) against Apple's root CAs before processing — reconciling
-the README, which already *claims* this happens (`README.md:306`) while the code
-only checks the payload is a string. Independent of Cloudflare; do it regardless.
+### 6.6 Cost ceiling — **done**
+`setGlobalOptions({ maxInstances: 10 })` in `index.ts` covers every function.
+`minInstances` stays 0.
 
-### 6.5 Origin-secret guard (§5.3) — interim only
-Add a small guard on the webhooks: reject with 403 if `X-Origin-Auth` ≠ the
-configured secret. Store the secret in the existing `TWILIO_PEBLET_SECRET` JSON
-(new property) or a dedicated secret param. Apply **before** heavier work; keep
-it a constant-time compare. This is the interim origin lock while the webhooks
-run on functions; the §14 Worker end-state removes the need for it on the Twilio
-paths (it can stay on the Apple function if you front that too).
-
-### 6.6 Cost ceiling (defence-in-depth, independent of Cloudflare)
-Set `maxInstances` on the webhook functions (and the callables) so a flood has a
-hard, bounded cost even if it reaches the origin; keep `minInstances: 0`.
-Consider per-function `concurrency`. This is the backstop for the
-not-fronted callables and for any direct-origin traffic.
-
-### 6.7 Tests (`twilio.test.ts`)
-- Dual-URL: valid signature for the **new** host accepted; for the **legacy**
-  host still accepted; unknown host rejected (token stored).
-- Origin-secret guard: missing/wrong `X-Origin-Auth` → 403; correct → passes to
-  signature check.
-- Self-heal: stale marker triggers the updates once and flips the marker; current
-  marker is a no-op; snapshot not re-written.
-- Apple JWS: forged/altered payload rejected; genuine accepted (fixtures).
+### 6.7 Tests — **done**
+`twilio.test.ts`: function validates only its own URL (Worker-URL and cross-path
+signatures rejected), fail-closed on/off, token verified before storage,
+configure/restore across the host change, app found by name gets corrected.
+`scripts/backfillWebhooks.test.ts`: re-point, dry run, already current, foreign
+webhooks untouched, snapshot untouched, 20404, no/rejected token, failure,
+rollback. `index.test.ts`: Apple JWS genuine / unsigned / altered /
+wrong bundle / Production without and with `appAppleId`.
+Apple fixtures use a throwaway PKI with Apple's marker OIDs
+(`src/testUtils/appleTestPki.ts`). `jest.config.js` now loads `slowBufferShim`
+in `setupFiles` (fixes an order-dependent suite failure on Node 24+).
 
 ---
 
 ## 7. Migration — zero-downtime, phased
 
-Each phase is independently deployable and reversible. The invariant that keeps
-it safe: **dual-URL acceptance (6.1) ships before anything is re-pointed**, so no
-tenant ever has a moment where its signature fails.
+**Phase 1 — Deploy the function-side changes** (§6, done in code). Purely
+additive: `WEBHOOK_PUBLIC_BASE_URL` still = functions host, fail-closed off.
+Before deploying, set `appAppleId` in the secret (§6.4).
 
-**Phase 0 — Prep.** Fronting and origin lock are already decided (cheap path +
-shared-secret header, §5). No behavior change.
+**Phase 2 — Build the Worker** (§14) and stand up `dialcrest-hooks.peblet.be`
+with the WAF rules (§11). Nobody points at it yet → zero tenant risk. Smoke-test
+with signed `curl`s and a test tenant (§11.4).
 
-**Phase 1 — Deploy dual-URL validation + config params + origin-secret guard
-(initially in log-only/allow mode) + Apple JWS.** `WEBHOOK_PUBLIC_BASE_URL`
-still = legacy host, so nothing re-points yet. Purely additive; affects no
-tenant. The backend now *tolerates* the new host before any traffic uses it.
+**Phase 3 — Cut over.** Set `WEBHOOK_PUBLIC_BASE_URL=https://dialcrest-hooks.peblet.be`
+and redeploy. New TwiML Apps/numbers get the Worker URL. Not-yet-migrated
+tenants keep working on the functions.
 
-**Phase 2 — Stand up Cloudflare `dialcrest-hooks.peblet.be`** (manual runbook in
-§12). SSL Full (strict), WAF + rate-limit rules, Transform Rule injecting
-`X-Origin-Auth`. Nobody is pointed at it yet → zero tenant risk. Verify by
-`curl`-signing a test request to `https://dialcrest-hooks.peblet.be/...` and
-confirming it validates and that a request *without* `X-Origin-Auth` (straight to
-the origin) is rejected once the guard is switched from log-only to enforce.
+**Phase 4 — Backfill.** Run the §6.3 script with `--to` the Worker host: dry run,
+then `--apply` on a test tenant (`--account`), then on all tenants.
 
-**Phase 3 — Flip `WEBHOOK_PUBLIC_BASE_URL` → `https://dialcrest-hooks.peblet.be`.** Now:
-- **New** tenants / numbers / TwiML Apps are written with the new host and
-  validate against it (it's the public base).
-- **Existing** tenants self-heal (6.3) the next time their app calls a callable —
-  active users migrate within one app session, each flipping independently.
-  Because the legacy host is still in the accept-list, a not-yet-migrated tenant
-  keeps working on the old URL until it flips.
+**Phase 5 — Fail-closed.** When `twilio_webhook_tokenless` from known tenants is ≈
+0, set `TWILIO_SIGNATURE_FAIL_CLOSED=true` (functions and Worker).
 
-**Phase 4 — Backfill the long tail.** A one-off admin routine (restricted
-callable or Admin-SDK script) iterates tenants in RTDB and, using the
-`rememberAuthToken`-stored token, pushes the same re-point as 6.3 for tenants
-who haven't opened the app. Tenants with no stored token are unreachable until
-they next open the app — acceptable, they still work on the legacy URL.
-
-**Phase 5 — Apple.** In App Store Connect, set the ASSN **Production and Sandbox**
-URLs to `https://dialcrest-hooks.peblet.be/twilioAppleNotifications`. Apple's JWS is
-host-independent, so this is just a console change plus Phase-1's JWS verify.
-
-**Phase 6 — Tighten and clean up.** When telemetry (§8) shows ~no traffic on the
-legacy host and the tokenless-`AccountSid` counter is ≈ 0 for the active base:
-- **Flip `TWILIO_SIGNATURE_FAIL_CLOSED` on** (§6.1a) — this is the step that
-  turns "prevent unauthorized calls" from mostly-true into enforced.
-- Switch the origin-secret guard from log-only to enforce (if not already).
-- Drop the legacy host from the accept-list (`WEBHOOK_LEGACY_BASE_URLS`); update
-  the README URLs.
+**Phase 6 — Delete the four Twilio `onRequest` functions** once their invocation
+count is ≈ 0 for N days. The raw webhook origin is gone.
 
 ---
 
 ## 8. Observability and exit criteria
 
-- **Which host validated.** In `isValidTwilioSignature`, log (sampled) whether
-  the legacy or public base matched, with `AccountSid`. Count legacy-vs-public to
-  know when Phase 6 is safe.
-- **Tokenless `AccountSid`.** Count webhook calls that hit the fail-open branch
-  (known-vs-unknown SID). This tells you when it's safe to flip
-  `TWILIO_SIGNATURE_FAIL_CLOSED` (§6.1a): near-zero for real tenants = the active
-  base has stored tokens; any residual is the junk the flip will start rejecting.
-- **Origin-secret guard** starts in **log-only** (count requests lacking
-  `X-Origin-Auth` = direct-origin traffic) before switching to enforce, so you
-  don't black-hole a forgotten caller.
-- **Cloudflare analytics** for blocked / rate-limited / challenged counts per
-  rule; watch for false positives on legit Twilio/Apple IPs.
-- **Exit criteria for Phase 6:** legacy-host validations ≈ 0 for N days;
-  tokenless-`AccountSid` ≈ 0 for real tenants (safe to fail-closed); no
-  `X-Origin-Auth`-missing requests except known abuse; Cloudflare block rate
-  steady with no legit-traffic false positives.
+- **Traffic still on the functions** = invocations of the four Twilio functions
+  (Cloud Monitoring per function). → 0 means Phase 6 is safe.
+- **Tokenless webhooks**: `jsonPayload.event="twilio_webhook_tokenless"`, split by
+  `knownTenant`. Known ≈ 0 → Phase 5 is safe; unknown is the junk it will reject.
+- **Backfill**: the script's per-tenant output and summary (updated / current /
+  skipped / failed); re-run until nothing is left to update.
+- **Apple**: "Apple notification failed signature verification" warnings.
+- **Cloudflare analytics**: blocked / rate-limited counts per rule; watch for
+  false positives on Twilio IPs.
 
 ---
 
 ## 9. Rollback
 
-- **Phase 1** is additive — nothing to roll back.
-- **Cloudflare/WAF too aggressive:** loosen/disable the specific rule, or set the
-  `dialcrest-hooks.peblet.be` record to **DNS-only (grey cloud)** to bypass the WAF while
-  keeping it resolving. (If grey-cloud can't route to the origin due to host
-  mismatch, fall back to the next point.)
-- **New host misbehaving:** revert `WEBHOOK_PUBLIC_BASE_URL` to the legacy host
-  and redeploy; because the legacy host is still in the accept-list and
-  self-heal re-points tenants back, traffic returns to `*.cloudfunctions.net`
-  cleanly.
-- **Origin-secret guard wrong:** flip it back to log-only.
-- Dual-URL acceptance is the net under the whole trapeze — keep it until Phase 6.
+- **Phase 1** is additive.
+- **Worker misbehaving:** revert `WEBHOOK_PUBLIC_BASE_URL` to the functions host
+  and redeploy, then run the backfill with `--to` the functions host; the
+  functions still validate their own URL. Only
+  possible while the functions exist — don't do Phase 6 until the Worker has been
+  stable for a while.
+- **WAF too aggressive:** loosen or disable the specific rule.
+- **Fail-closed rejecting real traffic:** set the flag back to `false`.
 
 ---
 
 ## 10. Open decisions / cost
 
-Interim fronting + origin lock are **decided** (Cloudflare proxy §5.1 +
-shared-secret header §5.3); the end-state is the **Worker migration (§14)**, which
-removes the origin for the Twilio webhooks. No Google infrastructure either way.
-Remaining choices:
-
-- **Interim vs straight-to-Worker.** Ship Tier A (interim hardening) first for
-  fast risk reduction, then Tier B (§14); or, if the Worker port is ready, skip
-  the `X-Origin-Auth`/Origin-Rule interim and go straight to the Worker. Both
-  reuse the same tenant re-point (§6.3/§7).
-- **Hostname cert** (§4): `dialcrest-hooks.peblet.be` is free; confirm whether a
-  Workers Custom Domain issues `hooks.dialcrest.peblet.be` free before preferring
-  the nested name.
-- **Cloudflare plan**: signature-presence + basic rate limiting work on low/Pro
-  tiers; **per-`AccountSid` body-field** rate limiting needs Business+.
-- **IP allowlisting** Twilio ranges — opt-in, needs a maintenance owner.
-- Where to store `X-Origin-Auth` (interim) and the Worker's SA key / rotation.
+- **Path-by-path cutover** (§14) would need a per-path override of
+  `WEBHOOK_PUBLIC_BASE_URL`; currently one switch moves all four. Add only if
+  wanted.
+- **Hostname cert** (§4).
+- **Cloudflare plan**: basic rules work on Free/Pro; per-`AccountSid` rate limits
+  need Business+.
+- **IP allowlisting** Twilio ranges — opt-in.
+- Worker's service-account key rotation cadence (procedure in worker/README.md).
 
 ---
 
-## 11. Manual runbook (things only you can do)
+## 11. Manual runbook
 
-These are the console/CLI actions outside the codebase. Do them during **Phase 2**
-(§7), after Phase 1 is deployed so the endpoints exist. Nothing here points a
-tenant at the new host, so it's all zero-risk until Phase 3.
+### 11.1 Before deploying Phase 1
+1. Add `appAppleId` to `apple_iap_key` and re-set the secret:
+   ```bash
+   firebase functions:secrets:set TWILIO_PEBLET_SECRET   # paste JSON incl. "apple_iap_key": {..., "appAppleId": <number>}
+   ```
+2. `firebase deploy --only functions`.
 
-### 11.0 Prep
-- **Generate the origin secret** (the value Cloudflare injects and the function
-  checks):
-  ```bash
-  openssl rand -hex 32          # copy the output; call it ORIGIN_SECRET below
-  ```
-- Confirm the functions are deployed (`firebase deploy --only functions`) so
-  `europe-west1-twilio-phone-peblet.cloudfunctions.net/<fn>` responds.
-
-### 11.1 Cloudflare — DNS
-1. **DNS → Records → Add record**: Type `CNAME`, Name `dialcrest-hooks`, Target
-   `europe-west1-twilio-phone-peblet.cloudfunctions.net`, **Proxy status: Proxied
-   (orange cloud)**, TTL Auto.
-   - The edge cert is covered by Cloudflare Universal SSL's `*.peblet.be` — no
-     extra cert step for a first-level subdomain.
-
-### 11.2 Cloudflare — SSL/TLS
-2. **SSL/TLS → Overview → set mode to `Full (strict)`.**
-
-### 11.3 Cloudflare — Origin Rule (route to Google)
-A proxied CNAME still sends `Host: dialcrest-hooks.peblet.be`, which Google's
-frontend won't route. Override it:
-3. **Rules → Origin Rules → Create rule.**
-   - When incoming requests match: `Hostname` `equals` `dialcrest-hooks.peblet.be`.
-   - Then: **Host Header → Rewrite to** `europe-west1-twilio-phone-peblet.cloudfunctions.net`,
-     and **SNI → Rewrite to** the same value.
-   - Deploy. Hitting `https://dialcrest-hooks.peblet.be/twilioIncomingCall` should
-     now reach the function (a signed test still needed to pass validation).
-
-### 11.4 Cloudflare — Transform Rule (inject the origin secret)
-4. **Rules → Transform Rules → Modify Request Header → Create rule.**
-   - When: `Hostname` `equals` `dialcrest-hooks.peblet.be`.
-   - Then → **Set static**: Header name `X-Origin-Auth`, Value `ORIGIN_SECRET`
-     (from 11.0). (Optionally store it as a Cloudflare **Secret** and reference it,
-     so it isn't shown in plaintext in the rule.)
-
-### 11.5 Cloudflare — WAF custom rules
-5. **Security → WAF → Custom rules → Create rule** — *Block bad webhook shape*:
+### 11.2 Cloudflare (Phase 2)
+3. Create the Worker's service account + secret and deploy it (`worker/README.md`
+   "One-time setup"); `wrangler.toml` binds the Custom Domain
+   `dialcrest-hooks.peblet.be`.
+4. **SSL/TLS → Full (strict).**
+5. **Security → WAF → Custom rules** — block bad webhook shape:
    ```
    (http.host eq "dialcrest-hooks.peblet.be"
-    and http.request.uri.path in {"/twilioIncomingCall" "/twilioOutgoingCall" "/twilioCallStatusChanges" "/twilioIncomingMessage"}
-    and (http.request.method ne "POST"
+    and (not http.request.uri.path in {"/twilioIncomingCall" "/twilioOutgoingCall" "/twilioCallStatusChanges" "/twilioIncomingMessage"}
+         or http.request.method ne "POST"
          or not any(http.request.headers["x-twilio-signature"][*] != "")))
    ```
-   Action **Block**. (Drops non-POST and any request missing `X-Twilio-Signature`
-   before it costs an invocation; the function still does the real HMAC check.)
-6. *(Optional)* A second rule for the Apple path: Block if
-   `http.host eq "dialcrest-hooks.peblet.be" and http.request.uri.path eq "/twilioAppleNotifications" and http.request.method ne "POST"`.
+   Action **Block**.
+6. **Security → WAF → Rate limiting rules**: per-IP (start ~100 req / 10 s,
+   action Block) + a stricter global per-path rule.
+7. **Bots / Security Level**: no challenges on this host (Skip rule for Super Bot
+   Fight Mode if needed; Configuration Rule → Security Level low).
+8. **Billing → Notifications** as a tripwire; keep metered add-ons off.
 
-### 11.6 Cloudflare — Rate limiting
-7. **Security → WAF → Rate limiting rules → Create rule.**
-   - When: `http.host eq "dialcrest-hooks.peblet.be"`.
-   - Characteristics: **IP**; Period **10s** (or 1m); start generous (Twilio
-     arrives from a bounded IP set, so a tight per-IP limit throttles legit
-     traffic). Suggested starting point: 100 req / 10s per IP → **Managed
-     Challenge is wrong here → choose action Block**.
-   - Add a second, stricter **global path** ceiling (no IP characteristic) as the
-     volumetric backstop.
-   - *(Business+ only)* a per-tenant rule keyed on the `AccountSid` form field.
+### 11.3 Google Cloud
+9. Cost ceiling is in code (§6.6). Webhook invoker stays `allUsers` (Twilio and
+   Apple can't present Google IAM tokens).
 
-### 11.7 Cloudflare — bots / security level (avoid blocking Twilio & Apple)
-8. **Security → Bots:** ensure **Bot Fight Mode / Super Bot Fight Mode does not
-   challenge** `dialcrest-hooks.peblet.be` (Twilio/Apple can't solve JS or managed
-   challenges). If you can't scope it, add a WAF **Skip** rule for the host that
-   skips Super Bot Fight Mode, and rely on the rules above.
-9. **Security → Settings:** set Security Level **Essentially Off / Low** for this
-   host (via a Configuration Rule scoped to the hostname) so the Under-Attack/Browser
-   checks never challenge a webhook.
-
-### 11.8 Google Cloud — origin lock on the cheap path
-On this (no-Load-Balancer) design, the origin lock is the **`X-Origin-Auth` check
-in the function** (§6.5), *not* a GCP network control — the functions must stay
-publicly invokable because Twilio/Apple can't present a Google IAM token. So the
-Google-side manual actions are:
-10. **Store the secret** the function reads, matching 11.0. If reusing
-    `TWILIO_PEBLET_SECRET`, add an `origin_auth` property to its JSON and re-set it:
+### 11.4 Verify before Phase 3
+10. Signed request to the Worker (sign with a test tenant's token: HMAC-SHA1 over
+    URL + sorted params, base64) → 200 + TwiML:
     ```bash
-    firebase functions:secrets:set TWILIO_PEBLET_SECRET   # paste JSON incl. "origin_auth":"<ORIGIN_SECRET>"
-    ```
-    (or a dedicated secret if you prefer: `firebase functions:secrets:set WEBHOOK_ORIGIN_AUTH`).
-11. **Cost ceiling** — confirm/set max instances on the webhook functions (also in
-    code via §6.6; CLI form shown for a one-off):
-    ```bash
-    gcloud run services update twilioincomingcall   --region europe-west1 --max-instances 10
-    # repeat for the other webhook services, or set maxInstances in the function options
-    ```
-12. **Leave invoker open** — webhooks need `allUsers` as Cloud Run invoker (already
-    the case). Do **not** switch them to require auth; the secret header is the gate.
-
-> To remove the raw `*.cloudfunctions.net` origin for the Twilio webhooks
-> altogether (rather than guard it with the header above), migrate them to a
-> Cloudflare **Worker** and delete the functions — the §14 end-state. No Google
-> infrastructure; ~$0–5/mo.
-
-### 11.9 Verify before any tenant is re-pointed
-13. **Signed request passes through Cloudflare** (replace values; sign with a test
-    tenant's Auth Token using Twilio's algorithm — HMAC-SHA1 over URL + sorted
-    params, base64):
-    ```bash
-    # Expect HTTP 200 and valid TwiML
     curl -i -X POST https://dialcrest-hooks.peblet.be/twilioIncomingCall \
       -H 'X-Twilio-Signature: <computed>' \
       -H 'Content-Type: application/x-www-form-urlencoded' \
       --data 'AccountSid=AC...&From=%2B32...&To=%2B32...'
     ```
-14. **Edge drops a header-less request** (expect Cloudflare **403/blocked**, no
-    invocation): same `curl` without `-H 'X-Twilio-Signature: ...'`.
-15. **Direct-to-origin is rejected once the guard enforces** (expect **403** from
-    the function, because Cloudflare's `X-Origin-Auth` is absent):
-    ```bash
-    curl -i -X POST https://europe-west1-twilio-phone-peblet.cloudfunctions.net/twilioIncomingCall \
-      -H 'X-Twilio-Signature: <computed>' --data '...'
-    ```
-    (Keep the guard in **log-only** until §8's counters show no surprise callers,
-    then flip to enforce.)
+11. Same without the signature header → Cloudflare 403, no Worker invocation.
 
-### 11.10 Apple (Phase 5, manual)
-16. **App Store Connect → your app → App Information → App Store Server
-    Notifications (V2):** set **both** Production and Sandbox URLs to
-    `https://dialcrest-hooks.peblet.be/twilioAppleNotifications`. Twilio number
-    re-pointing is automatic (self-heal §6.3) — no Twilio console work.
+### 11.5 Apple (optional)
+12. ASSN URLs stay on
+    `https://europe-west1-twilio-phone-peblet.cloudfunctions.net/twilioAppleNotifications`
+    (Production **and** Sandbox) — Apple is not moved.
 
 ---
 
-## 12. Future-proofing — AGENTS.md / CLAUDE.md guardrails
+## 12. AGENTS.md guardrails
 
-There is **no `AGENTS.md` or `CLAUDE.md`** in the repo today. Create an
-**`AGENTS.md`** at the repo root (read by Claude Code and other coding agents) so
-future changes don't silently regress this hardening, and add a one-line
-`CLAUDE.md` that points at it (`See AGENTS.md`). Add a **Security invariants**
-section with this content:
-
-```markdown
-## Security invariants — externally-reachable Cloud Functions
-
-Read docs/edge-hardening-plan.md before touching functions/src/twilio.ts or
-functions/src/index.ts. These rules must not be broken:
-
-- **No unauthenticated public endpoint.** Every `onRequest` function must, before
-  doing any work, (1) pass the `X-Origin-Auth` origin-secret guard, and (2)
-  authenticate the payload — Twilio `X-Twilio-Signature`, Apple JWS, or Pub/Sub
-  IAM. Never add a public endpoint that skips both.
-- **Don't reintroduce the signature fail-open.** Once `TWILIO_SIGNATURE_FAIL_CLOSED`
-  is on, an `AccountSid` with no stored token must be rejected, not allowed. The
-  fail-open was a one-time migration grace.
-- **Callables keep `enforceAppCheck: true`.** Don't remove it.
-- **One source of truth for the webhook host.** `WEBHOOK_PUBLIC_BASE_URL` is the
-  host both written into Twilio and validated against. If you change it, the old
-  host MUST stay in `WEBHOOK_LEGACY_BASE_URLS` until traffic drains, or you break
-  every existing tenant's signature (Twilio signs the exact configured URL).
-- **Validate against the static URL constant — never reconstruct the URL** from
-  request headers (`X-Forwarded-Host`, `Host`, …); those are proxy-spoofable.
-- **Don't let anything alter the webhook body, path, or query string.** The Twilio
-  HMAC is computed over URL + sorted POST params; any rewrite breaks validation.
-  This constrains Cloudflare rules too (no added query params, no path rewrite).
-- **Third-party webhooks go under dialcrest-hooks.peblet.be**, never a raw
-  *.cloudfunctions.net URL — otherwise they bypass the Cloudflare WAF.
-- **Worker and functions must not drift.** The Twilio webhooks run in a Cloudflare
-  Worker (docs/edge-hardening-plan.md §14); the TwiML shapes, `clientIdentity =
-  accountSid`, RTDB paths, and FCM payload must stay identical to the Node code.
-  Keep the pure bits in a shared module; don't fork them.
-- **Set `maxInstances`** on any new public function (cost ceiling).
-- **Rotating the origin secret** means updating the Cloudflare Transform Rule and
-  the function secret together.
-```
-
-Keep `docs/edge-hardening-plan.md` as the detailed reference the guardrails point
-to.
+`AGENTS.md` at the repo root (with a one-line `CLAUDE.md` pointing at it) holds
+the security invariants derived from this plan.
 
 ---
 
 ## 13. Checklist
 
-**Tier A — interim hardening (webhooks stay on functions; ship first)**
-- [ ] 6.1 Dual-URL signature validation + 6.7 tests
-- [ ] 6.1a Fail-closed flip behind `TWILIO_SIGNATURE_FAIL_CLOSED` (default off)
-- [ ] 6.2 `WEBHOOK_PUBLIC_BASE_URL` / `WEBHOOK_LEGACY_BASE_URLS` params
-- [ ] 6.5 Origin-secret guard (log-only first)
-- [ ] 6.4 Apple JWS verification + README reconcile
-- [ ] 6.6 `maxInstances` on webhooks + callables
-- [ ] 6.3 Self-heal re-point on callables (+ `webhookUrlVersion` marker)
-- [ ] 8 Logging of matched host + guard log-only counters
-- [ ] 12 Create `AGENTS.md` (+ `CLAUDE.md` pointer) with the security invariants
-- [ ] Deploy **Phase 1**
-- [ ] §11 Cloudflare: DNS proxied, SSL Full (strict), Origin Rule host/SNI override
-- [ ] §11 Cloudflare: WAF rules (sig-present, method, bots), rate limits, Transform
-      Rule `X-Origin-Auth`
-- [ ] §11 Google Cloud: store `ORIGIN_SECRET`, set max-instances, leave invoker open
-- [ ] §11.9 Verify: new host signs/validates; edge blocks header-less; origin
-      rejects without `X-Origin-Auth`
-- [ ] **Phase 3**: flip `WEBHOOK_PUBLIC_BASE_URL`; confirm self-heal on a test tenant
-- [ ] **Phase 4**: backfill script for the long tail
-- [ ] **Phase 5**: repoint Apple ASSN URLs (Prod + Sandbox)
-- [ ] **Phase 6**: flip `TWILIO_SIGNATURE_FAIL_CLOSED` on, enforce origin lock,
-      drop legacy host, update README
+**Functions (Phase 1)**
+- [x] 6.1a Fail-closed behind `TWILIO_SIGNATURE_FAIL_CLOSED` (default off) + tokenless logging
+- [x] 6.1b Verify Auth Token with Twilio before storing it
+- [x] 6.2 `WEBHOOK_PUBLIC_BASE_URL` (edge.ts)
+- [x] 6.3 Backfill script (`scripts/backfillWebhooks.ts`)
+- [x] 6.4 Apple JWS verification + README/SUBSCRIPTION_NOTIFICATIONS reconcile
+- [x] 6.6 `maxInstances` (global)
+- [x] 6.7 Tests
+- [x] 12 `AGENTS.md` + `CLAUDE.md`
+- [ ] Set `appAppleId` in `TWILIO_PEBLET_SECRET`; deploy Phase 1
 
-**Tier B — end-state: Twilio webhooks → Cloudflare Worker (§14; removes the raw origin)**
-- [ ] Worker project + `wrangler`; `android_fcm` SA key as a Worker secret
-- [ ] Port signature validation (WebCrypto HMAC-SHA1) + RTDB-REST + FCM-v1 helpers
-- [ ] Shared TS module for the pure bits (TwiML builders, DB paths)
-- [ ] Workers Custom Domain `dialcrest-hooks.peblet.be` (confirm cert is free)
-- [ ] Migrate path-by-path (outgoing/status → incoming → message); smoke-test each
-- [ ] Re-point tenants (reuse §6.3 self-heal + Phase-4 backfill); watch host counter
-- [ ] Keep the Worker on **Workers Free** (hard 100k/day €0 ceiling); WAF
-      rate-limit rules in front to shield the budget under attack (§14)
-- [ ] Delete the four `onRequest` Twilio functions; drop their `X-Origin-Auth` guard
+**Worker (Phases 2–6)**
+- [x] Worker project (`worker/`, see its README) + `wrangler.toml` (Custom Domain, no workers.dev)
+- [x] Port signature validation (WebCrypto HMAC-SHA1, parity-tested against twilio-node; fail-closed flag) + RTDB-REST + FCM-v1 helpers
+- [x] Shared TS module for the pure bits (`functions/src/shared/webhooks.ts`: TwiML builders, DB paths, push payload), used by both
+- [ ] Dedicated service account (RTDB Admin + FCM Admin) → `GOOGLE_SERVICE_ACCOUNT_JSON` Worker secret (worker/README.md)
+- [ ] Deploy; WAF + rate-limit rules (§11.2)
+- [ ] Smoke-test (§11.4)
+- [ ] **Phase 3**: flip `WEBHOOK_PUBLIC_BASE_URL`
+- [ ] **Phase 4**: run the backfill (test tenant first, then all)
+- [ ] **Phase 5**: `TWILIO_SIGNATURE_FAIL_CLOSED=true`
+- [ ] **Phase 6**: delete the four Twilio `onRequest` functions; update README URLs
 
 ---
 
-## 14. End-state — migrate the Twilio webhooks to Cloudflare Workers
+## 14. The Worker
 
-This is how the raw-origin exposure is removed: not by *locking* the Cloud
-Function origin, but by **deleting it**. Once the four Twilio webhooks run in a
-Cloudflare Worker and the old `onRequest` functions are gone, there is **no raw
-`*.cloudfunctions.net` webhook URL left to protect** — no ingress config, no
-Google infrastructure, nothing to bypass. The Worker *is* the origin, it lives on
-`dialcrest-hooks.peblet.be`, and the WAF / rate-limiting (§5.2) run in front of
-it. No Google Load Balancer, no Cloud Armor.
+The four Twilio webhooks move to a Cloudflare Worker on
+`dialcrest-hooks.peblet.be`; once tenants are migrated the `onRequest` functions
+are **deleted**, so there's no raw webhook URL left to bypass the WAF. No Google
+Load Balancer, no Cloud Armor, no origin secret.
 
-**Scope:**
-- **Twilio ×4 → Worker:** `twilioIncomingCall`, `twilioOutgoingCall`,
-  `twilioCallStatusChanges`, `twilioIncomingMessage`.
-- **`twilioAppleNotifications` stays a Cloud Function** (reasons below).
-- **Callables stay Cloud Functions**, App Check-gated, untouched.
+**Scope:** Twilio ×4 → Worker. `twilioAppleNotifications` and the callables stay
+Cloud Functions.
 
 ### What the Worker does
 | Endpoint | Logic | Deps in the Worker |
 |---|---|---|
 | `twilioOutgoingCall` | `To`/`From` → TwiML `<Dial callerId>` | 1 RTDB read (token for sig) |
-| `twilioIncomingCall` | read `trial/expiresAt` → TwiML `<Dial><Client>` | 2 RTDB reads |
+| `twilioIncomingCall` | entitled devices → TwiML `<Dial><Client>…` | token + devices + trial (parallel), + subscription records after the trial |
 | `twilioCallStatusChanges` | log / record | 1 RTDB read |
-| `twilioIncomingMessage` | read `messaging-tokens` → **data-only FCM fan-out** | 2 RTDB reads + N FCM sends |
+| `twilioIncomingMessage` | entitled devices' FCM tokens → **data-only FCM fan-out** | as above + legacy tokens, N FCM sends |
 
-Two things the Worker hand-rolls (no `firebase-admin` in Workers):
-- **Twilio signature validation** — ~10 lines of WebCrypto: HMAC-SHA1 over
-  `URL + alphabetically-sorted POST params`, base64, constant-time compare.
-  Reimplements `validateRequest` directly (don't pull the heavy `twilio` npm
-  package). It validates against the real `https://dialcrest-hooks.peblet.be/...`
-  the Worker actually sees — no Host-override needed.
-- **Firebase via REST** — mint a Google OAuth token in the Worker (sign the
-  service-account JWT with WebCrypto `RS256`, exchange at the token endpoint,
-  cache ~1h), then call RTDB REST
-  (`…firebaseio.com/twilio/<sid>/secret/authToken.json?access_token=…`) for the
-  stored token + trial expiry, and FCM HTTP v1 (`…/messages:send`) for the SMS
-  fan-out. The SA key (reuse `android_fcm`) lives in a `wrangler` secret.
+Hand-rolled (no `firebase-admin` in Workers):
+- **Twilio signature validation** — WebCrypto HMAC-SHA1 over
+  `URL + alphabetically-sorted POST params`, base64, constant-time compare,
+  against `https://dialcrest-hooks.peblet.be/<path>`. Same fail-closed policy as
+  §6.1a.
+- **Firebase via REST** — mint a Google OAuth token (RS256 service-account JWT via
+  WebCrypto, cached ~1 h), then RTDB REST for the stored token / trial expiry /
+  messaging tokens and FCM HTTP v1 for the SMS fan-out. SA key in
+  a `wrangler` secret — a dedicated least-privilege service account, not
+  `android_fcm` (worker/README.md).
 
-The Worker calls **no Twilio REST API** — all local HMAC + RTDB + FCM — so it
-stays small. Token storage is unchanged: the callables (still functions) keep
-writing `/twilio/<sid>/secret/authToken` via `rememberAuthToken`; the Worker just
-reads it. Fail-closed (§6.1a) lives in the Worker.
+A token read that fails *transiently* (5xx/network) fails open like the
+functions; a permission or key error returns 500 instead — otherwise a revoked
+key would silently disable authentication.
+
+The Worker calls no Twilio REST API. Token storage is unchanged: the callables
+keep writing `/twilio/<sid>/secret/authToken`; the Worker reads it.
 
 ### Why it's worth it
+**Voice latency — no cold starts.** Incoming/outgoing call webhooks are in the
+call path (Twilio waits for TwiML). Gen2 functions cold-start in hundreds of ms
+to ~1–2 s with no `minInstances`; Workers (V8 isolates) effectively don't. The
+RTDB round-trip remains a latency floor either way — parallelize the reads.
 
-**Voice latency — no cold starts.** `twilioIncomingCall` / `twilioOutgoingCall`
-are *in the call path*: Twilio waits for the TwiML before it rings/connects, so
-webhook latency is dead air the caller hears (status callbacks and SMS aren't in
-that path, so their latency is invisible). Gen2 functions cold-start by booting a
-container + Node runtime + the `firebase-admin`/`twilio`/`googleapis` require
-chain — typically hundreds of ms to ~1–2 s — and you currently set no
-`minInstances`, so that's real today. Removing it on functions means paying for
-always-warm instances, ×4. Workers use V8 isolates: effectively **no cold start**,
-running at the PoP nearest Twilio's egress. *Caveat:* both still read RTDB, and
-that round-trip to the DB's region is a latency floor Workers don't remove — so
-steady-state *warm* latency is comparable; the win is eliminating cold starts
-**and** the cost of avoiding them. (Parallelize the two RTDB reads to shave the
-data portion.)
+**Cost — ~$0–5/mo.** Workers Free: 100k requests/day, 10 ms CPU per request
+(waiting on subrequests isn't CPU). Workers Paid $5/mo for headroom — but see the
+cost ceiling below.
 
-**Cost — ~$0–5/mo.** Workers free tier: 100k requests/day and 10 ms *CPU* per
-request. Critically, time spent *waiting* on the RTDB/FCM subrequests is **not**
-CPU time, so these light handlers fit the free CPU cap. **$0** if volume stays
-under ~100k/day (plausible: a call = 1 webhook + a few status callbacks; an SMS =
-1). **$5/mo** buys Workers Paid (10M requests, higher CPU + subrequest limits) for
-headroom. Either way it's flat and cheap — no per-hour always-on infrastructure —
-and you also drop the webhook function invocations.
-
-**Why Apple stays a Cloud Function.** Move to the edge what *benefits* from it;
-leave Apple where it is:
-- Its gate is the **JWS cert chain**, not the WAF — Cloudflare can't tell a forged
-  POST from a real one, so fronting buys ~nothing.
-- **Not latency-sensitive** (fire-and-forget lifecycle events; Apple retries on
-  5xx), so the no-cold-start win doesn't apply.
-- **Low-volume** — not a volumetric target, negligible invocation cost.
-- Porting it is the **hardest, most dangerous** part: JWS chain verification + the
-  App Store Server API (JWT-authed with `apple_iap_key`). The plan already uses
-  `app-store-server-library`'s `SignedDataVerifier` (Node); hand-rolling chain
-  verification in WebCrypto is error-prone **and** security-critical (accept a
-  forged "renewed" event → free subscriptions).
-- It **belongs with `subscription.ts`** (shares `apple_iap_key`, writes expiry to
-  RTDB beside the Google RTDN consumer). One low-volume, JWS-gated function on
-  cloudfunctions.net is an acceptable residual — it reintroduces **no** origin-lock
-  need.
-
-### What this supersedes
-For the migrated Twilio webhooks, the Workers end-state makes baseline machinery
-unnecessary:
-- **§5.3 / §6.5 `X-Origin-Auth` header** — no separate origin to protect; the
-  Worker is the edge. (Belongs only to the interim proxy approach, and is moot
-  once the functions are deleted.)
-- **§5.1 Origin Rule host/SNI override** — the Worker serves the hostname
-  directly.
-- **§6.1 dual-URL-in-one-function** — not needed: during migration the old URL →
-  old function (its existing validation), the new URL → Worker (its own). Two
-  parallel implementations, each correct for its own URL.
-- **§6.6 `maxInstances`** — only needed on the remaining Apple function + callables.
-
-Still required: **§5.2 WAF rules** (now in front of the Worker), **§6.3 self-heal
-+ §7 tenant re-point**, **§6.4 Apple JWS**, **§6.1a fail-closed** (in the Worker).
+### Why Apple stays a Cloud Function
+- Its gate is the JWS chain (§6.4), not the WAF — fronting buys ~nothing.
+- Not latency-sensitive; low volume.
+- Porting JWS chain verification + the App Store Server API to WebCrypto is the
+  hardest and most security-critical part (accepting a forged "renewed" event →
+  free subscriptions).
+- It belongs with `subscription.ts` (shares `apple_iap_key`, writes beside the
+  Google RTDN consumer).
 
 ### Migration (zero-downtime)
-1. **Build + deploy the Worker** on a **Workers Custom Domain**
-   `dialcrest-hooks.peblet.be` (auto-provisions the cert; see §4 on the
-   first-vs-second-level-subdomain cert cost). Old functions keep serving
-   `*.cloudfunctions.net` — both run in parallel.
-2. **Smoke-test** the Worker with signed `curl`s (§11.9-style) and a real test
-   tenant.
-3. **Re-point tenants** to the Worker URL: self-heal (§6.3) for active users + the
-   Phase-4 backfill script for the long tail. The script is identical either way —
-   it only changes the host written into Twilio.
-4. **Watch** until no traffic hits the old function webhooks (§8 host counter).
-5. **Delete the four `onRequest` Twilio functions.** The raw webhook URL is gone —
-   no LB, no ingress config, no origin secret for these.
-
-Migrate path-by-path to de-risk: start with the trivial `twilioOutgoingCall` /
-`twilioCallStatusChanges`, then `twilioIncomingCall`, then `twilioIncomingMessage`.
+1. Build + deploy the Worker on the Custom Domain. Functions keep serving
+   `*.cloudfunctions.net`; both run in parallel, each validating its own URL.
+2. Smoke-test (§11.4) with a real test tenant.
+3. Flip `WEBHOOK_PUBLIC_BASE_URL`; the Phase-4 backfill re-points tenants.
+4. Watch until the four functions see no traffic (§8).
+5. Delete them.
 
 ### Downsides
-- **A real port, not a toggle:** signature validation, RTDB REST, FCM v1, OAuth
-  minting (~a few hundred lines + `wrangler` setup + secrets).
-- **Split runtime / duplicated logic** (TwiML shapes, `clientIdentity = accountSid`,
-  DB paths, FCM payload, fail-closed policy in two places). Mitigation: factor the
-  *pure* bits (TwiML builders, path helpers) into a shared TS module both import.
-- **Observability/tests split** across Cloudflare (`wrangler tail`,
-  Miniflare/vitest) and Cloud Logging/Jest.
-
-### Cost summary
-- Worker: **$0–5/mo**, flat — no per-hour infrastructure, no Google LB, no Cloud
-  Armor. Versus the alternative of paying for always-warm function instances just
-  to match the Worker's latency.
+- A real port (~a few hundred lines + `wrangler` + secrets).
+- Duplicated logic (TwiML shapes, `clientIdentity = accountSid`, DB paths, FCM
+  payload, fail-closed policy) until the functions are deleted — factor the pure
+  bits into a shared module.
+- Observability/tests split across Cloudflare and Cloud Logging/Jest.
 
 ### Hard cost ceiling under attack
-Cloudflare has **no literal "stop at €X" switch** (only billing *alerts*). But this
-design gives a **true hard ceiling** that fails the service closed rather than
-running up a bill — the accepted tradeoff — and for an attack specifically the
-economics are already favourable:
+- **Workers Free is itself the cap**: 100k requests/day account-wide plus a burst
+  limit; beyond it requests fail at €0 until the daily reset. Workers Paid removes
+  that cap (no native spend cap), so stay on Free to keep it.
+- **WAF rules run before the Worker** and are flat-rate, so blocked abuse doesn't
+  consume the daily budget.
+- **DDoS mitigation is unmetered.**
+- The GCP side is capped by `maxInstances` (§6.6) plus the existing GCP budget →
+  Pub/Sub → disable-billing automation.
 
-- **Workers Free is itself the cap.** 100,000 requests/day — **account-wide**,
-  shared across *all* Workers, not per-Worker — plus a ~1,000 req/min burst limit,
-  reset at 00:00 UTC. Exceed either and further requests simply **fail until the
-  window resets, at €0**. For four Twilio webhooks, 100k/day is large headroom, so
-  you only hit it under genuine abuse. **To keep the ceiling, stay on Workers
-  Free:** Workers *Paid* ($5/mo + request/CPU overage) removes the daily limit and
-  therefore the hard cap — there's no native spend cap on Paid (only a self-built
-  KV/Durable-Object counter returning 503 past a threshold, a soft limit whose own
-  check still bills).
-- **The WAF shields the budget.** WAF custom rules + rate-limiting rules (§5.2) run
-  **before** the Worker and are flat-rate (included on Free/Pro; the old
-  per-request-metered Rate Limiting product is deprecated). Blocked/rate-limited
-  requests **never invoke the Worker**, so abuse doesn't draw down the 100k/day.
-- **DDoS mitigation is unmetered on every plan.** A volumetric flood doesn't bill
-  bandwidth — the "a DDoS gave me a huge egress bill" failure mode (possible
-  against a raw cloud origin) doesn't apply once traffic is fronted here.
-
-Net: an attack is absorbed by unmetered DDoS mitigation + flat-rate WAF for €0, and
-anything that slips through burns the daily Worker budget and then goes dark at €0.
-Zone plan stays flat (Free €0 / Pro ~€20/mo); keep metered add-ons (R2, KV/D1/DO/
-Queues at scale, Images, Stream, Argo, Load Balancing, Spectrum, Bot Management)
-disabled, and set Billing → Notifications as a tripwire. The GCP Functions origin —
-the other variable-cost surface while webhooks still run there — is capped
-separately (already configured; a GCP budget → Pub/Sub → disable-billing automation).
-
-> Caveat: Cloudflare adjusts these free-tier daily/burst numbers periodically and
-> this is written against a knowledge cutoff — confirm the current limits and WAF
-> inclusions against Cloudflare's live docs before relying on exact figures.
+> Cloudflare adjusts free-tier limits periodically — confirm against the live
+> docs before relying on exact figures.
