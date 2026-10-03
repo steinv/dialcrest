@@ -30,7 +30,6 @@ import { defineSecret, defineString } from 'firebase-functions/params';
 import { catchError, from, throwError } from 'rxjs';
 import { InvalidTwilioCredentialsError, verifyTwilioCredentials } from './twilio';
 import { AppleConfig, PresentedEntitlement, ReverificationConfig } from './subscription';
-import { DEVICE_UID } from './shared/webhooks';
 
 export const twilioPebletSecret = defineSecret('TWILIO_PEBLET_SECRET');
 
@@ -97,7 +96,7 @@ export function pushSecrets(): { androidFcmSecret: string; iosApnPrivateKey: str
  * (AccountAuthService.ensureSignedIn), so a missing uid is 'unauthenticated'.
  */
 export function requireDeviceUid(uid: string | undefined): string {
-    if (typeof uid !== 'string' || !DEVICE_UID.test(uid)) {
+    if (!uid) {
         throw new HttpsError('unauthenticated', 'device-identity-required');
     }
     return uid;

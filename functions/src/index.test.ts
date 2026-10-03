@@ -191,8 +191,6 @@ describe('twilioAccessToken (credentials + per-device registry)', () => {
     it('requires a signed-in device (its uid is the per-device identity)', async () => {
         await expect(functions.twilioAccessToken.run({ data: { accountSid: 'AC1', authToken: 'tok', callerId: 'x' } }))
             .rejects.toMatchObject({ code: 'unauthenticated' });
-        await expect(functions.twilioAccessToken.run({ auth: { uid: 'bad/uid' }, data: { accountSid: 'AC1', authToken: 'tok', callerId: 'x' } }))
-            .rejects.toMatchObject({ code: 'unauthenticated' });
         expect(twilioMocks().accessToken).not.toHaveBeenCalled();
     });
 

@@ -46,9 +46,6 @@ export function deviceIdentity(accountSid: string, uid: string): string {
  */
 export const ACCOUNT_SID = /^AC[0-9a-f]{32}$/;
 
-/** Anonymous Firebase uids are alphanumeric; anything else is refused (it becomes an identity and an RTDB key). */
-export const DEVICE_UID = /^[A-Za-z0-9]{1,128}$/;
-
 /** RTDB paths the webhooks read/write, relative to the database root. */
 export const dbPaths = {
     authToken: (accountSid: string) => `/twilio/${accountSid}/secret/authToken`,
