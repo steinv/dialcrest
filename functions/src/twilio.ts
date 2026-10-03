@@ -11,6 +11,7 @@ import * as logger from 'firebase-functions/logger';
 import { FUNCTIONS_BASE_URL, isKnownWebhookUrl, isSignatureFailClosed, webhookPublicBaseUrl, webhookUrl } from './edge';
 import {
     WEBHOOK_PATHS,
+    accountExpiresAt,
     clientIdentity,
     dbPaths,
     emptyMessagingTwiml,
@@ -611,19 +612,25 @@ export function accessToken(accountSid: string, authToken: string, callerId: str
  * Checked against the account's (cached) subscription expiry first: a device
  * can hold a push binding independent of its access token's short TTL, so an
  * expired account could otherwise keep ringing even though twilioAccessToken
- * refuses to mint it a fresh token. This only reads the cached expiresAt (no
- * live store re-check, to keep the webhook fast) — the authoritative,
- * re-verified check lives in twilioAccessToken.
+ * refuses to mint it a fresh token. The account is entitled while its trial OR
+ * its cached paid entitlement (/twilio/{sid}/paid, kept current by
+ * subscription.ts) is live — checking the trial alone silenced paying users once
+ * their trial ended. Only cached expiries are read (no live store re-check, to
+ * keep the webhook fast) — the authoritative, re-verified check lives in
+ * twilioAccessToken.
  * @param request http request that initiated this function
  * @param response http response to be sent back to the caller
  */
 export async function callbackIncomingCall(request: Request, response: express.Response) {
     if (!await twilioSignatureGuard(request, response, INCOMING_CALL_PATH)) return;
     const accountSid = request.body.AccountSid;
-    const expiresAtSnapshot = await admin.database().ref(dbPaths.trialExpiresAt(accountSid)).once('value');
+    const [trialExpiresAt, paidExpiresAt] = await Promise.all([
+        admin.database().ref(dbPaths.trialExpiresAt(accountSid)).once('value').then((s) => s.val() as number | null),
+        admin.database().ref(dbPaths.paidExpiresAt(accountSid)).once('value').then((s) => s.val() as number | null),
+    ]);
     response.type('text/xml')
         .status(200)
-        .send(incomingCallTwiml(accountSid, expiresAtSnapshot.val() as number | null, Date.now()));
+        .send(incomingCallTwiml(accountSid, accountExpiresAt(trialExpiresAt, paidExpiresAt), Date.now()));
 }
 
 /**

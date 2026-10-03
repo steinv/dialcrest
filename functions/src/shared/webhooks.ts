@@ -33,6 +33,9 @@ export const dbPaths = {
     authToken: (accountSid: string) => `/twilio/${accountSid}/secret/authToken`,
     createdAt: (accountSid: string) => `/twilio/${accountSid}/createdAt`,
     trialExpiresAt: (accountSid: string) => `/twilio/${accountSid}/trial/expiresAt`,
+    /** Account-level cache of the paid store entitlement last verified for this account (subscription.ts). */
+    paid: (accountSid: string) => `/twilio/${accountSid}/paid`,
+    paidExpiresAt: (accountSid: string) => `/twilio/${accountSid}/paid/expiresAt`,
     messagingTokens: (accountSid: string) => `/twilio/${accountSid}/messaging-tokens`,
     messagingToken: (accountSid: string, fcmToken: string) => `/twilio/${accountSid}/messaging-tokens/${fcmToken}`,
 };
@@ -49,12 +52,23 @@ function escapeAttribute(value: string): string {
 }
 
 /**
+ * When the account's access to inbound calls ends: the later of its trial
+ * expiry and its cached paid-entitlement expiry (either may be absent). An
+ * account is entitled while EITHER is live — the same OR gate twilioAccessToken
+ * enforces (subscription.ts isSubscriptionActive). Null when neither exists.
+ */
+export function accountExpiresAt(trialExpiresAt: number | null, paidExpiresAt: number | null): number | null {
+    const known = [trialExpiresAt, paidExpiresAt].filter((value): value is number => typeof value === 'number');
+    return known.length === 0 ? null : Math.max(...known);
+}
+
+/**
  * TwiML for an inbound PSTN call: ring the tenant's registered app (Voice SDK
- * client) while its cached subscription expiry is in the future, otherwise
- * announce the number as unavailable. A device can hold a push binding
+ * client) while its subscription expiry (accountExpiresAt) is in the future,
+ * otherwise announce the number as unavailable. A device can hold a push binding
  * independent of its access token's short TTL, so this keeps an expired account
  * from ringing even though twilioAccessToken refuses it a fresh token. Only the
- * cached expiresAt is read (no live store re-check) to keep the webhook fast —
+ * cached expiries are read (no live store re-check) to keep the webhook fast —
  * the authoritative re-verified check lives in twilioAccessToken.
  */
 export function incomingCallTwiml(accountSid: string, expiresAt: number | null, now: number): string {

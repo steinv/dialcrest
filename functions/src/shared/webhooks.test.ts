@@ -1,5 +1,5 @@
 import { twiml } from 'twilio';
-import { emptyMessagingTwiml, incomingCallTwiml, outgoingCallTwiml } from './webhooks';
+import { accountExpiresAt, emptyMessagingTwiml, incomingCallTwiml, outgoingCallTwiml } from './webhooks';
 
 /**
  * The shared TwiML builders replace the twilio package's VoiceResponse /
@@ -49,5 +49,21 @@ describe('shared TwiML builders match the twilio package byte-for-byte', () => {
 
     it('empty messaging response', () => {
         expect(emptyMessagingTwiml()).toBe(new twiml.MessagingResponse().toString());
+    });
+});
+
+describe('accountExpiresAt (trial OR paid)', () => {
+    it('takes the later of the two expiries', () => {
+        expect(accountExpiresAt(100, 500)).toBe(500);
+        expect(accountExpiresAt(500, 100)).toBe(500);
+    });
+
+    it('uses whichever one exists', () => {
+        expect(accountExpiresAt(null, 500)).toBe(500);
+        expect(accountExpiresAt(100, null)).toBe(100);
+    });
+
+    it('is null when neither exists', () => {
+        expect(accountExpiresAt(null, null)).toBeNull();
     });
 });

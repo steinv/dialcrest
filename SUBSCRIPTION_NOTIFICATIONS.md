@@ -183,6 +183,29 @@ File: `functions/src/subscription.ts` (plus `functions/src/index.ts` wiring).
   from `req.data` into the gate. Keep the `failed-precondition`
   `'subscription-expired'` error for the false case.
 
+### Account paid cache (for the inbound-call webhook)
+
+The inbound-call webhook (`twilioIncomingCall`, and its Worker port) only knows
+the `AccountSid` and is presented no entitlement, so it can't run the OR gate's
+store branch. It originally checked only the trial — silencing **paying** users'
+inbound calls once their trial ended. Fixed with an account-level mirror of the
+verified paid state:
+
+- `/twilio/{accountSid}/paid` = `{ expiresAt, store, key, updatedAt }`, written
+  only from store-verified state, whenever a refresh runs: on presentation
+  (`twilioAccessToken` past the trial, `twilioVerify*Purchase`,
+  `twilioRefreshSubscription`) for the presenting account, and on store
+  notifications for the record's `lastAccountSid`.
+- `lastAccountSid` is therefore never overwritten with null by a notification
+  refresh (previously it was, which would have broken this link).
+- The same store record always overwrites the cache (a refund/expiry shortens
+  it); a different record only replaces it when it lasts longer.
+- The webhook rings while `max(trial.expiresAt, paid.expiresAt) > now`
+  (`accountExpiresAt` in `functions/src/shared/webhooks.ts`).
+- Known limit: a purchase used on several Twilio accounts keeps only the
+  *last* presenting account current via notifications; the others refresh their
+  cache whenever their app mints a token.
+
 ---
 
 ## Part 3 — Backend: notification handlers
