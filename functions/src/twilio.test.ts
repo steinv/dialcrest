@@ -8,7 +8,6 @@ import {
     callbackIncomingCall,
     callbackIncomingMessage,
     configureSelectedNumbers,
-    ensureWebhooksCurrent,
     getIncomingAppSid,
     isValidTwilioSignature,
     rememberAuthToken,
@@ -263,105 +262,6 @@ function fakeTwilioClient(opts: { apps?: Array<{ sid: string; friendlyName: stri
 function seedTwimlApps(accountSid: string, apps: { outgoing?: string; incoming?: string }) {
     return admin.database().ref(`/twilio/${accountSid}/twiml-app-sid`).set(apps);
 }
-
-describe('ensureWebhooksCurrent (self-heal onto the current webhook host)', () => {
-    const legacyNumber: FakeNumber = {
-        sid: 'PN1', voiceApplicationSid: 'AP-in',
-        smsUrl: `${LEGACY_BASE}/twilioIncomingMessage`, statusCallback: `${LEGACY_BASE}/twilioCallStatusChanges`,
-    };
-
-    beforeEach(() => {
-        process.env.WEBHOOK_PUBLIC_BASE_URL = EDGE_BASE;
-    });
-
-    it('is a single RTDB read (no Twilio client) when the tenant is already on the current host', async () => {
-        await admin.database().ref(`/twilio/${SID}/webhook-base-url`).set(EDGE_BASE);
-        await lastValueFrom(ensureWebhooksCurrent(SID, 'tok'));
-        expect(twilioFactory()).not.toHaveBeenCalled();
-    });
-
-    it('re-points both TwiML Apps and our numbers\' webhooks, then records the host', async () => {
-        await seedTwimlApps(SID, { outgoing: 'AP-out', incoming: 'AP-in' });
-        const client = fakeTwilioClient({ numbers: [legacyNumber] });
-        twilioFactory().mockReturnValue(client);
-
-        await lastValueFrom(ensureWebhooksCurrent(SID, 'tok'));
-
-        expect(client.appUpdates).toEqual(expect.arrayContaining([
-            { sid: 'AP-out', params: { voiceUrl: `${EDGE_BASE}/twilioOutgoingCall`, voiceMethod: 'POST' } },
-            { sid: 'AP-in', params: { voiceUrl: `${EDGE_BASE}/twilioIncomingCall`, voiceMethod: 'POST' } },
-        ]));
-        expect(client.numberUpdates).toEqual([{
-            sid: 'PN1',
-            params: {
-                statusCallback: `${EDGE_BASE}/twilioCallStatusChanges`, statusCallbackMethod: 'POST',
-                smsUrl: `${EDGE_BASE}/twilioIncomingMessage`, smsMethod: 'POST',
-            },
-        }]);
-        expect(dbTree().twilio[SID]['webhook-base-url']).toBe(EDGE_BASE);
-    });
-
-    it('leaves numbers that are not ours, and webhooks the tenant pointed elsewhere, untouched', async () => {
-        await seedTwimlApps(SID, { incoming: 'AP-in' });
-        const foreignApp: FakeNumber = { ...legacyNumber, sid: 'PN2', voiceApplicationSid: 'AP-someone-else' };
-        const customSms: FakeNumber = { ...legacyNumber, sid: 'PN3', smsUrl: 'https://tenant.example/sms' };
-        const client = fakeTwilioClient({ numbers: [foreignApp, customSms] });
-        twilioFactory().mockReturnValue(client);
-
-        await lastValueFrom(ensureWebhooksCurrent(SID, 'tok'));
-
-        expect(client.numberUpdates).toEqual([{
-            sid: 'PN3',
-            params: { statusCallback: `${EDGE_BASE}/twilioCallStatusChanges`, statusCallbackMethod: 'POST' },
-        }]);
-    });
-
-    it('never touches the restore snapshot', async () => {
-        await seedTwimlApps(SID, { incoming: 'AP-in' });
-        const original = { voiceUrl: 'https://tenant.example/voice', smsUrl: 'https://tenant.example/sms' };
-        await admin.database().ref(`/twilio/${SID}/numbers/PN1/original`).set(original);
-        twilioFactory().mockReturnValue(fakeTwilioClient({ numbers: [legacyNumber] }));
-
-        await lastValueFrom(ensureWebhooksCurrent(SID, 'tok'));
-
-        expect(dbTree().twilio[SID].numbers.PN1.original).toEqual(original);
-    });
-
-    it('drops the cache of a TwiML App the tenant deleted (20404) instead of failing', async () => {
-        await seedTwimlApps(SID, { outgoing: 'AP-out' });
-        const client = fakeTwilioClient();
-        client.appUpdate.mockRejectedValueOnce(Object.assign(new Error('not found'), { code: 20404 }));
-        twilioFactory().mockReturnValue(client);
-
-        await lastValueFrom(ensureWebhooksCurrent(SID, 'tok'));
-
-        expect(dbTree().twilio[SID]['twiml-app-sid']?.outgoing).toBeUndefined();
-        expect(dbTree().twilio[SID]['webhook-base-url']).toBe(EDGE_BASE);
-    });
-
-    it('swallows a Twilio failure and leaves the marker unset so the next call retries', async () => {
-        await seedTwimlApps(SID, { incoming: 'AP-in' });
-        const client = fakeTwilioClient();
-        client.numbersList.mockRejectedValue(new Error('Twilio down'));
-        twilioFactory().mockReturnValue(client);
-
-        await expect(lastValueFrom(ensureWebhooksCurrent(SID, 'tok'))).resolves.toBeUndefined();
-        expect(dbTree().twilio[SID]['webhook-base-url']).toBeUndefined();
-    });
-
-    it('re-points tenants back when the public host is rolled back', async () => {
-        await seedTwimlApps(SID, { outgoing: 'AP-out' });
-        await admin.database().ref(`/twilio/${SID}/webhook-base-url`).set(EDGE_BASE);
-        process.env.WEBHOOK_PUBLIC_BASE_URL = LEGACY_BASE;
-        const client = fakeTwilioClient();
-        twilioFactory().mockReturnValue(client);
-
-        await lastValueFrom(ensureWebhooksCurrent(SID, 'tok'));
-
-        expect(client.appUpdates).toEqual([{ sid: 'AP-out', params: { voiceUrl: `${LEGACY_BASE}/twilioOutgoingCall`, voiceMethod: 'POST' } }]);
-        expect(dbTree().twilio[SID]['webhook-base-url']).toBe(LEGACY_BASE);
-    });
-});
 
 describe('configureSelectedNumbers across a webhook host change', () => {
     beforeEach(() => {

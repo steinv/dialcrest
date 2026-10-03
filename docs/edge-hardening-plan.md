@@ -179,19 +179,20 @@ notifications to its devices; or, once fail-closed, black-hole its calls).
 - `isKnownWebhookUrl` — recognizes our webhook on any host we've used, so
   re-pointing and restoring work on both sides of the cutover.
 
-### 6.3 Self-heal existing Twilio config — **done**
-`ensureWebhooksCurrent(accountSid, authToken)` runs from `twilioAccessToken`,
-`twilioGetIncomingAppSid` and (first) `twilioConfigureNumbers`:
-- Marker `/twilio/<sid>/webhook-base-url` = the base URL last applied. Current →
-  one RTDB read, done. Storing the URL (not a version number) means rolling the
-  param back re-points tenants back automatically.
-- Stale → update the cached outgoing/incoming TwiML Apps' `voiceUrl`; on numbers
-  whose `voiceApplicationSid` is our incoming app, update `statusCallback` /
-  `smsUrl` **only where they still point at one of our hosts**; then set the
-  marker. A deleted app (20404) just drops its cache. Any other failure is logged,
-  swallowed, and retried next call (marker not advanced).
-- Uses the live credentials the callable carries; never touches the restore
-  snapshot.
+### 6.3 Backfill existing Twilio config — **done**
+Existing tenants are moved by an admin script, not by the callables (an earlier
+on-callable self-heal, `ensureWebhooksCurrent`, was removed):
+`functions/src/scripts/backfillWebhooks.ts`, run as
+`cd functions && npm run backfill:webhooks -- --to <host> [--account AC…] [--apply]`.
+- Dry run by default; `--to` must be one of our hosts; `--account` targets one
+  tenant (test tenant first).
+- Per tenant, with the stored Auth Token: update the cached outgoing/incoming
+  TwiML Apps' `voiceUrl`; on numbers whose `voiceApplicationSid` is our incoming
+  app, update `statusCallback` / `smsUrl` **only where they still point at one of
+  our hosts**. A deleted app (20404) just drops its cache. Never touches the
+  restore snapshot. Idempotent; also removes the old `webhook-base-url` marker.
+- Tenants with no stored token, or one Twilio rejects, are reported as skipped:
+  they move when they next run number configuration in the app.
 - Related fixes: `getOrCreateTwimlApp` corrects the `voiceUrl` of an app it finds
   by name; `configureSelectedNumbers` re-points a selected number on an old host
   and still restores a deselected one.
@@ -215,10 +216,11 @@ ID, a number) to `apple_iap_key` in `TWILIO_PEBLET_SECRET`; until then
 ### 6.7 Tests — **done**
 `twilio.test.ts`: function validates only its own URL (Worker-URL and cross-path
 signatures rejected), fail-closed on/off, token verified before storage,
-self-heal (re-point, foreign webhooks untouched, snapshot untouched, 20404,
-failure → retry, rollback), configure/restore across the host change, app found
-by name gets corrected. `index.test.ts`: Apple JWS genuine / unsigned / altered /
-wrong bundle / Production without and with `appAppleId`; self-heal wiring.
+configure/restore across the host change, app found by name gets corrected.
+`scripts/backfillWebhooks.test.ts`: re-point, dry run, already current, foreign
+webhooks untouched, snapshot untouched, 20404, no/rejected token, failure,
+rollback. `index.test.ts`: Apple JWS genuine / unsigned / altered /
+wrong bundle / Production without and with `appAppleId`.
 Apple fixtures use a throwaway PKI with Apple's marker OIDs
 (`src/testUtils/appleTestPki.ts`). `jest.config.js` now loads `slowBufferShim`
 in `setupFiles` (fixes an order-dependent suite failure on Node 24+).
@@ -236,12 +238,11 @@ with the WAF rules (§11). Nobody points at it yet → zero tenant risk. Smoke-t
 with signed `curl`s and a test tenant (§11.4).
 
 **Phase 3 — Cut over.** Set `WEBHOOK_PUBLIC_BASE_URL=https://dialcrest-hooks.peblet.be`
-and redeploy. New TwiML Apps/numbers get the Worker URL; existing tenants
-self-heal on their next callable. Not-yet-migrated tenants keep working on the
-functions.
+and redeploy. New TwiML Apps/numbers get the Worker URL. Not-yet-migrated
+tenants keep working on the functions.
 
-**Phase 4 — Backfill the long tail.** An admin script iterates tenants and runs
-the §6.3 re-point using the stored token, for tenants who haven't opened the app.
+**Phase 4 — Backfill.** Run the §6.3 script with `--to` the Worker host: dry run,
+then `--apply` on a test tenant (`--account`), then on all tenants.
 
 **Phase 5 — Fail-closed.** When `twilio_webhook_tokenless` from known tenants is ≈
 0, set `TWILIO_SIGNATURE_FAIL_CLOSED=true` (functions and Worker).
@@ -257,7 +258,8 @@ count is ≈ 0 for N days. The raw webhook origin is gone.
   (Cloud Monitoring per function). → 0 means Phase 6 is safe.
 - **Tokenless webhooks**: `jsonPayload.event="twilio_webhook_tokenless"`, split by
   `knownTenant`. Known ≈ 0 → Phase 5 is safe; unknown is the junk it will reject.
-- **Self-heal**: "Re-pointed … webhooks" / "Failed to re-point" log lines.
+- **Backfill**: the script's per-tenant output and summary (updated / current /
+  skipped / failed); re-run until nothing is left to update.
 - **Apple**: "Apple notification failed signature verification" warnings.
 - **Cloudflare analytics**: blocked / rate-limited counts per rule; watch for
   false positives on Twilio IPs.
@@ -268,8 +270,8 @@ count is ≈ 0 for N days. The raw webhook origin is gone.
 
 - **Phase 1** is additive.
 - **Worker misbehaving:** revert `WEBHOOK_PUBLIC_BASE_URL` to the functions host
-  and redeploy; tenants self-heal back on their next callable (the marker
-  compares against the URL), and the functions still validate their own URL. Only
+  and redeploy, then run the backfill with `--to` the functions host; the
+  functions still validate their own URL. Only
   possible while the functions exist — don't do Phase 6 until the Worker has been
   stable for a while.
 - **WAF too aggressive:** loosen or disable the specific rule.
@@ -353,7 +355,7 @@ the security invariants derived from this plan.
 - [x] 6.1a Fail-closed behind `TWILIO_SIGNATURE_FAIL_CLOSED` (default off) + tokenless logging
 - [x] 6.1b Verify Auth Token with Twilio before storing it
 - [x] 6.2 `WEBHOOK_PUBLIC_BASE_URL` (edge.ts)
-- [x] 6.3 Self-heal on callables (+ `webhook-base-url` marker)
+- [x] 6.3 Backfill script (`scripts/backfillWebhooks.ts`)
 - [x] 6.4 Apple JWS verification + README/SUBSCRIPTION_NOTIFICATIONS reconcile
 - [x] 6.6 `maxInstances` (global)
 - [x] 6.7 Tests
@@ -367,8 +369,8 @@ the security invariants derived from this plan.
 - [ ] Dedicated service account (RTDB Admin + FCM Admin) → `GOOGLE_SERVICE_ACCOUNT_JSON` Worker secret (worker/README.md)
 - [ ] Deploy; WAF + rate-limit rules (§11.2)
 - [ ] Smoke-test (§11.4)
-- [ ] **Phase 3**: flip `WEBHOOK_PUBLIC_BASE_URL`; confirm self-heal on a test tenant
-- [ ] **Phase 4**: backfill script for the long tail
+- [ ] **Phase 3**: flip `WEBHOOK_PUBLIC_BASE_URL`
+- [ ] **Phase 4**: run the backfill (test tenant first, then all)
 - [ ] **Phase 5**: `TWILIO_SIGNATURE_FAIL_CLOSED=true`
 - [ ] **Phase 6**: delete the four Twilio `onRequest` functions; update README URLs
 
@@ -433,7 +435,7 @@ cost ceiling below.
 1. Build + deploy the Worker on the Custom Domain. Functions keep serving
    `*.cloudfunctions.net`; both run in parallel, each validating its own URL.
 2. Smoke-test (§11.4) with a real test tenant.
-3. Flip `WEBHOOK_PUBLIC_BASE_URL`; self-heal + Phase-4 backfill re-point tenants.
+3. Flip `WEBHOOK_PUBLIC_BASE_URL`; the Phase-4 backfill re-points tenants.
 4. Watch until the four functions see no traffic (§8).
 5. Delete them.
 

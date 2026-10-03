@@ -9,7 +9,8 @@
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
-    "test": "jest"
+    "test": "jest",
+    "backfill:webhooks": "npm run build && node lib/scripts/backfillWebhooks.js"
   },
   "engines": {
     "node": "24"

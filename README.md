@@ -129,8 +129,9 @@ The four Twilio webhooks verify `X-Twilio-Signature` with the tenant's Auth Toke
 (stored server-side for exactly that purpose, see [Security](#security)). They are
 being migrated to the Cloudflare Worker in `worker/`: the
 `WEBHOOK_PUBLIC_BASE_URL` param in `functions/.env.twilio-phone-peblet` decides
-which host gets written into tenants' Twilio config, and tenants re-point
-themselves on their next app session. `TWILIO_SIGNATURE_FAIL_CLOSED` in the same
+which host gets written into newly configured Twilio resources, and
+`npm run backfill:webhooks` (in `functions/`, see
+`functions/src/scripts/backfillWebhooks.ts`) moves existing tenants. `TWILIO_SIGNATURE_FAIL_CLOSED` in the same
 file rejects webhooks for accounts with no stored token once the rollout is done.
 Every function is capped at 10 instances (`setGlobalOptions` in `index.ts`).
 

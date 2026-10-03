@@ -4,7 +4,8 @@ import { defineBoolean, defineString } from 'firebase-functions/params';
  * Webhook host configuration, see docs/edge-hardening-plan.md. The Twilio
  * webhooks are moving from these Cloud Functions to a Cloudflare Worker on
  * EDGE_BASE_URL; WEBHOOK_PUBLIC_BASE_URL decides which of the two gets written
- * into tenants' Twilio config, so the cutover is a config change.
+ * into newly configured Twilio resources. Existing tenants are moved by
+ * scripts/backfillWebhooks.ts.
  *
  * NOTE: a param's `default` is only applied by the CLI at deploy time; at runtime
  * `.value()` is just process.env (empty when unset, e.g. in tests). The getters

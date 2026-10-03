@@ -65,7 +65,9 @@ reference implementation).
 4. **WAF / rate limiting / bots** for the hostname — docs/edge-hardening-plan.md §11.2.
 5. **Smoke-test** with a signed request (§11.4), then cut tenants over by setting
    `WEBHOOK_PUBLIC_BASE_URL=https://dialcrest-hooks.peblet.be` in
-   `functions/.env.twilio-phone-peblet` and deploying the functions.
+   `functions/.env.twilio-phone-peblet`, deploying the functions, and running
+   the backfill (`functions/src/scripts/backfillWebhooks.ts`): first
+   `--account <test tenant>`, then all tenants, each as a dry run before `--apply`.
 
 ## Operate
 

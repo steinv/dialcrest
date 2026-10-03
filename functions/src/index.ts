@@ -22,7 +22,6 @@ import {
     configureSelectedNumbers,
     deviceSubscription,
     recordDeviceCheckIn,
-    ensureWebhooksCurrent,
     registerMessagingDevice,
     linkTwilioAccount,
     rememberAuthToken,
@@ -150,7 +149,6 @@ exports.twilioAccessToken = onCall(
                 switchMap((entitled) => entitled ?
                     accessToken(accountSid, authToken, req.data['callerId'], uid) :
                     throwError(() => new HttpsError('failed-precondition', 'subscription-expired'))),
-                switchMap((jwt) => ensureWebhooksCurrent(accountSid, authToken).pipe(map(() => jwt))),
             ),
         );
     }
@@ -264,9 +262,7 @@ exports.twilioRefreshSubscription = onCall(
  * matches ours (i.e. whether it's configured to ring this app).
  */
 exports.twilioGetIncomingAppSid = onCall({ enforceAppCheck: true, region: REGION, cors: true, timeoutSeconds: 30 },
-    (req) => lastValueFrom(getIncomingAppSid(req.data['accountSid'], req.data['authToken']).pipe(
-        switchMap((sid) => ensureWebhooksCurrent(req.data['accountSid'], req.data['authToken']).pipe(map(() => sid))),
-    ))
+    (req) => lastValueFrom(getIncomingAppSid(req.data['accountSid'], req.data['authToken']))
 );
 
 /**
@@ -275,10 +271,7 @@ exports.twilioGetIncomingAppSid = onCall({ enforceAppCheck: true, region: REGION
  * configureSelectedNumbers in twilio.ts for the snapshot/restore behavior.
  */
 exports.twilioConfigureNumbers = onCall({ enforceAppCheck: true, region: REGION, cors: true, timeoutSeconds: 30 },
-    // Self-heal first, so the two never update the same number concurrently.
-    (req) => lastValueFrom(ensureWebhooksCurrent(req.data['accountSid'], req.data['authToken']).pipe(
-        switchMap(() => configureSelectedNumbers(req.data['accountSid'], req.data['authToken'], req.data['selectedSids'])),
-    ))
+    (req) => lastValueFrom(configureSelectedNumbers(req.data['accountSid'], req.data['authToken'], req.data['selectedSids']))
 );
 
 /**

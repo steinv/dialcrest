@@ -44,13 +44,14 @@ rules must not be broken:
   from request headers (`Host`, `X-Forwarded-Host`, …); those are spoofable. The
   functions validate only `FUNCTIONS_BASE_URL/<path>`; the Worker only
   `https://dialcrest-hooks.peblet.be/<path>`.
-- **`WEBHOOK_PUBLIC_BASE_URL` is only the host written into Twilio.** Changing it
-  re-points tenants (self-heal on their next callable); it must never change what
-  an endpoint validates against. Keep the old endpoint running until its traffic
+- **`WEBHOOK_PUBLIC_BASE_URL` is only the host written into Twilio** for newly
+  configured TwiML Apps and numbers; existing tenants move only when
+  `functions/src/scripts/backfillWebhooks.ts` is run. It must never change what an
+  endpoint validates against. Keep the old endpoint running until its traffic
   drains.
 - **Don't alter the webhook body, path, or query string** anywhere (code or
   Cloudflare rules). The Twilio HMAC covers URL + sorted POST params.
-- **Self-heal only touches what's ours.** Re-pointing updates our TwiML Apps and
+- **The backfill only touches what's ours.** Re-pointing updates our TwiML Apps and
   only those number webhooks that still point at one of our hosts, and never
   rewrites the `numbers/<sid>/original` restore snapshot.
 - **Worker and functions must not drift** while both exist: TwiML shapes,

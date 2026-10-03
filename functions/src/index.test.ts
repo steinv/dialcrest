@@ -28,8 +28,6 @@ jest.mock('./twilio', () => ({
     getIncomingAppSid: jest.fn(),
     configureSelectedNumbers: jest.fn(),
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    ensureWebhooksCurrent: jest.fn(() => require('rxjs').of(undefined)),
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     registerMessagingDevice: jest.fn(() => require('rxjs').of(undefined)),
     callbackIncomingCall: jest.fn(),
     callbackOutgoingCall: jest.fn(),
@@ -384,26 +382,6 @@ describe('twilioAppleNotifications webhook', () => {
         const production = notification({ environment: 'Production', bundleId: testAppleConfig.bundleId, appAppleId: 42, signedTransactionInfo: signedTx });
         const res = await post({ signedPayload: appleSignedJws(production) });
         expect(res.status).toHaveBeenCalledWith(200);
-    });
-});
-
-describe('webhook self-heal triggers (ensureWebhooksCurrent)', () => {
-    it('twilioAccessToken re-points the tenant after minting', async () => {
-        await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
-        await functions.twilioAccessToken.run({ auth: DEVICE, data: { accountSid: 'AC1', authToken: 'tok', callerId: 'x' } });
-        expect(twilioMocks().ensureWebhooksCurrent).toHaveBeenCalledWith('AC1', 'tok');
-    });
-
-    it('twilioConfigureNumbers self-heals before configuring numbers', async () => {
-        const order: string[] = [];
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { of } = require('rxjs');
-        twilioMocks().ensureWebhooksCurrent.mockImplementationOnce(() => { order.push('heal'); return of(undefined); });
-        twilioMocks().configureSelectedNumbers.mockImplementationOnce(() => {
-            order.push('configure'); return of({ configured: [], restored: [] });
-        });
-        await functions.twilioConfigureNumbers.run({ data: { accountSid: 'AC1', authToken: 'tok', selectedSids: [] } });
-        expect(order).toEqual(['heal', 'configure']);
     });
 });
 

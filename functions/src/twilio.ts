@@ -9,7 +9,7 @@ import AccessToken, { AccessTokenOptions } from 'twilio/lib/jwt/AccessToken';
 import admin from 'firebase-admin';
 import { Database } from 'firebase-admin/database';
 import * as logger from 'firebase-functions/logger';
-import { FUNCTIONS_BASE_URL, isKnownWebhookUrl, isSignatureFailClosed, webhookPublicBaseUrl, webhookUrl } from './edge';
+import { FUNCTIONS_BASE_URL, isKnownWebhookUrl, isSignatureFailClosed, webhookUrl } from './edge';
 import {
     ACCOUNT_SID,
     DeviceRecord,
@@ -316,8 +316,7 @@ function twimlAppSidRef(accountSid: string, direction: 'outgoing' | 'incoming') 
  * find-or-create repoints it at a live app.
  *
  * An app found by name (rather than created) may predate a webhook host change,
- * so its voiceUrl is corrected on the way into the cache — ensureWebhooksCurrent
- * only re-points apps that are already cached.
+ * so its voiceUrl is corrected on the way into the cache.
  */
 function getOrCreateTwimlApp(
     client: Twilio, accountSid: string, direction: 'outgoing' | 'incoming', friendlyName: string, voiceUrl: string,
@@ -522,97 +521,6 @@ export function configureSelectedNumbers(
             return from(twimlAppSidRef(accountSid, 'incoming').remove()).pipe(switchMap(() => attempt()));
         }),
     );
-}
-
-function webhookBaseMarkerRef(accountSid: string) {
-    return admin.database().ref(`/twilio/${accountSid}/webhook-base-url`);
-}
-
-/**
- * Self-heal a tenant's Twilio config onto the current webhook host
- * (docs/edge-hardening-plan.md §6.3). Existing TwiML Apps and numbers keep
- * whatever URL they were configured with — the cached app SID is never
- * re-checked on hot paths and numbers carry statusCallback/smsUrl directly — so
- * when WEBHOOK_PUBLIC_BASE_URL changes, each tenant is re-pointed the next time
- * its app hits a callable, using the live credentials that callable carries.
- *
- * The marker /twilio/{accountSid}/webhook-base-url records the base URL the
- * tenant was last re-pointed to. Comparing against the base URL itself (not a
- * version counter) means a rollback of the param re-points tenants back with no
- * extra step. When current — the steady state — this is one RTDB read.
- *
- * Only touches what is ours: the cached outgoing/incoming TwiML Apps, and on
- * numbers routed to our incoming app only the statusCallback/smsUrl fields that
- * still point at one of our known hosts (a webhook the tenant re-pointed
- * elsewhere by hand is left alone). The restore snapshot is never touched.
- *
- * Best-effort like rememberAuthToken: failures are logged and swallowed so they
- * can't break the callable; the marker is only advanced after every update
- * succeeded, so a failure is retried on the next call.
- */
-export function ensureWebhooksCurrent(accountSid: string, authToken: string): Observable<void> {
-    if (typeof accountSid !== 'string' || accountSid === '' || typeof authToken !== 'string' || authToken === '') {
-        return of(undefined);
-    }
-    const publicBase = webhookPublicBaseUrl();
-    const marker = webhookBaseMarkerRef(accountSid);
-    return from(marker.once('value')).pipe(
-        switchMap((snapshot) => snapshot.val() === publicBase ?
-            of(undefined) :
-            from(repointWebhooks(twilio(accountSid, authToken), accountSid)).pipe(
-                switchMap(() => from(marker.set(publicBase))),
-                map(() => console.log(`Re-pointed ${accountSid}'s Twilio webhooks to ${publicBase}`)),
-            )),
-        catchError((error) => {
-            console.error(`Failed to re-point ${accountSid}'s Twilio webhooks to ${publicBase}`, error);
-            return of(undefined);
-        }),
-    );
-}
-
-async function repointWebhooks(client: Twilio, accountSid: string): Promise<void> {
-    const [outgoingAppSid, incomingAppSid] = await Promise.all([
-        twimlAppSidRef(accountSid, 'outgoing').once('value').then((s) => s.val() as string | null),
-        twimlAppSidRef(accountSid, 'incoming').once('value').then((s) => s.val() as string | null),
-    ]);
-    await Promise.all([
-        outgoingAppSid ? repointTwimlApp(client, accountSid, 'outgoing', outgoingAppSid, webhookUrl(OUTGOING_CALL_PATH)) : undefined,
-        incomingAppSid ? repointTwimlApp(client, accountSid, 'incoming', incomingAppSid, webhookUrl(INCOMING_CALL_PATH)) : undefined,
-    ]);
-    if (!incomingAppSid) return; // no incoming app → no number of ours to re-point
-
-    const desired = { statusCallback: webhookUrl(STATUS_CALLBACK_PATH), smsUrl: webhookUrl(INCOMING_MESSAGE_PATH) };
-    const numbers = await client.incomingPhoneNumbers.list({ limit: 1000 });
-    await Promise.all(numbers
-        .filter((number) => number.voiceApplicationSid === incomingAppSid)
-        .map((number) => {
-            const update: { statusCallback?: string; statusCallbackMethod?: string; smsUrl?: string; smsMethod?: string } = {};
-            if (number.statusCallback !== desired.statusCallback && isKnownWebhookUrl(number.statusCallback, STATUS_CALLBACK_PATH)) {
-                update.statusCallback = desired.statusCallback;
-                update.statusCallbackMethod = 'POST';
-            }
-            if (number.smsUrl !== desired.smsUrl && isKnownWebhookUrl(number.smsUrl, INCOMING_MESSAGE_PATH)) {
-                update.smsUrl = desired.smsUrl;
-                update.smsMethod = 'POST';
-            }
-            return Object.keys(update).length === 0 ? undefined : client.incomingPhoneNumbers(number.sid).update(update);
-        }));
-}
-
-/**
- * Point a cached TwiML App at `voiceUrl`. If the tenant deleted the app in the
- * console (20404), drop the stale cache instead of failing: getOrCreateTwimlApp
- * recreates it — with the current URL — the next time it's needed.
- */
-async function repointTwimlApp(
-    client: Twilio, accountSid: string, direction: 'outgoing' | 'incoming', appSid: string, voiceUrl: string,
-): Promise<void> {
-    try {
-        await client.applications(appSid).update({ voiceUrl, voiceMethod: 'POST' });
-    } catch (error) {
-        if ((error as { code?: number })?.code !== 20404) throw error;
-        await twimlAppSidRef(accountSid, direction).remove();
-    }
 }
 
 /**
