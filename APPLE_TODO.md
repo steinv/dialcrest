@@ -38,7 +38,8 @@ then `firebase functions:secrets:set TWILIO_PEBLET_SECRET` (see the header of
 `functions/src/index.ts`). Verification (`verifyApplePurchase`) needs this too,
 so nothing Apple-side works until it's set. `appAppleId` is the app's numeric
 Apple ID (App Store Connect → App Information → Apple ID); without it, Production
-App Store Server Notifications fail signature verification and are rejected.
+App Store Server Notifications **and Production purchases presented by the app**
+fail signature verification and are rejected.
 
 ## 3. ~~Hardening: verify the Apple notification JWS signature~~ (done)
 
@@ -92,12 +93,19 @@ post-trial problem** — it breaks the initial purchase verify too; it's only
 masked today because the whole Apple path is parked (no secret/account, §2), so
 nothing runs.
 
-Resolve before un-parking iOS. Preferred fix: enable **StoreKit 2** in the
+**Update:** the backend now *verifies* the presented `signedTransactionInfo`
+(`verifyPresentedAppleTransaction`: Apple chain, signature, bundle id,
+environment) before trusting its `originalTransactionId` — previously it only
+decoded it, so a forged JWS could name another customer's subscription. That makes
+a real StoreKit 2 JWS **required**: a StoreKit 1 receipt is rejected outright.
+Production transactions also need `appAppleId` (section 2).
+
+Resolve before un-parking iOS. Required fix: enable **StoreKit 2** in the
 plugin so `serverVerificationData` is the transaction's JWS — this also lines up
 with §4 (StoreKit 2 `currentEntitlements` for prompt-free recovery), so do both
-together. Alternative: keep StoreKit 1 and validate the receipt server-side via
-the App Store Server API receipt path instead of JWS-decoding it. Whichever is
-chosen, add a sandbox test that a real device-issued entitlement decodes.
+together. (Keeping StoreKit 1 would instead need a separate, server-side
+receipt-validation path.) Add a sandbox test that a real device-issued
+entitlement verifies.
 
 ## 6. Testing (needs the account + a sandbox tester)
 

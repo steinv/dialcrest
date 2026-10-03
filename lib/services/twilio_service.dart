@@ -443,7 +443,7 @@ class TwilioService {
     try {
       final token = await FirebaseMessaging.instance.getToken();
       if (token == null) return;
-      await _firebaseFunctions.httpsCallable('twilioRegisterMessagingDevice').call({
+      await _callWithIdentityRecovery('twilioRegisterMessagingDevice', {
         'accountSid': accountSid,
         // Required: the backend only registers a device for an account whose
         // Auth Token it can verify (pushes carry the message text).
@@ -862,9 +862,27 @@ class TwilioService {
     }
   }
 
+  /// Calls a callable that identifies this device by its anonymous Firebase uid
+  /// (twilioAccessToken, twilioRegisterMessagingDevice). If the backend rejects
+  /// the identity as 'unauthenticated' — the anonymous user was deleted by
+  /// Firebase's auto-cleanup mid-session — recreate/re-link it and retry once,
+  /// so an expired anonymous account never costs a user calls or notifications.
+  Future<HttpsCallableResult<dynamic>> _callWithIdentityRecovery(
+    String name,
+    Map<String, dynamic> data,
+  ) async {
+    try {
+      return await _firebaseFunctions.httpsCallable(name).call(data);
+    } on FirebaseFunctionsException catch (e) {
+      if (e.code != 'unauthenticated') rethrow;
+      await AccountAuthService.instance.recoverIdentity(accountSid, authToken);
+      return await _firebaseFunctions.httpsCallable(name).call(data);
+    }
+  }
+
   Future<String> _mintAccessToken() async {
     try {
-      final response = await _firebaseFunctions.httpsCallable('twilioAccessToken').call({
+      final response = await _callWithIdentityRecovery('twilioAccessToken', {
         'accountSid': accountSid,
         'authToken': authToken,
         'callerId': currentPhoneNumber ?? '',

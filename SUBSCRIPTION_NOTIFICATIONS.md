@@ -219,11 +219,25 @@ everyone on the line. So entitlement is resolved per **device**:
   .onEntitlementVerified`), re-registering calls and SMS at once instead of at
   the next launch.
 
+- **Pointer survives a lapse**: whenever the store returns a record, the device
+  points at it even if it has currently lapsed — its expiry already decides
+  reachability, and a renewal arriving later (billing retry → store
+  notification) reaches the device again without it checking in.
+- **Presented Apple entitlements are signature-verified**
+  (`verifyPresentedAppleTransaction`) before their `originalTransactionId` is
+  used, so a forged JWS can't borrow another customer's subscription.
+- **Firebase anonymous-account expiry** (~30 days, regardless of activity) has
+  no effect on entitlement: data is keyed by `accountSid`/store identity, never
+  by uid. If a callable rejects a deleted uid as `unauthenticated`, the app
+  recreates the identity and retries once (`_callWithIdentityRecovery`,
+  `AccountAuthService.recoverIdentity`); the device then registers under its new
+  uid/identity on that call. Registering its FCM token deletes the same install's
+  records under older uids, so a stale record's pointer can't keep notifying
+  whoever uses that install now.
 
 Accepted consequences: a store outage refuses outgoing calls beyond the trial
 but keeps the device's pointer (its record still governs ringing); devices not
-seen for a year are ignored; Firebase anonymous-uid recycling gives a device a
-new identity at its next token mint.
+seen for a year are ignored.
 
 Separately: a store notification (no account) no longer overwrites a paid
 record's `lastAccountSid` with null.

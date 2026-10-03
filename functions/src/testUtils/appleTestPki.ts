@@ -69,3 +69,24 @@ export function appleSignedJws(payload: object): string {
     const signature = crypto.sign('sha256', Buffer.from(signingInput), { key: LEAF_PRIVATE_KEY_PEM, dsaEncoding: 'ieee-p1363' });
     return `${signingInput}.${signature.toString('base64url')}`;
 }
+
+/**
+ * An app-presented `signedTransactionInfo`, genuinely signed by the test chain
+ * (trust it with setAppleVerificationForTests). Sandbox + the test bundle id by
+ * default, as the app would send it.
+ */
+export function appleSignedTransaction(fields: {
+    originalTransactionId: string; productId: string; bundleId?: string; environment?: 'Sandbox' | 'Production';
+}): string {
+    return appleSignedJws({
+        transactionId: `tx-${fields.originalTransactionId}`,
+        originalTransactionId: fields.originalTransactionId,
+        productId: fields.productId,
+        bundleId: fields.bundleId ?? 'be.peblet.dialcrest',
+        environment: fields.environment ?? 'Sandbox',
+        type: 'Auto-Renewable Subscription',
+        // Fixed, inside the test chain's validity (offline verification checks the
+        // certificates against signedDate) — independent of tests' fake clocks.
+        signedDate: Date.UTC(2027, 0, 1),
+    });
+}

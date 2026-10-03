@@ -568,6 +568,31 @@ describe('callbackIncomingMessage notifies entitled devices only', () => {
 });
 
 describe('device registry writes', () => {
+    it('registerMessagingDevice drops records of the same install under older anonymous uids', async () => {
+        const db = admin.database();
+        await db.ref('/twilio/AC1/devices/oldUid').set({ fcmToken: 'fcmA', subscription: 'subscriptions/apple/orig1', lastSeen: 1 });
+        await db.ref('/twilio/AC1/devices/otherPhone').set({ fcmToken: 'fcmB', lastSeen: 1 });
+        await lastValueFrom(registerMessagingDevice('AC1', 'newUid', 'fcmA'));
+        const devices = dbTree().twilio.AC1.devices;
+        expect(devices.oldUid).toBeUndefined(); // its pointer can no longer reach whoever uses this install now
+        expect(devices.otherPhone).toEqual({ fcmToken: 'fcmB', lastSeen: 1 });
+        expect(devices.newUid).toEqual({ fcmToken: 'fcmA', lastSeen: expect.any(Number) });
+    });
+
+    it('a stale record\'s subscription no longer notifies the install once a new uid registers it (end to end)', async () => {
+        const db = admin.database();
+        await db.ref('/twilio/AC1/trial/expiresAt').set(Date.now() - DAY);
+        await db.ref('/subscriptions/apple/orig1').set({ expiresAt: Date.now() + DAY });
+        await db.ref('/twilio/AC1/devices/oldUid').set({ fcmToken: 'fcmA', subscription: 'subscriptions/apple/orig1', lastSeen: Date.now() });
+        await lastValueFrom(registerMessagingDevice('AC1', 'newUid', 'fcmA')); // a different, unsubscribed person on this install
+        const send = jest.fn().mockResolvedValue('ok');
+        (admin as unknown as { messaging: () => unknown }).messaging = () => ({ send });
+        await seedAuthToken('AC1', AUTH_TOKEN);
+        const { response } = fakeResponse();
+        await callbackIncomingMessage(signedWebhook('twilioIncomingMessage', { AccountSid: 'AC1', From: '+321', To: '+322', Body: 'x' }), response);
+        expect(send).not.toHaveBeenCalled();
+    });
+
     it('recordDeviceCheckIn stores the pointer and lastSeen without touching the FCM token', async () => {
         await admin.database().ref('/twilio/AC1/devices/devA').set({ fcmToken: 'fcmA', lastSeen: 1 });
         await lastValueFrom(recordDeviceCheckIn('AC1', 'devA', 'subscriptions/apple/orig1'));

@@ -11,11 +11,13 @@ import {
     verifyApplePurchase,
     handleGoogleNotification,
     verifyGooglePurchase,
+    setAppleVerificationForTests,
     PresentedEntitlement,
     ReverificationConfig,
 } from './subscription';
 import { testAppleConfig, appleSubscriptionStatusesResponse, mockAppleFetch, signedPayload } from './testUtils/appleFixtures';
 import { googleSubscriptionV2Response } from './testUtils/googleFixtures';
+import { appleSignedJws, appleSignedTransaction, testAppleRootCertificate } from './testUtils/appleTestPki';
 
 jest.mock('firebase-admin');
 jest.mock('googleapis', () => require('./testUtils/googleFixtures').mockGoogleapisModule());
@@ -34,6 +36,10 @@ function googleMocks() {
 }
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+// App-presented Apple transactions are signature-verified: trust the throwaway test CA.
+beforeAll(() => setAppleVerificationForTests([testAppleRootCertificate]));
+afterAll(() => setAppleVerificationForTests(null));
 
 const reverificationConfig: ReverificationConfig = {
     apple: testAppleConfig,
@@ -97,7 +103,7 @@ describe('isSubscriptionActive (the trial-OR-entitlement gate)', () => {
         const fetchMock = mockAppleFetch({});
         const entitlement: PresentedEntitlement = {
             store: 'app_store',
-            signedTransactionInfo: signedPayload({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }),
+            signedTransactionInfo: appleSignedTransaction({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }),
         };
         const active = await lastValueFrom(isSubscriptionActive('AC1', entitlement, reverificationConfig));
         expect(active).toBe(true);
@@ -118,7 +124,7 @@ describe('isSubscriptionActive (the trial-OR-entitlement gate)', () => {
         });
         const entitlement: PresentedEntitlement = {
             store: 'app_store',
-            signedTransactionInfo: signedPayload({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }),
+            signedTransactionInfo: appleSignedTransaction({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }),
         };
         const active = await lastValueFrom(isSubscriptionActive('AC1', entitlement, reverificationConfig));
         expect(active).toBe(true);
@@ -139,7 +145,7 @@ describe('isSubscriptionActive (the trial-OR-entitlement gate)', () => {
         });
         const entitlement: PresentedEntitlement = {
             store: 'app_store',
-            signedTransactionInfo: signedPayload({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }),
+            signedTransactionInfo: appleSignedTransaction({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }),
         };
         const active = await lastValueFrom(isSubscriptionActive('AC1', entitlement, reverificationConfig));
         expect(active).toBe(false);
@@ -163,7 +169,7 @@ describe('isSubscriptionActive (the trial-OR-entitlement gate)', () => {
         (global as unknown as { fetch: typeof fetch }).fetch = jest.fn().mockRejectedValue(new Error('network down')) as unknown as typeof fetch;
         const entitlement: PresentedEntitlement = {
             store: 'app_store',
-            signedTransactionInfo: signedPayload({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }),
+            signedTransactionInfo: appleSignedTransaction({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }),
         };
         const active = await lastValueFrom(isSubscriptionActive('AC1', entitlement, reverificationConfig));
         expect(active).toBe(false);
@@ -188,7 +194,7 @@ describe('verifyEntitlement', () => {
         });
         const status = await lastValueFrom(verifyEntitlement(
             'AC1',
-            { store: 'app_store', signedTransactionInfo: signedPayload({ originalTransactionId: 'orig1', productId: 'yearly-dialcrest-license' }) },
+            { store: 'app_store', signedTransactionInfo: appleSignedTransaction({ originalTransactionId: 'orig1', productId: 'yearly-dialcrest-license' }) },
             reverificationConfig,
         ));
         expect(status).toEqual({ plan: 'yearly', expiresAt: 100000, autoRenew: true, isActive: true });
@@ -227,7 +233,7 @@ describe('Apple purchase verification', () => {
             },
         });
         const status = await lastValueFrom(verifyApplePurchase(
-            'AC1', signedPayload({ originalTransactionId: 'orig1', productId: 'yearly-dialcrest-license' }), testAppleConfig,
+            'AC1', appleSignedTransaction({ originalTransactionId: 'orig1', productId: 'yearly-dialcrest-license' }), testAppleConfig,
         ));
         expect(status.plan).toBe('yearly');
         expect(status.expiresAt).toBe(999999);
@@ -243,7 +249,7 @@ describe('Apple purchase verification', () => {
             },
         });
         const status = await lastValueFrom(verifyApplePurchase(
-            'AC1', signedPayload({ originalTransactionId: 'orig-sandbox', productId: 'monthly-dialcrest-license' }), testAppleConfig,
+            'AC1', appleSignedTransaction({ originalTransactionId: 'orig-sandbox', productId: 'monthly-dialcrest-license' }), testAppleConfig,
         ));
         expect(status.plan).toBe('monthly');
     });
@@ -251,7 +257,7 @@ describe('Apple purchase verification', () => {
     it('throws when the transaction is found in neither production nor sandbox', async () => {
         mockAppleFetch({});
         await expect(lastValueFrom(verifyApplePurchase(
-            'AC1', signedPayload({ originalTransactionId: 'missing', productId: 'monthly-dialcrest-license' }), testAppleConfig,
+            'AC1', appleSignedTransaction({ originalTransactionId: 'missing', productId: 'monthly-dialcrest-license' }), testAppleConfig,
         ))).rejects.toThrow();
     });
 
@@ -265,7 +271,7 @@ describe('Apple purchase verification', () => {
             },
         });
         await lastValueFrom(verifyApplePurchase(
-            'AC-presenting', signedPayload({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }), testAppleConfig,
+            'AC-presenting', appleSignedTransaction({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }), testAppleConfig,
         ));
         const record = dbTree().subscriptions.apple.orig1;
         expect(record.lastAccountSid).toBe('AC-presenting');
@@ -458,7 +464,7 @@ describe('paid records stay store-keyed', () => {
     it('verifying a purchase writes nothing under the Twilio account', async () => {
         mockApple(5_000_000);
         await lastValueFrom(verifyApplePurchase(
-            'AC1', signedPayload({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }), testAppleConfig,
+            'AC1', appleSignedTransaction({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }), testAppleConfig,
         ));
         mockGoogle(6_000_000);
         await lastValueFrom(verifyGooglePurchase('AC1', 'tokA', 'pkg', '{}'));
@@ -468,7 +474,7 @@ describe('paid records stay store-keyed', () => {
     it('an Apple notification keeps lastAccountSid', async () => {
         mockApple(5_000_000);
         await lastValueFrom(verifyApplePurchase(
-            'AC1', signedPayload({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }), testAppleConfig,
+            'AC1', appleSignedTransaction({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }), testAppleConfig,
         ));
         mockApple(9_000_000);
         const tx = signedPayload({ transactionId: 't2', originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license', expiresDate: 1 });
@@ -490,7 +496,7 @@ describe('resolveDeviceEntitlement (per-device gate + subscription pointer)', ()
     afterEach(() => jest.useRealTimers());
 
     const appleEntitlement: PresentedEntitlement = {
-        store: 'app_store', signedTransactionInfo: signedPayload({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }),
+        store: 'app_store', signedTransactionInfo: appleSignedTransaction({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }),
     };
 
     function mockApple(expiresDate: number) {
@@ -544,11 +550,11 @@ describe('resolveDeviceEntitlement (per-device gate + subscription pointer)', ()
             .toEqual({ entitled: true, subscription: 'subscriptions/apple/orig1' });
     });
 
-    it('after the trial with a lapsed purchase: not entitled, no pointer', async () => {
+    it('after the trial with a lapsed purchase: not entitled, but the pointer is kept (a later renewal reaches the device again)', async () => {
         await afterTrial();
         mockApple(1);
-        expect(await lastValueFrom(resolveDeviceEntitlement('AC1', appleEntitlement, 'subscriptions/apple/orig1', reverificationConfig)))
-            .toEqual({ entitled: false, subscription: null });
+        expect(await lastValueFrom(resolveDeviceEntitlement('AC1', appleEntitlement, null, reverificationConfig)))
+            .toEqual({ entitled: false, subscription: 'subscriptions/apple/orig1' });
     });
 
     it('a store outage refuses a token but keeps the pointer (the record still governs ringing)', async () => {
@@ -573,3 +579,78 @@ describe('resolveDeviceEntitlement (per-device gate + subscription pointer)', ()
     });
 });
 
+/**
+ * Regression: an app-presented Apple transaction was only decoded, so a tampered
+ * app could forge a JWS naming ANOTHER customer's active originalTransactionId and
+ * be entitled with that customer's subscription. It must now verify against
+ * Apple's chain, our bundle id and the environment before anything is looked up.
+ */
+describe('app-presented Apple transactions are signature-verified', () => {
+    beforeEach(resetDb);
+    afterEach(() => jest.useRealTimers());
+
+    function someoneElsesActiveSubscription() {
+        return mockAppleFetch({
+            production: {
+                status: 200,
+                body: appleSubscriptionStatusesResponse([{
+                    transactionId: 't1', originalTransactionId: 'victim', productId: 'monthly-dialcrest-license',
+                    expiresDate: Date.now() + 1e9, autoRenewStatus: 1,
+                }]),
+            },
+        });
+    }
+
+    const forged = signedPayload({ originalTransactionId: 'victim', productId: 'monthly-dialcrest-license' });
+
+    it('verifyApplePurchase rejects a forged (unsigned) transaction without asking Apple about it', async () => {
+        const fetchMock = someoneElsesActiveSubscription();
+        await expect(lastValueFrom(verifyApplePurchase('AC1', forged, testAppleConfig))).rejects.toThrow('signature verification');
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(dbTree().subscriptions).toBeUndefined();
+    });
+
+    it('a forged transaction never entitles a token mint after the trial', async () => {
+        jest.useFakeTimers().setSystemTime(0);
+        await lastValueFrom(ensureTrialStarted('AC1'));
+        jest.setSystemTime(THIRTY_DAYS_MS + 1);
+        const fetchMock = someoneElsesActiveSubscription();
+        const entitlement: PresentedEntitlement = { store: 'app_store', signedTransactionInfo: forged };
+        expect(await lastValueFrom(isSubscriptionActive('AC1', entitlement, reverificationConfig))).toBe(false);
+        expect(await lastValueFrom(resolveDeviceEntitlement('AC1', entitlement, null, reverificationConfig)))
+            .toEqual({ entitled: false, subscription: null });
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects a genuinely signed transaction for another app (bundle id)', async () => {
+        const fetchMock = someoneElsesActiveSubscription();
+        const otherApp = appleSignedTransaction({ originalTransactionId: 'victim', productId: 'monthly-dialcrest-license', bundleId: 'com.other.app' });
+        await expect(lastValueFrom(verifyApplePurchase('AC1', otherApp, testAppleConfig))).rejects.toThrow('signature verification');
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects a Production transaction while appAppleId is not configured', async () => {
+        someoneElsesActiveSubscription();
+        const production = appleSignedTransaction({ originalTransactionId: 'victim', productId: 'monthly-dialcrest-license', environment: 'Production' });
+        await expect(lastValueFrom(verifyApplePurchase('AC1', production, testAppleConfig))).rejects.toThrow('signature verification');
+    });
+
+    it('rejects a signed transaction whose payload was altered (e.g. swapping in another originalTransactionId)', async () => {
+        const fetchMock = someoneElsesActiveSubscription();
+        const [header, , signature] = appleSignedTransaction({ originalTransactionId: 'mine', productId: 'monthly-dialcrest-license' }).split('.');
+        const swapped = Buffer.from(JSON.stringify({
+            originalTransactionId: 'victim', productId: 'monthly-dialcrest-license', bundleId: 'be.peblet.dialcrest',
+            environment: 'Sandbox', signedDate: Date.UTC(2027, 0, 1),
+        })).toString('base64url');
+        await expect(lastValueFrom(verifyApplePurchase('AC1', `${header}.${swapped}.${signature}`, testAppleConfig))).rejects.toThrow();
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('accepts a genuine transaction and looks up exactly the transaction it names', async () => {
+        const fetchMock = someoneElsesActiveSubscription();
+        await lastValueFrom(verifyApplePurchase(
+            'AC1', appleSignedTransaction({ originalTransactionId: 'victim', productId: 'monthly-dialcrest-license' }), testAppleConfig,
+        ));
+        expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/inApps/v1/subscriptions/victim'), expect.anything());
+    });
+});

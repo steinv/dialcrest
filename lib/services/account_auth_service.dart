@@ -65,6 +65,27 @@ class AccountAuthService {
   /// transparent recovery. Overwrites any previous binding, so switching Twilio
   /// accounts is just another link. Concurrent calls for the same account share
   /// one in-flight attempt.
+  /// Re-establishes this device's anonymous identity after a callable rejected
+  /// it as 'unauthenticated' — typically because Firebase's ~30-day anonymous
+  /// auto-cleanup deleted the user while a cached ID token still looked valid.
+  /// Forces an ID-token refresh (which surfaces the deletion), recreates the
+  /// anonymous user if it's gone, and re-links the account claim. Data is keyed
+  /// by accountSid and by store identity, never by uid, so nothing is lost: the
+  /// backend simply registers this device under its new uid on the next call.
+  Future<void> recoverIdentity(String accountSid, String authToken) async {
+    final user = _auth.currentUser;
+    try {
+      if (user == null) throw FirebaseAuthException(code: 'user-not-found');
+      await user.getIdToken(true);
+    } on FirebaseAuthException catch (e) {
+      if (!_recoverableIdentityErrors.contains(e.code)) rethrow;
+      debugPrint('Anon identity invalid (${e.code}); recreating before retrying.');
+      await _auth.signOut();
+      await _auth.signInAnonymously();
+    }
+    await link(accountSid, authToken);
+  }
+
   Future<void> link(String accountSid, String authToken) {
     if (_accountSid == accountSid && _linkInFlight != null) {
       return _linkInFlight!;

@@ -1,7 +1,7 @@
 import admin from 'firebase-admin';
 import { testAppleConfig, appleSubscriptionStatusesResponse, mockAppleFetch, signedPayload } from './testUtils/appleFixtures';
 import { googleSubscriptionV2Response } from './testUtils/googleFixtures';
-import { appleSignedJws, testAppleRootCertificate } from './testUtils/appleTestPki';
+import { appleSignedJws, appleSignedTransaction, testAppleRootCertificate } from './testUtils/appleTestPki';
 import { setAppleVerificationForTests } from './subscription';
 
 jest.mock('firebase-admin');
@@ -149,7 +149,7 @@ describe('twilioAccessToken (subscription gating)', () => {
             auth: DEVICE,
             data: {
                 accountSid: 'AC1', authToken: 'tok', callerId: 'x',
-                signedTransactionInfo: signedPayload({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }),
+                signedTransactionInfo: appleSignedTransaction({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }),
             },
         });
         expect(jwt).toBe('fake-jwt-token');
@@ -166,7 +166,7 @@ describe('twilioAccessToken (subscription gating)', () => {
             auth: DEVICE,
             data: {
                 accountSid: 'AC1', authToken: 'tok', callerId: 'x',
-                signedTransactionInfo: signedPayload({ originalTransactionId: 'missing', productId: 'monthly-dialcrest-license' }),
+                signedTransactionInfo: appleSignedTransaction({ originalTransactionId: 'missing', productId: 'monthly-dialcrest-license' }),
             },
         })).rejects.toMatchObject({ code: 'failed-precondition', message: 'subscription-expired' });
         jest.useRealTimers();
@@ -221,7 +221,7 @@ describe('twilioAccessToken (credentials + per-device registry)', () => {
             auth: DEVICE,
             data: {
                 accountSid: 'AC1', authToken: 'tok', callerId: 'x',
-                signedTransactionInfo: signedPayload({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }),
+                signedTransactionInfo: appleSignedTransaction({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }),
             },
         });
         expect(twilioMocks().recordDeviceCheckIn).toHaveBeenCalledWith('AC1', 'device1', 'subscriptions/apple/orig1');
@@ -292,7 +292,7 @@ describe('twilioVerifyApplePurchase / twilioVerifyGooglePurchase', () => {
             },
         });
         const result = await functions.twilioVerifyApplePurchase.run({
-            data: { accountSid: 'AC1', signedTransactionInfo: signedPayload({ originalTransactionId: 'orig1', productId: 'yearly-dialcrest-license' }) },
+            data: { accountSid: 'AC1', signedTransactionInfo: appleSignedTransaction({ originalTransactionId: 'orig1', productId: 'yearly-dialcrest-license' }) },
         });
         expect(result).toEqual({ plan: 'yearly', expiresAt: farFuture, autoRenew: true, isActive: true });
         expect(dbTree().subscriptions.apple.orig1.lastAccountSid).toBe('AC1');

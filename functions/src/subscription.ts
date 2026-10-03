@@ -346,9 +346,10 @@ function verifyEntitlementState(
     accountSid: string, entitlement: PresentedEntitlement, config: ReverificationConfig,
 ): Observable<PaidState> {
     if (entitlement.store === 'app_store') {
-        const { originalTransactionId, productId } =
-            decodeAppleSignedPayload<AppleTransactionInfo>(entitlement.signedTransactionInfo);
-        return refreshAppleSubscription(accountSid, originalTransactionId, productId, config.apple);
+        return from(verifyPresentedAppleTransaction(entitlement.signedTransactionInfo, config.apple)).pipe(
+            switchMap(({ originalTransactionId, productId }) =>
+                refreshAppleSubscription(accountSid, originalTransactionId, productId, config.apple)),
+        );
     }
     return refreshGoogleSubscription(
         accountSid, entitlement.purchaseToken, config.googlePackageName, config.googleServiceAccountJson,
@@ -373,7 +374,11 @@ export interface DeviceEntitlement {
  * - Trial live and the device already has a pointer: entitled, keep it — no store
  *   round-trip (this runs on every token mint).
  * - Otherwise the presented entitlement is re-verified with the store (as
- *   isSubscriptionActive does); the pointer is its record when active. This also
+ *   isSubscriptionActive does) and the pointer is its record — even when that
+ *   subscription has currently lapsed: the record's own expiry already decides
+ *   reachability, and keeping the pointer means a renewal that lands later (e.g.
+ *   after billing retry, via a store notification) reaches the device again
+ *   without it checking in. This also
  *   runs DURING the trial for a device without a pointer, so someone who paid
  *   during the trial keeps ringing the moment it ends.
  * - A failed re-verification never grants a token beyond the trial, but keeps the
@@ -388,10 +393,7 @@ export function resolveDeviceEntitlement(
             if (!entitlement) return of({ entitled: trial, subscription: null });
             if (trial && currentPointer) return of({ entitled: true, subscription: currentPointer });
             return verifyEntitlementState(accountSid, entitlement, config).pipe(
-                map((state) => {
-                    const active = state.expiresAt > Date.now();
-                    return { entitled: trial || active, subscription: active ? state.recordPath : null };
-                }),
+                map((state) => ({ entitled: trial || state.expiresAt > Date.now(), subscription: state.recordPath })),
                 catchError((e) => {
                     console.error('Store entitlement re-verification failed', e);
                     return of({ entitled: trial, subscription: currentPointer });
@@ -433,10 +435,9 @@ function signAppleServerJwt(config: AppleConfig): string {
  * ourselves directly from Apple's server API over an authenticated HTTPS
  * call, not on anything the client hands us — see refreshAppleSubscription.
  *
- * NOTE: the client-presented entitlement in verifyEntitlement is decoded here
- * only to read the originalTransactionId; the actual subscription state is then
- * re-fetched from Apple by originalTransactionId, so a forged JWS can't grant
- * access — the worst it can do is name a transaction Apple then reports on.
+ * NOT for anything the app presents — that goes through
+ * verifyPresentedAppleTransaction, since a forged JWS could otherwise name
+ * another customer's transaction.
  */
 function decodeAppleSignedPayload<T>(signedPayload: string): T {
     const [, payload] = signedPayload.split('.');
@@ -559,6 +560,61 @@ export function setAppleVerificationForTests(rootCertificates: Buffer[] | null):
     appleOnlineChecks = rootCertificates === null;
 }
 
+/**
+ * One SignedDataVerifier per App Store environment we can verify: Sandbox always,
+ * Production only when `appAppleId` is configured (the library requires it) —
+ * without it Production data is rejected, never waved through.
+ */
+function appleVerifiers(config: AppleConfig): SignedDataVerifier[] {
+    const roots = loadAppleRootCertificates();
+    const verifiers = [new SignedDataVerifier(roots, appleOnlineChecks, Environment.SANDBOX, config.bundleId)];
+    if (typeof config.appAppleId === 'number') {
+        verifiers.unshift(new SignedDataVerifier(roots, appleOnlineChecks, Environment.PRODUCTION, config.bundleId, config.appAppleId));
+    } else {
+        console.warn('apple_iap_key.appAppleId not configured: only Sandbox App Store data can be verified');
+    }
+    return verifiers;
+}
+
+/** Thrown when an app-presented Apple transaction fails signature verification. */
+export class InvalidAppleTransactionError extends Error {
+    constructor(readonly retryable: boolean) {
+        super(retryable ?
+            'Apple transaction could not be verified right now (retryable)' :
+            'Apple transaction failed signature verification');
+    }
+}
+
+/**
+ * Verifies a `signedTransactionInfo` the APP presents (purchase verification, or
+ * the entitlement attached to twilioAccessToken) before its originalTransactionId
+ * is trusted: x5c chain up to Apple's root, ES256 signature, our bundleId, and the
+ * environment. Without this a tampered app could forge a JWS naming ANOTHER
+ * customer's active originalTransactionId — the server would then look that
+ * subscription up and entitle the forger with it.
+ *
+ * Data we fetch from Apple ourselves over the authenticated Server API is still
+ * only decoded (decodeAppleSignedPayload): the transport is the trust there.
+ */
+async function verifyPresentedAppleTransaction(signedTransactionInfo: string, config: AppleConfig): Promise<AppleTransactionInfo> {
+    let retryable = false;
+    for (const verifier of appleVerifiers(config)) {
+        try {
+            const decoded = await verifier.verifyAndDecodeTransaction(signedTransactionInfo);
+            return {
+                transactionId: decoded.transactionId ?? '',
+                originalTransactionId: decoded.originalTransactionId ?? '',
+                productId: decoded.productId ?? '',
+                expiresDate: decoded.expiresDate ?? 0,
+            };
+        } catch (error) {
+            if (error instanceof VerificationException && error.status === VerificationStatus.RETRYABLE_VERIFICATION_FAILURE) retryable = true;
+        }
+    }
+    console.warn('Rejected an app-presented Apple transaction that failed signature verification');
+    throw new InvalidAppleTransactionError(retryable);
+}
+
 /** Outcome of verifying an App Store Server Notification's signature. */
 export type AppleNotificationVerification = 'verified' | 'invalid' | 'retryable';
 
@@ -580,13 +636,7 @@ export type AppleNotificationVerification = 'verified' | 'invalid' | 'retryable'
 export async function verifyAppleNotificationSignature(
     signedPayload: string, config: AppleConfig,
 ): Promise<AppleNotificationVerification> {
-    const roots = loadAppleRootCertificates();
-    const verifiers: SignedDataVerifier[] = [new SignedDataVerifier(roots, appleOnlineChecks, Environment.SANDBOX, config.bundleId)];
-    if (typeof config.appAppleId === 'number') {
-        verifiers.unshift(new SignedDataVerifier(roots, appleOnlineChecks, Environment.PRODUCTION, config.bundleId, config.appAppleId));
-    } else {
-        console.warn('apple_iap_key.appAppleId not configured: only Sandbox App Store notifications can be verified');
-    }
+    const verifiers = appleVerifiers(config);
     const failures: Array<VerificationStatus | null> = [];
     for (const verifier of verifiers) {
         try {
@@ -642,8 +692,10 @@ export function handleAppleNotification(signedPayload: string, config: AppleConf
  * actual expiry/auto-renew state.
  */
 export function verifyApplePurchase(accountSid: string, signedTransactionInfo: string, config: AppleConfig): Observable<SubscriptionStatus> {
-    const { originalTransactionId, productId } = decodeAppleSignedPayload<AppleTransactionInfo>(signedTransactionInfo);
-    return refreshAppleSubscription(accountSid, originalTransactionId, productId, config).pipe(map(toStatus));
+    return from(verifyPresentedAppleTransaction(signedTransactionInfo, config)).pipe(
+        switchMap(({ originalTransactionId, productId }) => refreshAppleSubscription(accountSid, originalTransactionId, productId, config)),
+        map(toStatus),
+    );
 }
 
 // ---------------------------------------------------------------------------

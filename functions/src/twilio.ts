@@ -797,11 +797,23 @@ export async function callbackIncomingMessage(request: Request, response: expres
  */
 export function registerMessagingDevice(accountSid: string, uid: string, fcmToken: string): Observable<void> {
     const db = admin.database();
-    return from(Promise.all([
-        db.ref(dbPaths.device(accountSid, uid)).update({ fcmToken, lastSeen: Date.now() }),
-        // Migrated off the legacy registry, which would otherwise push to this token unconditionally during the trial.
-        db.ref(dbPaths.messagingToken(accountSid, fcmToken)).remove(),
-    ])).pipe(map(() => undefined));
+    return from(db.ref(dbPaths.devices(accountSid)).once('value')).pipe(
+        switchMap((snapshot) => {
+            // An FCM token belongs to one app install. Another record holding it is
+            // the same install under an older anonymous uid (Firebase recycles those
+            // ~monthly): drop it, so its subscription pointer can't keep reaching
+            // whoever uses this install now, and dead records don't pile up.
+            const devices = (snapshot.val() ?? {}) as Record<string, DeviceRecord>;
+            const superseded = Object.keys(devices).filter((other) => other !== uid && devices[other]?.fcmToken === fcmToken);
+            return from(Promise.all([
+                db.ref(dbPaths.device(accountSid, uid)).update({ fcmToken, lastSeen: Date.now() }),
+                ...superseded.map((other) => db.ref(dbPaths.device(accountSid, other)).remove()),
+                // Migrated off the legacy registry, which would otherwise push to this token unconditionally during the trial.
+                db.ref(dbPaths.messagingToken(accountSid, fcmToken)).remove(),
+            ]));
+        }),
+        map(() => undefined),
+    );
 }
 
 /**
