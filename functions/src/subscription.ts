@@ -90,10 +90,11 @@ export interface AppleConfig {
     bundleId: string;
     /**
      * The app's numeric Apple ID (App Store Connect → App Information → Apple ID).
-     * Required to verify PRODUCTION App Store Server Notifications; without it
-     * only Sandbox notifications verify (see verifyAppleNotificationSignature).
+     * Required to verify PRODUCTION App Store data (notifications and purchases
+     * the app presents); without it only Sandbox verifies. A numeric string is
+     * accepted too (see configuredAppAppleId).
      */
-    appAppleId?: number;
+    appAppleId?: number | string;
 }
 
 export interface ReverificationConfig {
@@ -554,26 +555,82 @@ function loadAppleRootCertificates(): Buffer[] {
  * Test-only: trust `rootCertificates` instead of Apple's root, and skip the
  * online checks (OCSP + "now" as the validity date) so fixtures signed by a
  * throwaway CA verify offline. Pass null to restore the production behavior.
+ * `onlineChecks` overrides the online-check setting (to prove a path ignores it).
  */
-export function setAppleVerificationForTests(rootCertificates: Buffer[] | null): void {
+export function setAppleVerificationForTests(rootCertificates: Buffer[] | null, onlineChecks = rootCertificates === null): void {
     appleRootCertificates = rootCertificates;
-    appleOnlineChecks = rootCertificates === null;
+    appleOnlineChecks = onlineChecks;
+    appleVerifierCache.clear();
 }
 
 /**
- * One SignedDataVerifier per App Store environment we can verify: Sandbox always,
- * Production only when `appAppleId` is configured (the library requires it) —
- * without it Production data is rejected, never waved through.
+ * The app's numeric Apple ID from config, accepting it stored as a number or as a
+ * numeric string (an easy slip when editing the secret JSON by hand). Undefined
+ * when absent or malformed — logged as an error, since every Production purchase
+ * and notification is then rejected.
  */
-function appleVerifiers(config: AppleConfig): SignedDataVerifier[] {
-    const roots = loadAppleRootCertificates();
-    const verifiers = [new SignedDataVerifier(roots, appleOnlineChecks, Environment.SANDBOX, config.bundleId)];
-    if (typeof config.appAppleId === 'number') {
-        verifiers.unshift(new SignedDataVerifier(roots, appleOnlineChecks, Environment.PRODUCTION, config.bundleId, config.appAppleId));
-    } else {
-        console.warn('apple_iap_key.appAppleId not configured: only Sandbox App Store data can be verified');
+function configuredAppAppleId(config: AppleConfig): number | undefined {
+    const raw: unknown = config.appAppleId;
+    if (typeof raw === 'number' && Number.isSafeInteger(raw) && raw > 0) return raw;
+    if (typeof raw === 'string' && /^[1-9][0-9]*$/.test(raw.trim())) return Number(raw.trim());
+    if (!loggedMissingAppAppleId) {
+        loggedMissingAppAppleId = true; // once per instance, not per request
+        console.error('apple_iap_key.appAppleId is missing or not a number: Production App Store purchases and notifications will be rejected');
+    }
+    return undefined;
+}
+
+let loggedMissingAppAppleId = false;
+
+/**
+ * SignedDataVerifiers, built once per instance per configuration rather than per
+ * call: the library caches verified certificate chains (15 min) inside each
+ * instance, which a fresh verifier would throw away.
+ *
+ * `onlineChecks`: OCSP revocation + validity against the current time. Right for
+ * notifications (delivered just after Apple signs them); wrong for transactions
+ * the APP presents, which it stores and re-presents for as long as the
+ * subscription lasts — those are verified against their own signedDate, as
+ * Apple's library recommends for stored data (no OCSP, no expiry of a chain that
+ * was valid when Apple signed).
+ */
+const appleVerifierCache = new Map<string, Map<Environment, SignedDataVerifier>>();
+
+function appleVerifiers(config: AppleConfig, onlineChecks: boolean): Map<Environment, SignedDataVerifier> {
+    const appAppleId = configuredAppAppleId(config);
+    const key = JSON.stringify([config.bundleId, appAppleId ?? null, onlineChecks]);
+    let verifiers = appleVerifierCache.get(key);
+    if (!verifiers) {
+        const roots = loadAppleRootCertificates();
+        verifiers = new Map([[Environment.SANDBOX, new SignedDataVerifier(roots, onlineChecks, Environment.SANDBOX, config.bundleId)]]);
+        // The library requires appAppleId for Production: without it Production data is rejected, never waved through.
+        if (appAppleId !== undefined) {
+            verifiers.set(Environment.PRODUCTION, new SignedDataVerifier(roots, onlineChecks, Environment.PRODUCTION, config.bundleId, appAppleId));
+        }
+        appleVerifierCache.set(key, verifiers);
     }
     return verifiers;
+}
+
+/**
+ * The verifier(s) to try for a payload: just the one for the environment the
+ * (still unverified) payload claims — the verification itself then enforces that
+ * claim, so a wrong one simply fails — instead of running a full chain check per
+ * environment. All of them when the payload claims none.
+ */
+function verifiersFor(verifiers: Map<Environment, SignedDataVerifier>, claimedEnvironment: unknown): SignedDataVerifier[] {
+    const matching = verifiers.get(claimedEnvironment as Environment);
+    if (matching) return [matching];
+    return claimedEnvironment === Environment.SANDBOX || claimedEnvironment === Environment.PRODUCTION ? [] : [...verifiers.values()];
+}
+
+/** The unverified `environment` a JWS payload claims (only used to pick a verifier). */
+function claimedEnvironment(jws: string, pick: (payload: Record<string, unknown>) => unknown): unknown {
+    try {
+        return pick(decodeAppleSignedPayload<Record<string, unknown>>(jws));
+    } catch {
+        return undefined;
+    }
 }
 
 /** Thrown when an app-presented Apple transaction fails signature verification. */
@@ -591,14 +648,16 @@ export class InvalidAppleTransactionError extends Error {
  * is trusted: x5c chain up to Apple's root, ES256 signature, our bundleId, and the
  * environment. Without this a tampered app could forge a JWS naming ANOTHER
  * customer's active originalTransactionId — the server would then look that
- * subscription up and entitle the forger with it.
+ * subscription up and entitle the forger with it. Verified OFFLINE against its
+ * signedDate (see appleVerifiers): the app keeps re-presenting the same JWS.
  *
  * Data we fetch from Apple ourselves over the authenticated Server API is still
  * only decoded (decodeAppleSignedPayload): the transport is the trust there.
  */
 async function verifyPresentedAppleTransaction(signedTransactionInfo: string, config: AppleConfig): Promise<AppleTransactionInfo> {
     let retryable = false;
-    for (const verifier of appleVerifiers(config)) {
+    const environment = claimedEnvironment(signedTransactionInfo, (payload) => payload.environment);
+    for (const verifier of verifiersFor(appleVerifiers(config, false), environment)) {
         try {
             const decoded = await verifier.verifyAndDecodeTransaction(signedTransactionInfo);
             return {
@@ -636,9 +695,12 @@ export type AppleNotificationVerification = 'verified' | 'invalid' | 'retryable'
 export async function verifyAppleNotificationSignature(
     signedPayload: string, config: AppleConfig,
 ): Promise<AppleNotificationVerification> {
-    const verifiers = appleVerifiers(config);
+    const environment = claimedEnvironment(signedPayload, (payload) => {
+        const data = (payload.data ?? payload.summary) as { environment?: unknown } | undefined;
+        return data?.environment;
+    });
     const failures: Array<VerificationStatus | null> = [];
-    for (const verifier of verifiers) {
+    for (const verifier of verifiersFor(appleVerifiers(config, appleOnlineChecks), environment)) {
         try {
             await verifier.verifyAndDecodeNotification(signedPayload);
             return 'verified';

@@ -350,9 +350,10 @@ No extra secret is needed — the existing `apple_iap_key` inside
 Server API. Notification signatures are verified against Apple Root CA - G3
 (bundled in `functions/certs/`), checking the bundle id and, for Production, the
 app's numeric Apple ID: add it to `apple_iap_key` as `"appAppleId": <number>`
-(App Store Connect → App Information → Apple ID). Without it, Production
-notifications — and Production purchases the app presents, which are verified the
-same way — are rejected; only Sandbox ones are processed.
+(App Store Connect → App Information → Apple ID; a number, though a numeric
+string is accepted too). Without it, Production notifications — and Production
+purchases the app presents, which are verified the same way — are rejected (and
+an error is logged); only Sandbox ones are processed.
 
 ### Google — Real-time Developer Notifications (RTDN)
 

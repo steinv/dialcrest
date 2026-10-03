@@ -225,7 +225,14 @@ everyone on the line. So entitlement is resolved per **device**:
   notification) reaches the device again without it checking in.
 - **Presented Apple entitlements are signature-verified**
   (`verifyPresentedAppleTransaction`) before their `originalTransactionId` is
-  used, so a forged JWS can't borrow another customer's subscription.
+  used, so a forged JWS can't borrow another customer's subscription. They are
+  verified **offline**, against their own `signedDate` (no OCSP, no "now"
+  validity): the app keeps re-presenting the same stored JWS for as long as the
+  subscription lasts, so online checks would eventually reject it, or lock
+  paying users out whenever Apple's OCSP responder is unreachable. Server
+  notifications are still verified online. Verifiers are built once per
+  instance (keeping the library's chain cache) and only the one for the
+  payload's claimed environment is tried.
 - **Firebase anonymous-account expiry** (~30 days, regardless of activity) has
   no effect on entitlement: data is keyed by `accountSid`/store identity, never
   by uid. If a callable rejects a deleted uid as `unauthenticated`, the app

@@ -12,6 +12,7 @@ import {
     handleGoogleNotification,
     verifyGooglePurchase,
     setAppleVerificationForTests,
+    verifyAppleNotificationSignature,
     PresentedEntitlement,
     ReverificationConfig,
 } from './subscription';
@@ -652,5 +653,52 @@ describe('app-presented Apple transactions are signature-verified', () => {
             'AC1', appleSignedTransaction({ originalTransactionId: 'victim', productId: 'monthly-dialcrest-license' }), testAppleConfig,
         ));
         expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/inApps/v1/subscriptions/victim'), expect.anything());
+    });
+});
+
+describe('Apple verification configuration', () => {
+    beforeEach(resetDb);
+    afterEach(() => setAppleVerificationForTests([testAppleRootCertificate]));
+
+    function mockActive() {
+        mockAppleFetch({
+            production: {
+                status: 200,
+                body: appleSubscriptionStatusesResponse([{
+                    transactionId: 't1', originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license',
+                    expiresDate: Date.now() + 1e9, autoRenewStatus: 1,
+                }]),
+            },
+        });
+    }
+
+    it('accepts appAppleId stored as a numeric string for Production transactions', async () => {
+        mockActive();
+        const production = appleSignedTransaction({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license', environment: 'Production' });
+        // The test chain doesn't carry a real appAppleId claim for transactions; the library only checks it for Production
+        // notifications/app transactions, so this proves the string form builds a Production verifier at all.
+        const status = await lastValueFrom(verifyApplePurchase('AC1', production, { ...testAppleConfig, appAppleId: '42' }));
+        expect(status.isActive).toBe(true);
+    });
+
+    it('verifies app-presented transactions offline (against signedDate) even when online checks are on', async () => {
+        // With online checks the library would demand an OCSP responder in the chain, which the test
+        // chain doesn't have — so this only passes because presented transactions skip them.
+        setAppleVerificationForTests([testAppleRootCertificate], true);
+        mockActive();
+        const status = await lastValueFrom(verifyApplePurchase(
+            'AC1', appleSignedTransaction({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }), testAppleConfig,
+        ));
+        expect(status.isActive).toBe(true);
+    });
+
+    it('still runs online checks for server notifications', async () => {
+        setAppleVerificationForTests([testAppleRootCertificate], true);
+        const notification = appleSignedJws({
+            notificationType: 'DID_RENEW', notificationUUID: 'n1', version: '2.0', signedDate: Date.UTC(2027, 0, 1),
+            data: { environment: 'Sandbox', bundleId: testAppleConfig.bundleId },
+        });
+        // The test chain has no OCSP responder: an online check can't pass.
+        expect(await verifyAppleNotificationSignature(notification, testAppleConfig)).not.toBe('verified');
     });
 });
