@@ -1,6 +1,6 @@
 # Edge Hardening Plan — Twilio webhooks on a Cloudflare Worker
 
-Status: **in progress** — function-side changes done (§13), Worker not started
+Status: **in progress** — function-side changes and Worker code done (§13); nothing deployed
 Author: stein
 Last updated: 2026-10-03
 
@@ -286,7 +286,7 @@ count is ≈ 0 for N days. The raw webhook origin is gone.
 - **Cloudflare plan**: basic rules work on Free/Pro; per-`AccountSid` rate limits
   need Business+.
 - **IP allowlisting** Twilio ranges — opt-in.
-- Worker's service-account key storage / rotation.
+- Worker's service-account key rotation cadence (procedure in worker/README.md).
 
 ---
 
@@ -300,7 +300,8 @@ count is ≈ 0 for N days. The raw webhook origin is gone.
 2. `firebase deploy --only functions`.
 
 ### 11.2 Cloudflare (Phase 2)
-3. Deploy the Worker; **Workers → Settings → Domains & Routes → Add Custom Domain**
+3. Create the Worker's service account + secret and deploy it (`worker/README.md`
+   "One-time setup"); `wrangler.toml` binds the Custom Domain
    `dialcrest-hooks.peblet.be`.
 4. **SSL/TLS → Full (strict).**
 5. **Security → WAF → Custom rules** — block bad webhook shape:
@@ -360,10 +361,11 @@ the security invariants derived from this plan.
 - [ ] Set `appAppleId` in `TWILIO_PEBLET_SECRET`; deploy Phase 1
 
 **Worker (Phases 2–6)**
-- [ ] Worker project + `wrangler`; `android_fcm` SA key as a Worker secret
-- [ ] Port signature validation (WebCrypto HMAC-SHA1, fail-closed flag) + RTDB-REST + FCM-v1 helpers
-- [ ] Shared TS module for the pure bits (TwiML builders, DB paths)
-- [ ] Workers Custom Domain `dialcrest-hooks.peblet.be`; WAF + rate-limit rules (§11.2)
+- [x] Worker project (`worker/`, see its README) + `wrangler.toml` (Custom Domain, no workers.dev)
+- [x] Port signature validation (WebCrypto HMAC-SHA1, parity-tested against twilio-node; fail-closed flag) + RTDB-REST + FCM-v1 helpers
+- [x] Shared TS module for the pure bits (`functions/src/shared/webhooks.ts`: TwiML builders, DB paths, push payload), used by both
+- [ ] Dedicated service account (RTDB Admin + FCM Admin) → `GOOGLE_SERVICE_ACCOUNT_JSON` Worker secret (worker/README.md)
+- [ ] Deploy; WAF + rate-limit rules (§11.2)
 - [ ] Smoke-test (§11.4)
 - [ ] **Phase 3**: flip `WEBHOOK_PUBLIC_BASE_URL`; confirm self-heal on a test tenant
 - [ ] **Phase 4**: backfill script for the long tail
@@ -397,8 +399,13 @@ Hand-rolled (no `firebase-admin` in Workers):
   §6.1a.
 - **Firebase via REST** — mint a Google OAuth token (RS256 service-account JWT via
   WebCrypto, cached ~1 h), then RTDB REST for the stored token / trial expiry /
-  messaging tokens and FCM HTTP v1 for the SMS fan-out. SA key (`android_fcm`) in
-  a `wrangler` secret.
+  messaging tokens and FCM HTTP v1 for the SMS fan-out. SA key in
+  a `wrangler` secret — a dedicated least-privilege service account, not
+  `android_fcm` (worker/README.md).
+
+A token read that fails *transiently* (5xx/network) fails open like the
+functions; a permission or key error returns 500 instead — otherwise a revoked
+key would silently disable authentication.
 
 The Worker calls no Twilio REST API. Token storage is unchanged: the callables
 keep writing `/twilio/<sid>/secret/authToken`; the Worker reads it.

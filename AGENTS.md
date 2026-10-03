@@ -33,7 +33,13 @@ rules must not be broken:
   only those number webhooks that still point at one of our hosts, and never
   rewrites the `numbers/<sid>/original` restore snapshot.
 - **Worker and functions must not drift** while both exist: TwiML shapes,
-  `clientIdentity = accountSid`, RTDB paths and the FCM payload stay identical.
-  Keep the pure bits in a shared module; don't fork them.
+  `clientIdentity = accountSid`, RTDB paths and the FCM payload live in
+  `functions/src/shared/webhooks.ts`, imported by both (`worker/` bundles it).
+  Change them there; don't fork them. Keep that module dependency-free.
+- **The Worker never fails open on a misconfiguration.** Only transient
+  RTDB/Google errors (5xx, network) may skip the signature check; permission or
+  key errors must surface as 500.
+- **The Worker has no `*.workers.dev` alias** (`workers_dev = false`): the
+  WAF-protected Custom Domain must be the only way in.
 - **Cost ceiling**: `setGlobalOptions({ maxInstances })` in index.ts covers every
   function — don't override it upward on a public endpoint without reason.

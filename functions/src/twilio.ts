@@ -1,5 +1,5 @@
 import * as express from 'express';
-import twilio, { Twilio, twiml, validateRequest } from 'twilio';
+import twilio, { Twilio, validateRequest } from 'twilio';
 import { Request } from 'firebase-functions/https';
 import { catchError, forkJoin, from, map, Observable, of, switchMap } from 'rxjs';
 import { CredentialInstance, CredentialPushType } from 'twilio/lib/rest/conversations/v1/credential';
@@ -9,6 +9,15 @@ import admin from 'firebase-admin';
 import { Database } from 'firebase-admin/database';
 import * as logger from 'firebase-functions/logger';
 import { FUNCTIONS_BASE_URL, isKnownWebhookUrl, isSignatureFailClosed, webhookPublicBaseUrl, webhookUrl } from './edge';
+import {
+    WEBHOOK_PATHS,
+    clientIdentity,
+    dbPaths,
+    emptyMessagingTwiml,
+    incomingCallTwiml,
+    incomingMessagePushData,
+    outgoingCallTwiml,
+} from './shared/webhooks';
 
 // Friendly names used to find/create resources in each tenant's Twilio account.
 const IOS_APN_FRIENDLY_NAME = 'Dialcrest APN iOS';
@@ -20,10 +29,10 @@ const API_KEY_FRIENDLY_NAME = 'Dialcrest - Twilio Soft Phone';
 // Webhook paths = the exported function names in index.ts. The host written into
 // Twilio is config (edge.ts webhookUrl); these functions themselves always live
 // at FUNCTIONS_BASE_URL/<path>.
-const OUTGOING_CALL_PATH = 'twilioOutgoingCall';
-const INCOMING_CALL_PATH = 'twilioIncomingCall';
-const STATUS_CALLBACK_PATH = 'twilioCallStatusChanges';
-const INCOMING_MESSAGE_PATH = 'twilioIncomingMessage';
+const OUTGOING_CALL_PATH = WEBHOOK_PATHS.outgoingCall;
+const INCOMING_CALL_PATH = WEBHOOK_PATHS.incomingCall;
+const STATUS_CALLBACK_PATH = WEBHOOK_PATHS.callStatusChanges;
+const INCOMING_MESSAGE_PATH = WEBHOOK_PATHS.incomingMessage;
 
 /**
  * Persist a tenant's Twilio Auth Token so the inbound webhooks can validate
@@ -54,7 +63,7 @@ export function rememberAuthToken(accountSid: string, authToken: string): Observ
         console.error(`Refusing to persist a missing/empty Twilio Auth Token for account "${accountSid}"`);
         return of(undefined);
     }
-    const ref = admin.database().ref(`/twilio/${accountSid}/secret/authToken`);
+    const ref = admin.database().ref(dbPaths.authToken(accountSid));
     return from(ref.once('value')).pipe(
         switchMap((snapshot) => snapshot.val() === authToken ?
             of(undefined) :
@@ -139,7 +148,7 @@ export async function isValidTwilioSignature(request: Request, webhookPath: stri
     let authToken = readCachedAuthToken(accountSid);
     if (authToken === null) {
         try {
-            const snapshot = await admin.database().ref(`/twilio/${accountSid}/secret/authToken`).once('value');
+            const snapshot = await admin.database().ref(dbPaths.authToken(accountSid)).once('value');
             authToken = snapshot.val() as string | null;
         } catch (error) {
             console.error(`Allowing Twilio webhook for ${accountSid}: Auth Token read failed (signature not checked)`, error);
@@ -168,7 +177,7 @@ async function allowTokenlessWebhook(accountSid: string, webhookPath: string): P
     const failClosed = isSignatureFailClosed();
     let knownTenant: boolean | null = null;
     try {
-        knownTenant = (await admin.database().ref(`/twilio/${accountSid}/createdAt`).once('value')).exists();
+        knownTenant = (await admin.database().ref(dbPaths.createdAt(accountSid)).once('value')).exists();
     } catch (error) {
         // Diagnostic only; never let it change the outcome.
     }
@@ -198,17 +207,6 @@ async function twilioSignatureGuard(request: Request, response: express.Response
     });
     response.status(403).type('text/plain').send('Invalid Twilio signature');
     return false;
-}
-
-/**
- * Voice SDK client identity for a tenant. Each user brings their own Twilio
- * account, so the account SID uniquely and stably identifies the tenant (across
- * devices and logins). Twilio sends this same AccountSid on inbound-call
- * webhooks, so callbackIncomingCall can route to the matching <Client> with no
- * extra lookup.
- */
-function clientIdentity(accountSid: string): string {
-    return accountSid;
 }
 
 function twimlAppSidRef(accountSid: string, direction: 'outgoing' | 'incoming') {
@@ -622,19 +620,10 @@ export function accessToken(accountSid: string, authToken: string, callerId: str
 export async function callbackIncomingCall(request: Request, response: express.Response) {
     if (!await twilioSignatureGuard(request, response, INCOMING_CALL_PATH)) return;
     const accountSid = request.body.AccountSid;
-    const voiceResponse = new twiml.VoiceResponse();
-
-    const expiresAtSnapshot = await admin.database().ref(`/twilio/${accountSid}/trial/expiresAt`).once('value');
-    const expiresAt = expiresAtSnapshot.val() as number | null;
-    if (expiresAt === null || expiresAt <= Date.now()) {
-        voiceResponse.say('This number is temporarily unavailable.');
-    } else {
-        voiceResponse.dial().client(clientIdentity(accountSid));
-    }
-
+    const expiresAtSnapshot = await admin.database().ref(dbPaths.trialExpiresAt(accountSid)).once('value');
     response.type('text/xml')
         .status(200)
-        .send(voiceResponse.toString());
+        .send(incomingCallTwiml(accountSid, expiresAtSnapshot.val() as number | null, Date.now()));
 }
 
 /**
@@ -644,17 +633,9 @@ export async function callbackIncomingCall(request: Request, response: express.R
  */
 export async function callbackOutgoingCall(request: Request, response: express.Response) {
     if (!await twilioSignatureGuard(request, response, OUTGOING_CALL_PATH)) return;
-    const voiceResponse = new twiml.VoiceResponse();
-    const to: string | undefined = request.body.To;
-    const callerId: string | undefined = request.body.From;
-    if (to) {
-        voiceResponse.dial({ callerId }, to);
-    } else {
-        voiceResponse.say('No destination number was provided.');
-    }
     response.type('text/xml')
         .status(200)
-        .send(voiceResponse.toString());
+        .send(outgoingCallTwiml(request.body.To, request.body.From));
 }
 
 // https://www.twilio.com/docs/voice/api/call-resource#statuscallback
@@ -693,13 +674,13 @@ export async function callbackIncomingMessage(request: Request, response: expres
     const body = request.body.Body ?? '';
     const messageSid = request.body.MessageSid ?? '';
 
-    const tokensSnapshot = await admin.database().ref(`/twilio/${accountSid}/messaging-tokens`).once('value');
+    const tokensSnapshot = await admin.database().ref(dbPaths.messagingTokens(accountSid)).once('value');
     const tokens = Object.keys((tokensSnapshot.val() ?? {}) as Record<string, boolean>);
 
     if (tokens.length > 0) {
         const results = await Promise.allSettled(tokens.map((token) => admin.messaging().send({
             token,
-            data: { dialcrest_type: 'incoming_message', accountSid, from, to, body, messageSid },
+            data: incomingMessagePushData({ accountSid, from, to, body, messageSid }),
             android: { priority: 'high' },
             apns: { headers: { 'apns-priority': '10' }, payload: { aps: { 'content-available': 1 } } },
         })));
@@ -710,14 +691,14 @@ export async function callbackIncomingMessage(request: Request, response: expres
             const isUnregistered = result.status === 'rejected' &&
                 String((result.reason as { code?: string })?.code ?? result.reason).includes('registration-token-not-registered');
             return isUnregistered ?
-                admin.database().ref(`/twilio/${accountSid}/messaging-tokens/${tokens[i]}`).remove() :
+                admin.database().ref(dbPaths.messagingToken(accountSid, tokens[i])).remove() :
                 Promise.resolve();
         }));
     }
 
     response.type('text/xml')
         .status(200)
-        .send(new twiml.MessagingResponse().toString());
+        .send(emptyMessagingTwiml());
 }
 
 /**
@@ -727,7 +708,7 @@ export async function callbackIncomingMessage(request: Request, response: expres
  * Twilio account gets notified, not just the most recently registered one.
  */
 export function registerMessagingDevice(accountSid: string, fcmToken: string): Observable<void> {
-    return from(admin.database().ref(`/twilio/${accountSid}/messaging-tokens/${fcmToken}`).set(true));
+    return from(admin.database().ref(dbPaths.messagingToken(accountSid, fcmToken)).set(true));
 }
 
 /**
