@@ -9,6 +9,8 @@ export default defineConfig({
   build: {
     outDir: '../dist',
     emptyOutDir: true,
+    // Never inline small assets as data: URIs — the CSP only allows img-src 'self'.
+    assetsInlineLimit: 0,
     rollupOptions: {
       input: {
         index: resolve(__dirname, 'index.html'),
