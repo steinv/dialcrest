@@ -19,5 +19,9 @@ TWILIO_SIGNATURE_FAIL_CLOSED = "false"
 
 # Secret (not in this file): GOOGLE_SERVICE_ACCOUNT_JSON — see README.md.
 
-[observability]
+[observability.logs]
 enabled = true
+invocation_logs = true
+
+[observability.traces]
+enabled = false
