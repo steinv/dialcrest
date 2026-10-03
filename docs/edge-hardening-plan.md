@@ -388,9 +388,9 @@ Cloud Functions.
 | Endpoint | Logic | Deps in the Worker |
 |---|---|---|
 | `twilioOutgoingCall` | `To`/`From` → TwiML `<Dial callerId>` | 1 RTDB read (token for sig) |
-| `twilioIncomingCall` | TwiML `<Dial><Client>` (not entitlement-gated) | 1 RTDB read (token for sig) |
+| `twilioIncomingCall` | entitled devices → TwiML `<Dial><Client>…` | token + devices + trial (parallel), + subscription records after the trial |
 | `twilioCallStatusChanges` | log / record | 1 RTDB read |
-| `twilioIncomingMessage` | read `messaging-tokens` → **data-only FCM fan-out** | 2 RTDB reads + N FCM sends |
+| `twilioIncomingMessage` | entitled devices' FCM tokens → **data-only FCM fan-out** | as above + legacy tokens, N FCM sends |
 
 Hand-rolled (no `firebase-admin` in Workers):
 - **Twilio signature validation** — WebCrypto HMAC-SHA1 over

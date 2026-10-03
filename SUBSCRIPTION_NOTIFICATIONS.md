@@ -183,35 +183,47 @@ File: `functions/src/subscription.ts` (plus `functions/src/index.ts` wiring).
   from `req.data` into the gate. Keep the `failed-precondition`
   `'subscription-expired'` error for the false case.
 
-### Inbound calls are not entitlement-gated (decided)
+### Inbound calls and SMS notifications: per-device entitlement (decided)
 
-The inbound-call webhook (`twilioIncomingCall`, and its Worker port) only knows
-the `AccountSid`, and every device on a line shares that one Voice identity
-(`<Client>{accountSid}</Client>` rings them all), while a paid subscription
-belongs to a person. Any gate in the webhook is therefore per **line**: checking
-only the trial silenced paying users once the trial ended, and an account-level
-paid flag (`/twilio/{sid}/paid`, tried and removed) let one customer's
-subscription cover everyone on the line.
+A paid subscription belongs to a person, but the inbound webhooks only know the
+line (`AccountSid`). Gating per line was wrong both ways: checking only the trial
+silenced paying users once the trial ended, and an account-level paid flag
+(`/twilio/{sid}/paid`, tried and removed) let one customer's subscription cover
+everyone on the line. So entitlement is resolved per **device**:
 
-So the webhook always rings, and entitlement is enforced per **device**, where
-the person is known — `twilioAccessToken`:
+- **Device registry** `/twilio/{sid}/devices/{uid}` (`DeviceRecord` in
+  `functions/src/shared/webhooks.ts`), keyed by the device's anonymous Firebase
+  uid, server-only: `{ subscription, fcmToken, lastSeen }`. `subscription` is a
+  **pointer** to the device user's store record (`subscriptions/{apple|google}/…`)
+  — never a copy, so renewals/refunds from store notifications apply without the
+  device checking in.
+- **`twilioAccessToken`** (after `verifyTwilioCredentials`) runs
+  `resolveDeviceEntitlement`: entitled = line trial live OR the presented
+  entitlement re-verifies as active; it records the pointer and `lastSeen`, and
+  mints a token with the device's **own Voice identity** `<AccountSid>_<uid>`.
+  During the trial a device presenting a purchase gets its pointer once, so it
+  keeps working the moment the trial ends. Not entitled → `subscription-expired`.
+- **`twilioRegisterMessagingDevice`** stores the device's FCM token on its record
+  (and removes the token from the legacy `messaging-tokens` registry).
+- **Inbound webhooks** (function and Worker share `entitledDevices`): while the
+  line's trial is live every fresh device is entitled; after it, only devices
+  whose pointed-at record hasn't expired. Calls `<Dial>` those devices'
+  identities (max 10, most recent first); SMS pushes go to their FCM tokens. So
+  an unsubscribed co-user on a shared line is neither rung nor notified, while
+  subscribed users are.
+- **Legacy** (apps that haven't updated: shared identity `<AccountSid>`,
+  `messaging-tokens` entries) is included **only while the trial is live** — it
+  can't be gated per person.
+- **Purchase hook**: a verified, active purchase/restore calls
+  `TwilioService.refreshRegistrations()` (via `SubscriptionService
+  .onEntitlementVerified`), re-registering calls and SMS at once instead of at
+  the next launch.
 
-- Entitled (line trial live, or this device presents an active store
-  entitlement): a normal Voice token — outgoing calls + incoming registration.
-- Not entitled: refused with `failed-precondition` / `subscription-expired`,
-  whose details carry an **unregister-only token** (no outgoing TwiML App,
-  60 s TTL). The app uses it to remove **this device's** incoming-call push
-  registration (`TwilioService._dropVoiceRegistration`) — on every launch / FCM
-  token refresh, when a dial is refused, and when enabling vacation mode.
-  Registrations are per device, so subscribed users on the same line keep
-  ringing. Twilio has no server-side API for Voice SDK registrations, which is
-  why the device does it.
-- Either way the caller must first prove the account's Auth Token
-  (`verifyTwilioCredentials`): `permission-denied` otherwise.
 
-Accepted consequence: if re-verifying a paying user's entitlement fails
-transiently (store outage, failed restore), their device unregisters until its
-next successful token mint (next launch / dial) re-registers it.
+Accepted consequences: a store outage refuses outgoing calls beyond the trial
+but keeps the device's pointer (its record still governs ringing); devices not
+seen for a year are ignored; Firebase anonymous-uid recycling gives a device a
+new identity at its next token mint.
 
 Separately: a store notification (no account) no longer overwrites a paid
 record's `lastAccountSid` with null.

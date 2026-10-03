@@ -194,6 +194,10 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         entitlementProvider: () => _subscriptionService.currentEntitlement,
         entitlementRecovery: _subscriptionService.recoverEntitlement,
       );
+      // A verified purchase re-registers this device for calls and SMS
+      // notifications at once, instead of waiting for the next launch.
+      _subscriptionService.onEntitlementVerified =
+          () => unawaited(_twilioService.refreshRegistrations());
 
       // Set up callbacks for incoming communications
       _twilioService.onIncomingCall = (from) {

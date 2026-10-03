@@ -4,6 +4,7 @@ import {
     ensureAccountCreated,
     ensureTrialStarted,
     isSubscriptionActive,
+    resolveDeviceEntitlement,
     verifyEntitlement,
     refreshAppleByOriginalTransactionId,
     handleAppleNotification,
@@ -483,3 +484,92 @@ describe('paid records stay store-keyed', () => {
         expect(dbTree().subscriptions.google.tokA).toMatchObject({ lastAccountSid: 'AC1', expiresAt: 1_000 });
     });
 });
+
+describe('resolveDeviceEntitlement (per-device gate + subscription pointer)', () => {
+    beforeEach(resetDb);
+    afterEach(() => jest.useRealTimers());
+
+    const appleEntitlement: PresentedEntitlement = {
+        store: 'app_store', signedTransactionInfo: signedPayload({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }),
+    };
+
+    function mockApple(expiresDate: number) {
+        return mockAppleFetch({
+            production: {
+                status: 200,
+                body: appleSubscriptionStatusesResponse([{
+                    transactionId: 't1', originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license', expiresDate, autoRenewStatus: 1,
+                }]),
+            },
+        });
+    }
+
+    async function afterTrial() {
+        jest.useFakeTimers().setSystemTime(0);
+        await lastValueFrom(ensureTrialStarted('AC1'));
+        jest.setSystemTime(THIRTY_DAYS_MS + 1);
+    }
+
+    it('trial, nothing presented: entitled, no pointer', async () => {
+        await lastValueFrom(ensureTrialStarted('AC1'));
+        expect(await lastValueFrom(resolveDeviceEntitlement('AC1', null, null, reverificationConfig)))
+            .toEqual({ entitled: true, subscription: null });
+    });
+
+    it('trial, purchase presented, no pointer yet: verifies once and points at the record (keeps ringing after the trial)', async () => {
+        await lastValueFrom(ensureTrialStarted('AC1'));
+        mockApple(Date.now() + 1e9);
+        expect(await lastValueFrom(resolveDeviceEntitlement('AC1', appleEntitlement, null, reverificationConfig)))
+            .toEqual({ entitled: true, subscription: 'subscriptions/apple/orig1' });
+    });
+
+    it('trial with a pointer already: keeps it without a store round-trip', async () => {
+        await lastValueFrom(ensureTrialStarted('AC1'));
+        const fetchMock = mockApple(Date.now() + 1e9);
+        expect(await lastValueFrom(resolveDeviceEntitlement('AC1', appleEntitlement, 'subscriptions/apple/orig1', reverificationConfig)))
+            .toEqual({ entitled: true, subscription: 'subscriptions/apple/orig1' });
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('after the trial with nothing presented: not entitled, pointer cleared', async () => {
+        await afterTrial();
+        expect(await lastValueFrom(resolveDeviceEntitlement('AC1', null, 'subscriptions/apple/orig1', reverificationConfig)))
+            .toEqual({ entitled: false, subscription: null });
+    });
+
+    it('after the trial with an active purchase: entitled, pointer set', async () => {
+        await afterTrial();
+        mockApple(THIRTY_DAYS_MS * 3);
+        expect(await lastValueFrom(resolveDeviceEntitlement('AC1', appleEntitlement, null, reverificationConfig)))
+            .toEqual({ entitled: true, subscription: 'subscriptions/apple/orig1' });
+    });
+
+    it('after the trial with a lapsed purchase: not entitled, no pointer', async () => {
+        await afterTrial();
+        mockApple(1);
+        expect(await lastValueFrom(resolveDeviceEntitlement('AC1', appleEntitlement, 'subscriptions/apple/orig1', reverificationConfig)))
+            .toEqual({ entitled: false, subscription: null });
+    });
+
+    it('a store outage refuses a token but keeps the pointer (the record still governs ringing)', async () => {
+        await afterTrial();
+        mockAppleFetch({ production: { status: 500 } });
+        expect(await lastValueFrom(resolveDeviceEntitlement('AC1', appleEntitlement, 'subscriptions/apple/orig1', reverificationConfig)))
+            .toEqual({ entitled: false, subscription: 'subscriptions/apple/orig1' });
+    });
+
+    it('a Google pointer names the chain root, so it survives token rotation', async () => {
+        await afterTrial();
+        googleMocks().subscriptionsV2Get.mockResolvedValueOnce(googleSubscriptionV2Response({
+            expiryTime: new Date(THIRTY_DAYS_MS * 3).toISOString(), autoRenewEnabled: true, basePlanId: 'monthly-dialcrest-license',
+        }));
+        await lastValueFrom(verifyGooglePurchase('AC1', 'tokA', 'pkg', '{}'));
+        googleMocks().subscriptionsV2Get.mockResolvedValueOnce(googleSubscriptionV2Response({
+            expiryTime: new Date(THIRTY_DAYS_MS * 4).toISOString(), autoRenewEnabled: true, basePlanId: 'monthly-dialcrest-license',
+            linkedPurchaseToken: 'tokA',
+        }));
+        expect(await lastValueFrom(resolveDeviceEntitlement('AC1', { store: 'play_store', purchaseToken: 'tokB' }, null, reverificationConfig)))
+            .toEqual({ entitled: true, subscription: 'subscriptions/google/tokA' });
+    });
+});
+

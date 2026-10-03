@@ -18,23 +18,163 @@ export const WEBHOOK_PATHS = {
 } as const;
 
 /**
- * Voice SDK client identity for a tenant. Each user brings their own Twilio
- * account, so the account SID uniquely and stably identifies the tenant (across
- * devices and logins). Twilio sends this same AccountSid on inbound-call
- * webhooks, so the incoming-call TwiML can route to the matching <Client> with no
- * extra lookup.
+ * LEGACY Voice SDK client identity: the bare AccountSid, shared by every device
+ * on the line. Tokens minted before per-device identities were registered under
+ * it; the incoming-call TwiML still dials it while the line's trial is live, so
+ * not-yet-updated apps keep ringing during the trial (see incomingCallIdentities).
  */
 export function clientIdentity(accountSid: string): string {
     return accountSid;
 }
 
+/**
+ * Per-device Voice SDK identity: `<AccountSid>_<uid>`, uid being the device's
+ * anonymous Firebase Auth uid. A distinct identity per device is what lets the
+ * incoming-call TwiML ring only the devices whose OWN user is entitled — with one
+ * shared identity, Twilio rings every device on the line or none. Twilio client
+ * identities allow letters, digits and underscores.
+ */
+export function deviceIdentity(accountSid: string, uid: string): string {
+    return `${accountSid}_${uid}`;
+}
+
+/** Anonymous Firebase uids are alphanumeric; anything else is refused (it becomes an identity and an RTDB key). */
+export const DEVICE_UID = /^[A-Za-z0-9]{1,128}$/;
+
 /** RTDB paths the webhooks read/write, relative to the database root. */
 export const dbPaths = {
     authToken: (accountSid: string) => `/twilio/${accountSid}/secret/authToken`,
     createdAt: (accountSid: string) => `/twilio/${accountSid}/createdAt`,
+    trialExpiresAt: (accountSid: string) => `/twilio/${accountSid}/trial/expiresAt`,
+    /** Per-device registry (DeviceRecord), keyed by the device's Firebase uid. Server-only. */
+    devices: (accountSid: string) => `/twilio/${accountSid}/devices`,
+    device: (accountSid: string, uid: string) => `/twilio/${accountSid}/devices/${uid}`,
+    deviceFcmToken: (accountSid: string, uid: string) => `/twilio/${accountSid}/devices/${uid}/fcmToken`,
+    /** `subscription` pointers are record paths without a leading slash, e.g. `subscriptions/apple/123`. */
+    subscriptionExpiresAt: (recordPath: string) => `/${recordPath}/expiresAt`,
+    /** LEGACY SMS-push registry (fcmToken → true) from before the per-device registry. */
     messagingTokens: (accountSid: string) => `/twilio/${accountSid}/messaging-tokens`,
     messagingToken: (accountSid: string, fcmToken: string) => `/twilio/${accountSid}/messaging-tokens/${fcmToken}`,
 };
+
+// ---------------------------------------------------------------------------
+// Per-device entitlement — who an inbound call rings / an inbound SMS notifies
+// ---------------------------------------------------------------------------
+
+/**
+ * One device on a line, at /twilio/{sid}/devices/{uid}. Written only by the
+ * backend: `subscription` by twilioAccessToken (from store-verified state),
+ * `fcmToken` by twilioRegisterMessagingDevice.
+ */
+export interface DeviceRecord {
+    /**
+     * Path of the store record (/subscriptions/...) of the subscription this
+     * device's user holds, or null/absent if none. A POINTER, not a copy: store
+     * notifications keep the record's expiresAt current, so renewals and refunds
+     * take effect without the device checking in.
+     */
+    subscription?: string | null;
+    /** FCM registration token for incoming-SMS pushes. */
+    fcmToken?: string | null;
+    /** Last time this device checked in (token mint / messaging registration). */
+    lastSeen?: number;
+}
+
+/** Devices not seen for this long are ignored — Twilio drops a Voice registration after a year idle too. */
+export const DEVICE_STALE_MS = 365 * 24 * 60 * 60 * 1000;
+
+/** Twilio rings at most 10 <Client>s per <Dial>. */
+export const MAX_DIAL_CLIENTS = 10;
+
+export function trialLive(trialExpiresAt: number | null, now: number): boolean {
+    return typeof trialExpiresAt === 'number' && trialExpiresAt > now;
+}
+
+function freshDevices(devices: Record<string, DeviceRecord> | null, now: number): Array<[string, DeviceRecord]> {
+    return Object.entries(devices ?? {})
+        .filter(([, record]) => typeof record?.lastSeen === 'number' && now - record.lastSeen < DEVICE_STALE_MS);
+}
+
+/**
+ * The subscription records whose expiry must be read before deciding: none while
+ * the line's trial is live (every device is entitled then), otherwise each
+ * distinct record a fresh device points at.
+ */
+export function subscriptionsToCheck(
+    devices: Record<string, DeviceRecord> | null, trialExpiresAt: number | null, now: number,
+): string[] {
+    if (trialLive(trialExpiresAt, now)) return [];
+    const paths = freshDevices(devices, now)
+        .map(([, record]) => record.subscription)
+        .filter((path): path is string => typeof path === 'string' && path !== '');
+    return [...new Set(paths)];
+}
+
+/**
+ * The devices whose user is entitled — the same OR gate twilioAccessToken applies
+ * per person: the line's shared trial is live, or the device's own subscription
+ * record (`subscriptionExpiries[path]`) hasn't expired. Most recently seen first.
+ */
+export function entitledDevices(
+    devices: Record<string, DeviceRecord> | null,
+    trialExpiresAt: number | null,
+    subscriptionExpiries: Record<string, number | null>,
+    now: number,
+): Array<{ uid: string; record: DeviceRecord }> {
+    const trial = trialLive(trialExpiresAt, now);
+    return freshDevices(devices, now)
+        .filter(([, record]) => {
+            if (trial) return true;
+            const expiresAt = record.subscription ? subscriptionExpiries[record.subscription] : null;
+            return typeof expiresAt === 'number' && expiresAt > now;
+        })
+        .sort(([, a], [, b]) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0))
+        .map(([uid, record]) => ({ uid, record }));
+}
+
+/**
+ * The <Client> identities an inbound call rings: each entitled device's own
+ * identity, plus — only while the line's trial is live, when everyone is
+ * entitled anyway — the legacy shared identity, so devices that haven't updated
+ * yet still ring. Capped at MAX_DIAL_CLIENTS (legacy first, then most recent).
+ */
+export function incomingCallIdentities(
+    accountSid: string, entitled: Array<{ uid: string }>, trialExpiresAt: number | null, now: number,
+): string[] {
+    const legacy = trialLive(trialExpiresAt, now) ? [clientIdentity(accountSid)] : [];
+    return [...legacy, ...entitled.map(({ uid }) => deviceIdentity(accountSid, uid))].slice(0, MAX_DIAL_CLIENTS);
+}
+
+/** Where an inbound SMS push goes: an FCM token, and the RTDB path to clear if FCM reports it unregistered. */
+export interface MessagingTarget {
+    fcmToken: string;
+    removePath: string;
+}
+
+/**
+ * The FCM tokens an inbound SMS is pushed to: each entitled device's token, plus
+ * — only while the line's trial is live — the legacy messaging-tokens entries of
+ * not-yet-updated apps. Deduplicated by token (a reinstall can leave the same
+ * token under an old and a new uid).
+ */
+export function incomingMessageTargets(
+    accountSid: string,
+    entitled: Array<{ uid: string; record: DeviceRecord }>,
+    legacyTokens: Record<string, unknown> | null,
+    trialExpiresAt: number | null,
+    now: number,
+): MessagingTarget[] {
+    const targets = new Map<string, MessagingTarget>();
+    for (const { uid, record } of entitled) {
+        if (record.fcmToken) targets.set(record.fcmToken, { fcmToken: record.fcmToken, removePath: dbPaths.deviceFcmToken(accountSid, uid) });
+    }
+    if (trialLive(trialExpiresAt, now)) {
+        for (const fcmToken of Object.keys(legacyTokens ?? {})) {
+            if (!targets.has(fcmToken)) targets.set(fcmToken, { fcmToken, removePath: dbPaths.messagingToken(accountSid, fcmToken) });
+        }
+    }
+    return [...targets.values()];
+}
 
 const XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8"?>';
 
@@ -48,16 +188,16 @@ function escapeAttribute(value: string): string {
 }
 
 /**
- * TwiML for an inbound PSTN call: ring the tenant's registered app (Voice SDK
- * client). Always — inbound calls are deliberately NOT gated on the trial or a
- * subscription. The webhook only knows the line (every device shares the
- * AccountSid identity) while paid subscriptions belong to a person, so any gate
- * here would either silence paying users or let one customer pay for the whole
- * line. Entitlement is enforced where the person is known: twilioAccessToken
- * (outgoing calls, and registering a device for incoming calls).
+ * TwiML for an inbound PSTN call: ring the given Voice SDK client identities
+ * simultaneously (incomingCallIdentities picks them: only devices whose own user
+ * is entitled). With nobody to ring, announce the number as unavailable.
  */
-export function incomingCallTwiml(accountSid: string): string {
-    return `${XML_DECLARATION}<Response><Dial><Client>${escapeText(clientIdentity(accountSid))}</Client></Dial></Response>`;
+export function incomingCallTwiml(identities: string[]): string {
+    if (identities.length === 0) {
+        return `${XML_DECLARATION}<Response><Say>This number is temporarily unavailable.</Say></Response>`;
+    }
+    const clients = identities.map((identity) => `<Client>${escapeText(identity)}</Client>`).join('');
+    return `${XML_DECLARATION}<Response><Dial>${clients}</Dial></Response>`;
 }
 
 /**

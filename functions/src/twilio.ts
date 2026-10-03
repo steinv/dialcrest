@@ -11,13 +11,18 @@ import { Database } from 'firebase-admin/database';
 import * as logger from 'firebase-functions/logger';
 import { FUNCTIONS_BASE_URL, isKnownWebhookUrl, isSignatureFailClosed, webhookPublicBaseUrl, webhookUrl } from './edge';
 import {
+    DeviceRecord,
     WEBHOOK_PATHS,
-    clientIdentity,
     dbPaths,
+    deviceIdentity,
     emptyMessagingTwiml,
+    entitledDevices,
+    incomingCallIdentities,
     incomingCallTwiml,
     incomingMessagePushData,
+    incomingMessageTargets,
     outgoingCallTwiml,
+    subscriptionsToCheck,
 } from './shared/webhooks';
 
 // Friendly names used to find/create resources in each tenant's Twilio account.
@@ -604,14 +609,16 @@ async function getOrCreateApiKey(client: Twilio, accountSid: string): Promise<{ 
 }
 
 /**
- * Mint a Twilio Voice access token for a tenant's account.
- * The push credential SID (created by twilioRegister) is read from the DB and
- * added to the VoiceGrant so this device can receive incoming-call pushes.
+ * Mint a Twilio Voice access token for ONE DEVICE of a tenant's account. Its
+ * identity is the device's own (`<AccountSid>_<uid>`, deviceIdentity), so the
+ * incoming-call TwiML can ring exactly the devices whose user is entitled. The
+ * push credential SID (created by twilioRegister) is read from the DB and added
+ * to the VoiceGrant so this device can receive incoming-call pushes.
  *
  * Callers MUST have run verifyTwilioCredentials first: nothing here proves the
  * caller owns the account when the API key and TwiML App are already cached.
  */
-export function accessToken(accountSid: string, authToken: string, callerId: string): Observable<string> {
+export function accessToken(accountSid: string, authToken: string, callerId: string, uid: string): Observable<string> {
     const client: Twilio = twilio(accountSid, authToken);
     return forkJoin({
         apiKeyInstance: from(getOrCreateApiKey(client, accountSid)), // reuse the cached API key (verified), or mint one
@@ -620,7 +627,7 @@ export function accessToken(accountSid: string, authToken: string, callerId: str
     }).pipe(
         map(({ apiKeyInstance, pushCredentialSid, appSid }) => {
             // TTL default 1h max 24h
-            const options: AccessTokenOptions = { ttl: 600, identity: clientIdentity(accountSid) };
+            const options: AccessTokenOptions = { ttl: 600, identity: deviceIdentity(accountSid, uid) };
             const token = new AccessToken(accountSid, apiKeyInstance.sid, apiKeyInstance.secret, options);
             token.addGrant(new AccessToken.VoiceGrant({
                 outgoingApplicationSid: appSid,
@@ -638,65 +645,66 @@ export function accessToken(accountSid: string, authToken: string, callerId: str
     );
 }
 
-/** Lifetime of an unregister-only token: just long enough for one Voice.unregister call. */
-export const UNREGISTER_TOKEN_TTL_S = 60;
-
-/**
- * A minimal Voice token handed to a device whose user is NOT entitled (trial over,
- * no subscription), so it can remove its own incoming-call push registration.
- * Twilio offers no server-side API for Voice SDK registrations — only the device
- * can drop one, and only with a valid token for the same identity and push
- * credential. Registrations are per device, so this silences only the refused
- * device; other devices on the same line, whose users are subscribed, keep
- * ringing.
- *
- * Deliberately weak: no outgoing TwiML App (it cannot place calls) and a 60 s
- * lifetime. A tampered app could still re-register with it, but only for an
- * account whose Auth Token it just proved (verifyTwilioCredentials) — and that
- * holder can mint Voice tokens on their own Twilio account anyway.
- */
-export function unregisterOnlyToken(accountSid: string, authToken: string): Observable<string> {
-    const client: Twilio = twilio(accountSid, authToken);
-    return forkJoin({
-        apiKeyInstance: from(getOrCreateApiKey(client, accountSid)),
-        pushCredentialSid: pushCredentialSid(accountSid),
-    }).pipe(
-        map(({ apiKeyInstance, pushCredentialSid }) => {
-            const options: AccessTokenOptions = { ttl: UNREGISTER_TOKEN_TTL_S, identity: clientIdentity(accountSid) };
-            const token = new AccessToken(accountSid, apiKeyInstance.sid, apiKeyInstance.secret, options);
-            token.addGrant(new AccessToken.VoiceGrant({
-                incomingAllow: true,
-                ...(pushCredentialSid ? { pushCredentialSid } : {}),
-            }));
-            return token.toJwt();
-        }),
-    );
-}
-
-/** Push credential SID persisted by twilioRegister; required to (un)register for incoming calls. */
+/** Push credential SID persisted by twilioRegister; required to register for incoming calls. */
 function pushCredentialSid(accountSid: string): Observable<string | null> {
     return from(admin.database().ref(`/twilio/${accountSid}/push-credential/android`).once('value')).pipe(
         map((snapshot) => snapshot.val() as string | null),
     );
 }
 
+/** The subscription pointer currently recorded for a device, or null. */
+export function deviceSubscription(accountSid: string, uid: string): Observable<string | null> {
+    return from(admin.database().ref(dbPaths.device(accountSid, uid)).once('value')).pipe(
+        map((snapshot) => (snapshot.val() as DeviceRecord | null)?.subscription ?? null),
+    );
+}
+
 /**
- * TwiML for an inbound PSTN call: ring the registered mobile app (Voice SDK
- * client). The <Client> name MUST match the access token identity, otherwise
- * Twilio has no registered endpoint to deliver the push to. Twilio sends the
- * number-owning AccountSid on the request, which is exactly our tenant identity.
- * <?xml version="1.0" encoding="UTF-8"?>
- * <Response><Dial><Client>{AccountSid}</Client></Dial></Response>
- *
- * Not gated on the trial/subscription — see incomingCallTwiml (shared/webhooks.ts).
+ * Records a device check-in from twilioAccessToken: its (store-verified)
+ * subscription pointer and lastSeen. update() leaves fcmToken untouched.
+ */
+export function recordDeviceCheckIn(accountSid: string, uid: string, subscription: string | null): Observable<void> {
+    return from(admin.database().ref(dbPaths.device(accountSid, uid)).update({ subscription, lastSeen: Date.now() }));
+}
+
+/**
+ * Reads what both inbound webhooks need to decide who is entitled: the device
+ * registry and the line's trial expiry, then the expiry of each subscription
+ * record a device points at (only when the trial is over). All reads parallel.
+ */
+async function readEntitledDevices(accountSid: string, now: number) {
+    const db = admin.database();
+    const [devices, trialExpiresAt] = await Promise.all([
+        db.ref(dbPaths.devices(accountSid)).once('value').then((s) => s.val() as Record<string, DeviceRecord> | null),
+        db.ref(dbPaths.trialExpiresAt(accountSid)).once('value').then((s) => s.val() as number | null),
+    ]);
+    const paths = subscriptionsToCheck(devices, trialExpiresAt, now);
+    const expiries = await Promise.all(paths.map((path) =>
+        db.ref(dbPaths.subscriptionExpiresAt(path)).once('value').then((s) => s.val() as number | null)));
+    const subscriptionExpiries = Object.fromEntries(paths.map((path, i) => [path, expiries[i]]));
+    return { trialExpiresAt, entitled: entitledDevices(devices, trialExpiresAt, subscriptionExpiries, now) };
+}
+
+/**
+ * TwiML for an inbound PSTN call: ring the devices of this line whose OWN user
+ * is entitled — the line's trial is live, or the device's subscription pointer
+ * (DeviceRecord.subscription) names a store record that hasn't expired. Each
+ * device registers under its own identity (deviceIdentity), so subscribed users
+ * keep ringing while an unsubscribed co-user on the same Twilio account doesn't.
+ * While the trial is live the legacy shared identity rings too, for apps that
+ * haven't updated yet. See shared/webhooks.ts incomingCallIdentities.
+ * <Response><Dial><Client>{AccountSid}_{uid}</Client>…</Dial></Response>
  * @param request http request that initiated this function
  * @param response http response to be sent back to the caller
  */
 export async function callbackIncomingCall(request: Request, response: express.Response) {
     if (!await twilioSignatureGuard(request, response, INCOMING_CALL_PATH)) return;
+    const accountSid: string = request.body.AccountSid;
+    const now = Date.now();
+    const { trialExpiresAt, entitled } = await readEntitledDevices(accountSid, now);
     response.type('text/xml')
         .status(200)
-        .send(incomingCallTwiml(request.body.AccountSid));
+        .send(incomingCallTwiml(incomingCallIdentities(accountSid, entitled, trialExpiresAt, now)));
 }
 
 /**
@@ -728,8 +736,11 @@ export async function callbackCallStatusChanges(request: Request, response: expr
 
 /**
  * TwiML webhook for an inbound SMS/MMS (configured as the number's smsUrl by
- * configureNumber). Pushes a silent/data-only FCM message to every device
- * registered for this tenant (registerMessagingDevice) so the client shows an
+ * configureNumber). Pushes a silent/data-only FCM message to every device of
+ * this tenant whose own user is entitled (registerMessagingDevice +
+ * entitledDevices; legacy messaging-tokens only while the trial is live) — so an
+ * unsubscribed co-user stops getting notifications while subscribed users on the
+ * same Twilio account keep them — and the client shows an
  * in-app banner (foreground) or an OS notification (background/terminated) —
  * sent directly via the Firebase Admin SDK rather than through Twilio's
  * Conversations/Notify push-credential system, which is Voice-specific (see
@@ -747,12 +758,16 @@ export async function callbackIncomingMessage(request: Request, response: expres
     const body = request.body.Body ?? '';
     const messageSid = request.body.MessageSid ?? '';
 
-    const tokensSnapshot = await admin.database().ref(dbPaths.messagingTokens(accountSid)).once('value');
-    const tokens = Object.keys((tokensSnapshot.val() ?? {}) as Record<string, boolean>);
+    const now = Date.now();
+    const [{ trialExpiresAt, entitled }, legacyTokens] = await Promise.all([
+        readEntitledDevices(accountSid, now),
+        admin.database().ref(dbPaths.messagingTokens(accountSid)).once('value').then((s) => s.val() as Record<string, unknown> | null),
+    ]);
+    const targets = incomingMessageTargets(accountSid, entitled, legacyTokens, trialExpiresAt, now);
 
-    if (tokens.length > 0) {
-        const results = await Promise.allSettled(tokens.map((token) => admin.messaging().send({
-            token,
+    if (targets.length > 0) {
+        const results = await Promise.allSettled(targets.map(({ fcmToken }) => admin.messaging().send({
+            token: fcmToken,
             data: incomingMessagePushData({ accountSid, from, to, body, messageSid }),
             android: { priority: 'high' },
             apns: { headers: { 'apns-priority': '10' }, payload: { aps: { 'content-available': 1 } } },
@@ -764,7 +779,7 @@ export async function callbackIncomingMessage(request: Request, response: expres
             const isUnregistered = result.status === 'rejected' &&
                 String((result.reason as { code?: string })?.code ?? result.reason).includes('registration-token-not-registered');
             return isUnregistered ?
-                admin.database().ref(dbPaths.messagingToken(accountSid, tokens[i])).remove() :
+                admin.database().ref(targets[i].removePath).remove() :
                 Promise.resolve();
         }));
     }
@@ -775,13 +790,18 @@ export async function callbackIncomingMessage(request: Request, response: expres
 }
 
 /**
- * Registers (or refreshes) this device's FCM token so callbackIncomingMessage
- * can push incoming-SMS notifications to it. Stored as a set keyed by token
- * (rather than one token per account) so every device sharing this tenant's
- * Twilio account gets notified, not just the most recently registered one.
+ * Registers (or refreshes) this device's FCM token on its own device record
+ * (/twilio/{sid}/devices/{uid}), so callbackIncomingMessage can push incoming-SMS
+ * notifications to it — but only while this device's user is entitled (see
+ * entitledDevices). Every entitled device sharing the account gets notified.
  */
-export function registerMessagingDevice(accountSid: string, fcmToken: string): Observable<void> {
-    return from(admin.database().ref(dbPaths.messagingToken(accountSid, fcmToken)).set(true));
+export function registerMessagingDevice(accountSid: string, uid: string, fcmToken: string): Observable<void> {
+    const db = admin.database();
+    return from(Promise.all([
+        db.ref(dbPaths.device(accountSid, uid)).update({ fcmToken, lastSeen: Date.now() }),
+        // Migrated off the legacy registry, which would otherwise push to this token unconditionally during the trial.
+        db.ref(dbPaths.messagingToken(accountSid, fcmToken)).remove(),
+    ])).pipe(map(() => undefined));
 }
 
 /**

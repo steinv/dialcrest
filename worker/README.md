@@ -6,10 +6,10 @@ replacing the Cloud Functions of the same names (design and migration:
 
 | Path | Does |
 |---|---|
-| `/twilioIncomingCall` | TwiML ringing the tenant's app (not entitlement-gated) |
+| `/twilioIncomingCall` | TwiML ringing the line's entitled devices (per-device identity) |
 | `/twilioOutgoingCall` | TwiML dialing `To` with `From` as caller id |
 | `/twilioCallStatusChanges` | logs the status callback, 202 |
-| `/twilioIncomingMessage` | data-only FCM push to the tenant's devices, empty MessagingResponse |
+| `/twilioIncomingMessage` | data-only FCM push to the line's entitled devices, empty MessagingResponse |
 
 Every request is authenticated with `X-Twilio-Signature` against the tenant's
 Auth Token from RTDB (`/twilio/<sid>/secret/authToken`, written by the
@@ -45,7 +45,8 @@ reference implementation).
    `twilio-phone-peblet`). Create a dedicated one, e.g. `dialcrest-hooks-worker`,
    with only:
    - **Firebase Realtime Database Admin** (`roles/firebasedatabase.admin`) — reads
-     Auth Tokens / trial expiry / messaging tokens, deletes unregistered tokens.
+     Auth Tokens / trial expiry / device registry / subscription expiries, deletes
+     unregistered FCM tokens.
      Note OAuth access to RTDB bypasses `database.rules.json`.
    - **Firebase Cloud Messaging API Admin** (`roles/firebasecloudmessaging.admin`).
 

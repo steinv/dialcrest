@@ -1,10 +1,15 @@
 import {
+    DeviceRecord,
     WEBHOOK_PATHS,
     dbPaths,
     emptyMessagingTwiml,
+    entitledDevices,
+    incomingCallIdentities,
     incomingCallTwiml,
     incomingMessagePushData,
+    incomingMessageTargets,
     outgoingCallTwiml,
+    subscriptionsToCheck,
 } from '../../functions/src/shared/webhooks';
 import { FirebaseConfig, rtdbDelete, rtdbGet, sendDataMessage } from './firebase';
 import { isTransient, parseServiceAccount } from './google';
@@ -116,9 +121,32 @@ async function allowTokenless(env: Env, firebase: FirebaseConfig, route: Route, 
     return !failClosed;
 }
 
-/** Inbound SMS/MMS: data-only push to each of the tenant's devices, dropping tokens FCM no longer knows. */
+/**
+ * Who an inbound call/SMS may reach — the Worker twin of readEntitledDevices in
+ * functions/src/twilio.ts, using the same shared rules: the device registry and
+ * the line's trial, then (only once the trial is over) each subscription record
+ * a device points at. Devices whose own user isn't entitled are left out, so an
+ * unsubscribed co-user on a shared line isn't rung/notified.
+ */
+async function readEntitledDevices(firebase: FirebaseConfig, accountSid: string, now: number) {
+    const [devices, trialExpiresAt] = await Promise.all([
+        rtdbGet<Record<string, DeviceRecord>>(firebase, dbPaths.devices(accountSid)),
+        rtdbGet<number>(firebase, dbPaths.trialExpiresAt(accountSid)),
+    ]);
+    const paths = subscriptionsToCheck(devices, trialExpiresAt, now);
+    const expiries = await Promise.all(paths.map((path) => rtdbGet<number>(firebase, dbPaths.subscriptionExpiresAt(path))));
+    const subscriptionExpiries = Object.fromEntries(paths.map((path, i) => [path, expiries[i]]));
+    return { trialExpiresAt, entitled: entitledDevices(devices, trialExpiresAt, subscriptionExpiries, now) };
+}
+
+/** Inbound SMS/MMS: data-only push to each entitled device, dropping tokens FCM no longer knows. */
 async function incomingMessage(firebase: FirebaseConfig, accountSid: string, params: URLSearchParams): Promise<Response> {
-    const tokens = Object.keys((await rtdbGet<Record<string, boolean>>(firebase, dbPaths.messagingTokens(accountSid))) ?? {});
+    const now = Date.now();
+    const [{ trialExpiresAt, entitled }, legacyTokens] = await Promise.all([
+        readEntitledDevices(firebase, accountSid, now),
+        rtdbGet<Record<string, unknown>>(firebase, dbPaths.messagingTokens(accountSid)),
+    ]);
+    const targets = incomingMessageTargets(accountSid, entitled, legacyTokens, trialExpiresAt, now);
     const data = incomingMessagePushData({
         accountSid,
         from: params.get('From') ?? '',
@@ -126,9 +154,9 @@ async function incomingMessage(firebase: FirebaseConfig, accountSid: string, par
         body: params.get('Body') ?? '',
         messageSid: params.get('MessageSid') ?? '',
     });
-    const results = await Promise.allSettled(tokens.map((token) => sendDataMessage(firebase, token, data)));
+    const results = await Promise.allSettled(targets.map(({ fcmToken }) => sendDataMessage(firebase, fcmToken, data)));
     await Promise.allSettled(results.map((result, i) => result.status === 'fulfilled' && result.value === 'unregistered' ?
-        rtdbDelete(firebase, dbPaths.messagingToken(accountSid, tokens[i])) :
+        rtdbDelete(firebase, targets[i].removePath) :
         Promise.resolve()));
     return xml(emptyMessagingTwiml());
 }
@@ -145,15 +173,24 @@ async function handle(request: Request, env: Env): Promise<Response> {
     const firebase = firebaseConfig(env);
     const typedRoute = route as Route;
 
+    // Who an inbound call rings doesn't depend on the signature check, so those
+    // reads run in parallel with it — they're in the caller's dead air. Never
+    // awaited when the check fails; the catch keeps that from being unhandled.
+    const now = Date.now();
+    const callTargets = typedRoute === WEBHOOK_PATHS.incomingCall ? readEntitledDevices(firebase, accountSid, now) : null;
+    callTargets?.catch(() => undefined);
+
     if (!await authenticate(env, firebase, typedRoute, accountSid, request, params)) {
         console.warn({ event: 'twilio_webhook_rejected', path: route, accountSid });
         return text(403, 'Invalid Twilio signature');
     }
 
     switch (typedRoute) {
-    case WEBHOOK_PATHS.incomingCall:
-        // Always rings — inbound calls aren't entitlement-gated (see incomingCallTwiml).
-        return xml(incomingCallTwiml(accountSid));
+    case WEBHOOK_PATHS.incomingCall: {
+        // Rings only devices whose own user is entitled (see incomingCallIdentities).
+        const { trialExpiresAt, entitled } = await (callTargets as ReturnType<typeof readEntitledDevices>);
+        return xml(incomingCallTwiml(incomingCallIdentities(accountSid, entitled, trialExpiresAt, now)));
+    }
     case WEBHOOK_PATHS.outgoingCall:
         return xml(outgoingCallTwiml(params.get('To') ?? undefined, params.get('From') ?? undefined));
     case WEBHOOK_PATHS.callStatusChanges:

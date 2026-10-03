@@ -20,14 +20,17 @@ rules must not be broken:
   that — the callables don't prove account ownership on their own.
 - **Callables keep `enforceAppCheck: true`.** Don't remove it. App Check proves a
   genuine app, not account ownership: anything that grants a device access to an
-  account — minting a credential (`twilioAccessToken`, incl. its unregister-only
-  token) or subscribing to its pushes (`twilioRegisterMessagingDevice`, whose
+  account — minting a credential (`twilioAccessToken`) or subscribing to its pushes (`twilioRegisterMessagingDevice`, whose
   pushes carry message text) — must run `verifyTwilioCredentials` first
   (`requireTwilioCredentials` in index.ts).
-- **Inbound calls are entitlement-gated per device, not in the webhook.** The
-  webhook can't tell devices apart (shared identity); a non-entitled device
-  removes its own registration with the unregister-only token. Never add an
-  account-level paid flag — one customer must not pay for the whole line.
+- **Inbound calls and SMS pushes are entitlement-gated per device.** Each device
+  has its own Voice identity (`<AccountSid>_<uid>`) and a record in
+  `/twilio/{sid}/devices` whose `subscription` is a pointer to its user's store
+  record; the webhooks reach only entitled devices (`entitledDevices` in
+  `functions/src/shared/webhooks.ts`, used by both function and Worker). Never add
+  an account-level paid flag — one customer must not pay for the whole line — and
+  never copy subscription expiries onto device records (pointers keep renewals
+  current).
 - **Validate against the URL the endpoint is served at — never reconstruct it**
   from request headers (`Host`, `X-Forwarded-Host`, …); those are spoofable. The
   functions validate only `FUNCTIONS_BASE_URL/<path>`; the Worker only

@@ -28,7 +28,7 @@ import { setGlobalOptions } from 'firebase-functions/v2';
 import { HttpsError, onRequest, onCall } from 'firebase-functions/v2/https';
 import { onMessagePublished } from 'firebase-functions/v2/pubsub';
 import { defineSecret, defineString } from 'firebase-functions/params';
-import { catchError, from, lastValueFrom, map, of, switchMap, throwError } from 'rxjs';
+import { catchError, from, lastValueFrom, map, switchMap, throwError } from 'rxjs';
 import {
     callbackCallStatusChanges,
     callbackIncomingCall,
@@ -39,7 +39,8 @@ import {
     getIncomingAppSid,
     configureSelectedNumbers,
     InvalidTwilioCredentialsError,
-    unregisterOnlyToken,
+    deviceSubscription,
+    recordDeviceCheckIn,
     verifyTwilioCredentials,
     ensureWebhooksCurrent,
     registerMessagingDevice,
@@ -54,12 +55,13 @@ import {
     ensureTrialStarted,
     handleAppleNotification,
     handleGoogleNotification,
-    isSubscriptionActive,
+    resolveDeviceEntitlement,
     verifyAppleNotificationSignature,
     verifyApplePurchase,
     verifyEntitlement,
     verifyGooglePurchase,
 } from './subscription';
+import { DEVICE_UID } from './shared/webhooks';
 import * as admin from 'firebase-admin';
 
 admin.initializeApp();
@@ -68,6 +70,14 @@ admin.initializeApp();
 // function — webhook or callable — scales to at most this many instances.
 // minInstances stays at the default 0.
 setGlobalOptions({ maxInstances: 10 });
+
+/**
+ * FCM registration tokens are base64url-ish strings with ':' separators. Checked
+ * because the token becomes an RTDB key: anything else (notably '/') could write
+ * outside the device record it is stored on.
+ */
+const FCM_TOKEN = /^[A-Za-z0-9_:-]{1,4096}$/;
+const REGION = 'europe-west1';
 
 const twilioPebletSecret = defineSecret('TWILIO_PEBLET_SECRET');
 
@@ -128,8 +138,6 @@ function pushSecrets(): { androidFcmSecret: string; iosApnPrivateKey: string } {
     };
 }
 
-const REGION = 'europe-west1';
-
 // https://europe-west1-twilio-phone-peblet.cloudfunctions.net/twilioIncomingCall
 exports.twilioIncomingCall = onRequest({ region: REGION, cors: true, timeoutSeconds: 30 },
     (req, res) => callbackIncomingCall(req, res)
@@ -177,7 +185,8 @@ exports.twilioRegister = onCall({ enforceAppCheck: true, region: REGION, cors: t
 );
 
 /**
- * Generate a Twilio Voice access token for the given account. The push
+ * Generate a Twilio Voice access token for THIS DEVICE (identity
+ * `<AccountSid>_<uid>`, uid = the caller's anonymous Firebase uid). The push
  * credential SID is read from the DB (persisted by twilioRegister) so incoming
  * calls reach this device.
  *
@@ -185,11 +194,12 @@ exports.twilioRegister = onCall({ enforceAppCheck: true, region: REGION, cors: t
  * (verifyTwilioCredentials) — 'permission-denied' otherwise.
  *
  * Gated on the PERSON's subscription: the line's trial, or the store entitlement
- * this device presents. When neither is active it throws 'failed-precondition'
- * 'subscription-expired' instead of minting, blocking outgoing calls; the error's
- * details carry an `unregisterToken` (unregisterOnlyToken) so the device can drop
- * its own incoming-call registration. Other devices on the same line are
- * unaffected — inbound calls themselves are not gated (see incomingCallTwiml).
+ * this device presents (resolveDeviceEntitlement). Every call also records the
+ * device's check-in and subscription pointer (/twilio/{sid}/devices/{uid}), which
+ * is what the inbound webhooks use to ring / notify only entitled devices — so an
+ * unsubscribed co-user on a shared line stops receiving calls and SMS
+ * notifications without affecting subscribed users. When not entitled it throws
+ * 'failed-precondition' 'subscription-expired' instead of minting.
  *
  * IOS https://github.com/twilio/voice-quickstart-ios#6-create-a-push-credential-with-your-voip-service-certificate
  * ANDROID https://github.com/twilio/voice-quickstart-android#7-create-a-push-credential-using-your-fcm-server-key
@@ -199,17 +209,34 @@ exports.twilioAccessToken = onCall(
     (req) => {
         const accountSid = req.data['accountSid'];
         const authToken = req.data['authToken'];
+        const uid = requireDeviceUid(req.auth?.uid);
         return lastValueFrom(
             requireTwilioCredentials(accountSid, authToken).pipe(
-                switchMap(() => isSubscriptionActive(accountSid, presentedEntitlement(req.data), subscriptionReverificationConfig())),
-                switchMap((active) => active ?
-                    accessToken(accountSid, authToken, req.data['callerId']) :
-                    subscriptionExpired(accountSid, authToken)),
+                switchMap(() => deviceSubscription(accountSid, uid)),
+                switchMap((current) => resolveDeviceEntitlement(
+                    accountSid, presentedEntitlement(req.data), current, subscriptionReverificationConfig(),
+                )),
+                switchMap(({ entitled, subscription }) => recordDeviceCheckIn(accountSid, uid, subscription).pipe(map(() => entitled))),
+                switchMap((entitled) => entitled ?
+                    accessToken(accountSid, authToken, req.data['callerId'], uid) :
+                    throwError(() => new HttpsError('failed-precondition', 'subscription-expired'))),
                 switchMap((jwt) => ensureWebhooksCurrent(accountSid, authToken).pipe(map(() => jwt))),
             ),
         );
     }
 );
+
+/**
+ * The caller's anonymous Firebase uid, which keys its device record and becomes
+ * part of its Voice identity. The app signs in anonymously at startup
+ * (AccountAuthService.ensureSignedIn), so a missing uid is 'unauthenticated'.
+ */
+function requireDeviceUid(uid: string | undefined): string {
+    if (typeof uid !== 'string' || !DEVICE_UID.test(uid)) {
+        throw new HttpsError('unauthenticated', 'device-identity-required');
+    }
+    return uid;
+}
 
 /**
  * Proves the caller holds a valid Auth Token for `accountSid` (verifyTwilioCredentials)
@@ -221,22 +248,6 @@ function requireTwilioCredentials(accountSid: unknown, authToken: unknown) {
         catchError((e) => throwError(() => e instanceof InvalidTwilioCredentialsError ?
             new HttpsError('permission-denied', 'invalid-twilio-credentials') :
             e)),
-    );
-}
-
-/**
- * The 'subscription-expired' refusal, carrying an unregister-only token in its
- * details. If that token can't be minted the refusal is still thrown, just
- * without it — the device then simply keeps its registration until next time.
- */
-function subscriptionExpired(accountSid: string, authToken: string) {
-    return unregisterOnlyToken(accountSid, authToken).pipe(
-        map((unregisterToken): { unregisterToken?: string } => ({ unregisterToken })),
-        catchError((e) => {
-            console.error(`Failed to mint an unregister token for ${accountSid}`, e);
-            return of({});
-        }),
-        switchMap((details) => throwError(() => new HttpsError('failed-precondition', 'subscription-expired', details))),
     );
 }
 
@@ -365,18 +376,13 @@ exports.twilioConfigureNumbers = onCall({ enforceAppCheck: true, region: REGION,
 );
 
 /**
- * FCM registration tokens are base64url-ish strings with ':' separators. Checked
- * because the token becomes an RTDB key: anything else (notably '/') could write
- * outside /twilio/{sid}/messaging-tokens/{token}.
- */
-const FCM_TOKEN = /^[A-Za-z0-9_:-]{1,4096}$/;
-
-/**
  * Registers (or refreshes) this device's FCM token so twilioIncomingMessage's
  * webhook can push incoming-SMS notifications — including the message text — to
- * it. Requires the account's Auth Token (requireTwilioCredentials): otherwise
- * anyone passing App Check could name another tenant's AccountSid and receive
- * that tenant's incoming messages on their own device.
+ * it, on this device's record (/twilio/{sid}/devices/{uid}) — pushes then only
+ * go to it while its user is entitled (see callbackIncomingMessage). Requires the
+ * account's Auth Token (requireTwilioCredentials): otherwise anyone passing App
+ * Check could name another tenant's AccountSid and receive that tenant's incoming
+ * messages on their own device.
  */
 exports.twilioRegisterMessagingDevice = onCall({ enforceAppCheck: true, region: REGION, cors: true, timeoutSeconds: 30 },
     (req) => {
@@ -385,8 +391,9 @@ exports.twilioRegisterMessagingDevice = onCall({ enforceAppCheck: true, region: 
         if (typeof fcmToken !== 'string' || !FCM_TOKEN.test(fcmToken)) {
             throw new HttpsError('invalid-argument', 'invalid-fcm-token');
         }
+        const uid = requireDeviceUid(req.auth?.uid);
         return lastValueFrom(requireTwilioCredentials(accountSid, req.data['authToken']).pipe(
-            switchMap(() => registerMessagingDevice(accountSid, fcmToken)),
+            switchMap(() => registerMessagingDevice(accountSid, uid, fcmToken)),
         ));
     }
 );

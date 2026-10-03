@@ -67,6 +67,15 @@ export type PresentedEntitlement =
     | { store: 'app_store'; signedTransactionInfo: string }
     | { store: 'play_store'; purchaseToken: string };
 
+/** Re-verified store state, plus the path of the store record it was written to. */
+interface PaidState {
+    expiresAt: number;
+    autoRenew: boolean;
+    productId: string;
+    /** e.g. `subscriptions/apple/123` — what a device's `subscription` pointer stores. */
+    recordPath: string;
+}
+
 export interface SubscriptionStatus {
     plan: Plan;
     expiresAt: number;
@@ -140,6 +149,11 @@ function applePaidRef(originalTransactionId: string) {
  */
 function encodeDbKey(key: string): string {
     return encodeURIComponent(key).replace(/\./g, '%2E');
+}
+
+/** Path (no leading slash) of the store-keyed paid record for `key` — matches applePaidRef/googlePaidRef. */
+function paidRecordPath(store: Store, key: string): string {
+    return `subscriptions/${store === 'app_store' ? 'apple' : 'google'}/${encodeDbKey(key)}`;
 }
 
 /**
@@ -325,14 +339,66 @@ export function isSubscriptionActive(
 export function verifyEntitlement(
     accountSid: string, entitlement: PresentedEntitlement, config: ReverificationConfig,
 ): Observable<SubscriptionStatus> {
+    return verifyEntitlementState(accountSid, entitlement, config).pipe(map(toStatus));
+}
+
+function verifyEntitlementState(
+    accountSid: string, entitlement: PresentedEntitlement, config: ReverificationConfig,
+): Observable<PaidState> {
     if (entitlement.store === 'app_store') {
         const { originalTransactionId, productId } =
             decodeAppleSignedPayload<AppleTransactionInfo>(entitlement.signedTransactionInfo);
-        return refreshAppleSubscription(accountSid, originalTransactionId, productId, config.apple).pipe(map(toStatus));
+        return refreshAppleSubscription(accountSid, originalTransactionId, productId, config.apple);
     }
     return refreshGoogleSubscription(
         accountSid, entitlement.purchaseToken, config.googlePackageName, config.googleServiceAccountJson,
-    ).pipe(map(toStatus));
+    );
+}
+
+/** What resolveDeviceEntitlement decided for one device. */
+export interface DeviceEntitlement {
+    /** May this device mint a Voice token (the trial-OR-entitlement gate)? */
+    entitled: boolean;
+    /** The device's subscription pointer to store (DeviceRecord.subscription). */
+    subscription: string | null;
+}
+
+/**
+ * The trial-OR-entitlement gate for one DEVICE, plus the subscription pointer the
+ * device registry (shared/webhooks.ts DeviceRecord) should hold for it — which is
+ * what lets the inbound webhooks ring/notify exactly the devices whose own user
+ * is entitled, and keep doing so across renewals without the device checking in.
+ *
+ * - No entitlement presented: entitled iff the line's trial is live; no pointer.
+ * - Trial live and the device already has a pointer: entitled, keep it — no store
+ *   round-trip (this runs on every token mint).
+ * - Otherwise the presented entitlement is re-verified with the store (as
+ *   isSubscriptionActive does); the pointer is its record when active. This also
+ *   runs DURING the trial for a device without a pointer, so someone who paid
+ *   during the trial keeps ringing the moment it ends.
+ * - A failed re-verification never grants a token beyond the trial, but keeps the
+ *   existing pointer: that record's own expiry still governs ringing, so a store
+ *   outage doesn't silence a paying user.
+ */
+export function resolveDeviceEntitlement(
+    accountSid: string, entitlement: PresentedEntitlement | null, currentPointer: string | null, config: ReverificationConfig,
+): Observable<DeviceEntitlement> {
+    return trialActive(accountSid).pipe(
+        switchMap((trial): Observable<DeviceEntitlement> => {
+            if (!entitlement) return of({ entitled: trial, subscription: null });
+            if (trial && currentPointer) return of({ entitled: true, subscription: currentPointer });
+            return verifyEntitlementState(accountSid, entitlement, config).pipe(
+                map((state) => {
+                    const active = state.expiresAt > Date.now();
+                    return { entitled: trial || active, subscription: active ? state.recordPath : null };
+                }),
+                catchError((e) => {
+                    console.error('Store entitlement re-verification failed', e);
+                    return of({ entitled: trial, subscription: currentPointer });
+                }),
+            );
+        }),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -437,7 +503,7 @@ function extractAppleSubscriptionState(body: AppleSubscriptionStatusesResponse, 
  */
 function refreshAppleSubscription(
     accountSid: string | null, originalTransactionId: string, productIdHint: string, config: AppleConfig,
-): Observable<{ expiresAt: number; autoRenew: boolean; productId: string }> {
+): Observable<PaidState> {
     return from(fetchAppleSubscriptionStatuses(originalTransactionId, config)).pipe(
         map((body) => extractAppleSubscriptionState(body, productIdHint)),
         switchMap((state) => {
@@ -447,7 +513,9 @@ function refreshAppleSubscription(
                 purchaseToken: null,
                 linkedPurchaseToken: null,
             });
-            return from(applePaidRef(originalTransactionId).update(record)).pipe(map(() => state));
+            return from(applePaidRef(originalTransactionId).update(record)).pipe(
+                map(() => ({ ...state, recordPath: paidRecordPath('app_store', originalTransactionId) })),
+            );
         }),
     );
 }
@@ -594,7 +662,7 @@ function androidPublisherClient(serviceAccountJson: string) {
  */
 function refreshGoogleSubscription(
     accountSid: string | null, purchaseToken: string, packageName: string, serviceAccountJson: string,
-): Observable<{ expiresAt: number; autoRenew: boolean; productId: string }> {
+): Observable<PaidState> {
     const client = androidPublisherClient(serviceAccountJson);
     return from(client.purchases.subscriptionsv2.get({ packageName, token: purchaseToken })).pipe(
         switchMap((response) => {
@@ -627,8 +695,9 @@ function refreshGoogleSubscription(
             });
             return acknowledge$.pipe(
                 switchMap(() => resolveGooglePaidKey(purchaseToken, linkedPurchaseToken)),
-                switchMap((key) => writeGooglePaidRecord(key, purchaseToken, record)),
-                map(() => state),
+                switchMap((key) => writeGooglePaidRecord(key, purchaseToken, record).pipe(
+                    map(() => ({ ...state, recordPath: paidRecordPath('play_store', key) })),
+                )),
             );
         }),
     );

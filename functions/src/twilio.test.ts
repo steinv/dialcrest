@@ -4,16 +4,17 @@ import admin from 'firebase-admin';
 import twilio from 'twilio';
 import {
     InvalidTwilioCredentialsError,
-    UNREGISTER_TOKEN_TTL_S,
     accessToken,
     callbackIncomingCall,
+    callbackIncomingMessage,
     configureSelectedNumbers,
     ensureWebhooksCurrent,
     getIncomingAppSid,
     isValidTwilioSignature,
     rememberAuthToken,
+    recordDeviceCheckIn,
+    registerMessagingDevice,
     resetAuthTokenCacheForTests,
-    unregisterOnlyToken,
     verifyTwilioCredentials,
 } from './twilio';
 
@@ -413,56 +414,176 @@ describe('getIncomingAppSid', () => {
     });
 });
 
-/**
- * Inbound calls are deliberately not entitlement-gated: the webhook only knows
- * the line, while paid subscriptions belong to a person, so any gate here either
- * silences paying users or lets one customer pay for the whole line. Entitlement
- * is enforced at twilioAccessToken instead.
- */
-describe('callbackIncomingCall always rings', () => {
-    const INCOMING_PATH = 'twilioIncomingCall';
-    const RING = '<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Client>AC1</Client></Dial></Response>';
+const DAY = 24 * 60 * 60 * 1000;
 
+/** Seeds the per-device registry and (optionally) the line's trial and subscription records. */
+async function seedLine(opts: {
+    trialExpiresAt?: number;
+    devices?: Record<string, { subscription?: string | null; fcmToken?: string; lastSeen?: number }>;
+    subscriptions?: Record<string, number>; // record path → expiresAt
+    legacyTokens?: string[];
+}) {
+    const db = admin.database();
+    if (opts.trialExpiresAt !== undefined) await db.ref('/twilio/AC1/trial/expiresAt').set(opts.trialExpiresAt);
+    for (const [uid, record] of Object.entries(opts.devices ?? {})) {
+        await db.ref(`/twilio/AC1/devices/${uid}`).set({ lastSeen: Date.now(), ...record });
+    }
+    for (const [path, expiresAt] of Object.entries(opts.subscriptions ?? {})) {
+        await db.ref(`/${path}`).set({ expiresAt });
+    }
+    for (const token of opts.legacyTokens ?? []) await db.ref(`/twilio/AC1/messaging-tokens/${token}`).set(true);
+}
+
+function fakeResponse() {
+    const sent: { status: number; body: string } = { status: 0, body: '' };
+    const response = {
+        type: () => response,
+        status: (code: number) => { sent.status = code; return response; },
+        send: (value: string) => { sent.body = value ?? ''; return response; },
+    };
+    return { sent, response: response as unknown as Parameters<typeof callbackIncomingCall>[1] };
+}
+
+function signedWebhook(path: string, body: Record<string, string>) {
+    return fakeRequest({ signature: twilioSignature(AUTH_TOKEN, `${LEGACY_BASE}/${path}`, body), body });
+}
+
+/**
+ * Inbound calls ring only the devices whose OWN user is entitled — the line's
+ * trial, or the device's subscription pointer — each under its own identity, so
+ * an unsubscribed co-user isn't rung while subscribed users on the line are.
+ */
+describe('callbackIncomingCall rings entitled devices only', () => {
     async function incomingCall(): Promise<string> {
         await seedAuthToken('AC1', AUTH_TOKEN);
-        const body = { AccountSid: 'AC1', From: '+3210000000', To: '+3220000000' };
-        const signature = twilioSignature(AUTH_TOKEN, `${LEGACY_BASE}/${INCOMING_PATH}`, body);
-        let sent = '';
-        const response = {
-            type: () => response,
-            status: () => response,
-            send: (value: string) => { sent = value; return response; },
-        };
-        await callbackIncomingCall(fakeRequest({ signature, body }), response as unknown as Parameters<typeof callbackIncomingCall>[1]);
-        return sent;
+        const { sent, response } = fakeResponse();
+        await callbackIncomingCall(signedWebhook('twilioIncomingCall', { AccountSid: 'AC1', From: '+321', To: '+322' }), response);
+        return sent.body;
     }
 
-    it('during the trial', async () => {
-        await admin.database().ref('/twilio/AC1/trial/expiresAt').set(Date.now() + 60_000);
-        expect(await incomingCall()).toBe(RING);
+    it('during the trial rings every device, plus the legacy shared identity for not-yet-updated apps', async () => {
+        await seedLine({ trialExpiresAt: Date.now() + DAY, devices: { devA: {}, devB: {} } });
+        const twiml = await incomingCall();
+        expect(twiml).toContain('<Client>AC1</Client>');
+        expect(twiml).toContain('<Client>AC1_devA</Client>');
+        expect(twiml).toContain('<Client>AC1_devB</Client>');
     });
 
-    it('after the trial has expired (paying users keep receiving calls)', async () => {
-        await admin.database().ref('/twilio/AC1/trial/expiresAt').set(Date.now() - 60_000);
-        expect(await incomingCall()).toBe(RING);
+    it('after the trial rings the subscribed user but not the unsubscribed co-user on the same line', async () => {
+        await seedLine({
+            trialExpiresAt: Date.now() - DAY,
+            devices: { paying: { subscription: 'subscriptions/apple/orig1' }, freeloader: {} },
+            subscriptions: { 'subscriptions/apple/orig1': Date.now() + DAY },
+        });
+        const twiml = await incomingCall();
+        expect(twiml).toBe('<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Client>AC1_paying</Client></Dial></Response>');
     });
 
-    it('with no trial record at all', async () => {
-        expect(await incomingCall()).toBe(RING);
+    it('stops ringing a device whose subscription record has expired (renewals/refunds apply without check-in)', async () => {
+        await seedLine({
+            trialExpiresAt: Date.now() - DAY,
+            devices: { lapsed: { subscription: 'subscriptions/google/tokA' } },
+            subscriptions: { 'subscriptions/google/tokA': Date.now() - 1 },
+        });
+        expect(await incomingCall()).toContain('This number is temporarily unavailable.');
+    });
+
+    it('never rings the legacy shared identity after the trial (it cannot be gated per person)', async () => {
+        await seedLine({ trialExpiresAt: Date.now() - DAY });
+        expect(await incomingCall()).toContain('This number is temporarily unavailable.');
+    });
+
+    it('ignores devices not seen for over a year', async () => {
+        await seedLine({ trialExpiresAt: Date.now() + DAY, devices: { gone: { lastSeen: Date.now() - 400 * DAY } } });
+        expect(await incomingCall()).not.toContain('AC1_gone');
+    });
+
+    it('rings at most 10 clients, most recently seen first', async () => {
+        const devices: Record<string, { lastSeen: number }> = {};
+        for (let i = 0; i < 12; i++) devices[`dev${i}`] = { lastSeen: Date.now() - i * 1000 };
+        await seedLine({ trialExpiresAt: Date.now() + DAY, devices });
+        const twiml = await incomingCall();
+        expect((twiml.match(/<Client>/g) ?? []).length).toBe(10);
+        expect(twiml).toContain('<Client>AC1_dev0</Client>');
+        expect(twiml).not.toContain('AC1_dev9<');
     });
 
     it('still requires a valid Twilio signature', async () => {
         await seedAuthToken('AC1', AUTH_TOKEN);
         const body = { AccountSid: 'AC1', From: '+321', To: '+322' };
-        const signature = twilioSignature('forged-token', `${LEGACY_BASE}/${INCOMING_PATH}`, body);
-        let status = 0;
-        const response = {
-            type: () => response,
-            status: (code: number) => { status = code; return response; },
-            send: () => response,
-        };
-        await callbackIncomingCall(fakeRequest({ signature, body }), response as unknown as Parameters<typeof callbackIncomingCall>[1]);
-        expect(status).toBe(403);
+        const { sent, response } = fakeResponse();
+        await callbackIncomingCall(fakeRequest({ signature: twilioSignature('forged', `${LEGACY_BASE}/twilioIncomingCall`, body), body }), response);
+        expect(sent.status).toBe(403);
+    });
+});
+
+/** Same per-device rule for SMS pushes: subscribed users keep notifications, an unsubscribed co-user loses them. */
+describe('callbackIncomingMessage notifies entitled devices only', () => {
+    let sendMock: jest.Mock;
+
+    beforeEach(() => {
+        sendMock = jest.fn().mockResolvedValue('projects/x/messages/1');
+        (admin as unknown as { messaging: () => unknown }).messaging = () => ({ send: sendMock });
+    });
+
+    async function incomingSms() {
+        await seedAuthToken('AC1', AUTH_TOKEN);
+        const { sent, response } = fakeResponse();
+        await callbackIncomingMessage(
+            signedWebhook('twilioIncomingMessage', { AccountSid: 'AC1', From: '+321', To: '+322', Body: 'hi', MessageSid: 'SM1' }),
+            response,
+        );
+        return { sent, tokens: sendMock.mock.calls.map(([message]) => message.token).sort() };
+    }
+
+    it('during the trial pushes to every device and to legacy registrations', async () => {
+        await seedLine({ trialExpiresAt: Date.now() + DAY, devices: { devA: { fcmToken: 'fcmA' } }, legacyTokens: ['fcmOld'] });
+        expect((await incomingSms()).tokens).toEqual(['fcmA', 'fcmOld']);
+    });
+
+    it('after the trial pushes to the subscribed user only — not the co-user, not legacy registrations', async () => {
+        await seedLine({
+            trialExpiresAt: Date.now() - DAY,
+            devices: { paying: { subscription: 'subscriptions/apple/orig1', fcmToken: 'fcmPay' }, freeloader: { fcmToken: 'fcmFree' } },
+            subscriptions: { 'subscriptions/apple/orig1': Date.now() + DAY },
+            legacyTokens: ['fcmOld'],
+        });
+        const { sent, tokens } = await incomingSms();
+        expect(tokens).toEqual(['fcmPay']);
+        expect(sent.body).toBe('<?xml version="1.0" encoding="UTF-8"?><Response/>');
+    });
+
+    it('pushes a token registered under two device records only once', async () => {
+        await seedLine({ trialExpiresAt: Date.now() + DAY, devices: { oldUid: { fcmToken: 'same' }, newUid: { fcmToken: 'same' } } });
+        expect((await incomingSms()).tokens).toEqual(['same']);
+    });
+
+    it('clears a device\'s token that FCM reports as unregistered', async () => {
+        await seedLine({ trialExpiresAt: Date.now() + DAY, devices: { devA: { fcmToken: 'dead' } } });
+        sendMock.mockRejectedValue({ code: 'messaging/registration-token-not-registered' });
+        await incomingSms();
+        expect(dbTree().twilio.AC1.devices.devA.fcmToken).toBeUndefined();
+        expect(dbTree().twilio.AC1.devices.devA.lastSeen).toEqual(expect.any(Number));
+    });
+});
+
+describe('device registry writes', () => {
+    it('recordDeviceCheckIn stores the pointer and lastSeen without touching the FCM token', async () => {
+        await admin.database().ref('/twilio/AC1/devices/devA').set({ fcmToken: 'fcmA', lastSeen: 1 });
+        await lastValueFrom(recordDeviceCheckIn('AC1', 'devA', 'subscriptions/apple/orig1'));
+        expect(dbTree().twilio.AC1.devices.devA).toEqual({
+            fcmToken: 'fcmA', subscription: 'subscriptions/apple/orig1', lastSeen: expect.any(Number),
+        });
+    });
+
+    it('registerMessagingDevice stores the token on the device and migrates it off the legacy registry', async () => {
+        await admin.database().ref('/twilio/AC1/messaging-tokens/fcmA').set(true);
+        await admin.database().ref('/twilio/AC1/devices/devA').set({ subscription: 'subscriptions/apple/orig1', lastSeen: 1 });
+        await lastValueFrom(registerMessagingDevice('AC1', 'devA', 'fcmA'));
+        expect(dbTree().twilio.AC1.devices.devA).toEqual({
+            subscription: 'subscriptions/apple/orig1', fcmToken: 'fcmA', lastSeen: expect.any(Number),
+        });
+        expect(dbTree().twilio.AC1['messaging-tokens']?.fcmA).toBeUndefined();
     });
 });
 
@@ -529,20 +650,12 @@ describe('Voice tokens', () => {
         twilioFactory().mockReturnValue(fakeTwilioClient());
     });
 
-    it('a full token can dial out through our TwiML App and receive calls', async () => {
-        const { payload, voice, ttl } = decodeVoiceToken(await lastValueFrom(accessToken('AC1', AUTH_TOKEN, '+321')));
-        expect(payload.grants.identity).toBe('AC1');
+    it('carries this device\'s own identity, so inbound calls can ring entitled devices only', async () => {
+        const { payload, voice, ttl } = decodeVoiceToken(await lastValueFrom(accessToken('AC1', AUTH_TOKEN, '+321', 'devA')));
+        expect(payload.grants.identity).toBe('AC1_devA');
         expect(voice.outgoing).toMatchObject({ application_sid: 'AP-out' });
         expect(voice.incoming).toEqual({ allow: true });
         expect(voice.push_credential_sid).toBe('CR1');
         expect(ttl).toBe(600);
-    });
-
-    it('an unregister-only token cannot dial out and lives just long enough to unregister', async () => {
-        const { payload, voice, ttl } = decodeVoiceToken(await lastValueFrom(unregisterOnlyToken('AC1', AUTH_TOKEN)));
-        expect(payload.grants.identity).toBe('AC1'); // same identity + push credential as the registration it removes
-        expect(voice.push_credential_sid).toBe('CR1');
-        expect(voice.outgoing).toBeUndefined();
-        expect(ttl).toBe(UNREGISTER_TOKEN_TTL_S);
     });
 });

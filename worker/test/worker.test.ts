@@ -112,25 +112,57 @@ describe('authentication', () => {
     });
 });
 
-describe('twilioIncomingCall', () => {
-    const RING = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Client>${SID}</Client></Dial></Response>`;
+const DAY = 24 * 60 * 60 * 1000;
+const PAID = 'subscriptions/apple/orig1';
 
-    it('rings the tenant\'s client during the trial', async () => {
-        google.rtdb.set(`/twilio/${SID}/trial/expiresAt`, Date.now() + 60_000);
+/** Seeds the line: trial expiry, per-device registry, subscription record expiries, legacy SMS tokens. */
+function seedLine(opts: {
+    trialExpiresAt?: number;
+    devices?: Record<string, { subscription?: string | null; fcmToken?: string; lastSeen?: number }>;
+    subscriptions?: Record<string, number>;
+    legacyTokens?: Record<string, boolean>;
+}) {
+    if (opts.trialExpiresAt !== undefined) google.rtdb.set(`/twilio/${SID}/trial/expiresAt`, opts.trialExpiresAt);
+    if (opts.devices) {
+        google.rtdb.set(`/twilio/${SID}/devices`, Object.fromEntries(Object.entries(opts.devices)
+            .map(([uid, record]) => [uid, { lastSeen: Date.now(), ...record }])));
+    }
+    for (const [path, expiresAt] of Object.entries(opts.subscriptions ?? {})) google.rtdb.set(`/${path}/expiresAt`, expiresAt);
+    if (opts.legacyTokens) google.rtdb.set(`/twilio/${SID}/messaging-tokens`, opts.legacyTokens);
+}
+
+describe('twilioIncomingCall (rings entitled devices only)', () => {
+    async function ring() {
         const res = await worker.fetch(post('twilioIncomingCall', { AccountSid: SID, From: '+321', To: '+322' }), env());
-        expect(res.status).toBe(200);
         expect(res.headers.get('Content-Type')).toBe('text/xml');
-        expect(await res.text()).toBe(RING);
+        return res.text();
+    }
+
+    it('during the trial rings every device plus the legacy shared identity', async () => {
+        seedLine({ trialExpiresAt: Date.now() + DAY, devices: { devA: {} } });
+        expect(await ring()).toBe(
+            `<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Client>${SID}</Client><Client>${SID}_devA</Client></Dial></Response>`,
+        );
     });
 
-    it('still rings once the trial has expired (inbound calls are not entitlement-gated)', async () => {
-        google.rtdb.set(`/twilio/${SID}/trial/expiresAt`, Date.now() - 1);
-        expect(await (await worker.fetch(post('twilioIncomingCall', { AccountSid: SID }), env())).text()).toBe(RING);
+    it('after the trial rings the subscribed user but not the unsubscribed co-user', async () => {
+        seedLine({
+            trialExpiresAt: Date.now() - DAY,
+            devices: { paying: { subscription: PAID }, freeloader: {} },
+            subscriptions: { [PAID]: Date.now() + DAY },
+        });
+        expect(await ring()).toBe(`<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Client>${SID}_paying</Client></Dial></Response>`);
     });
 
-    it('reads no subscription state', async () => {
-        await worker.fetch(post('twilioIncomingCall', { AccountSid: SID }), env());
-        expect(google.state.rtdbReads).toEqual([`/twilio/${SID}/secret/authToken`]);
+    it('announces unavailability when nobody on the line is entitled', async () => {
+        seedLine({ trialExpiresAt: Date.now() - DAY, devices: { lapsed: { subscription: PAID } }, subscriptions: { [PAID]: Date.now() - 1 } });
+        expect(await ring()).toContain('temporarily unavailable');
+    });
+
+    it('skips subscription reads while the trial is live', async () => {
+        seedLine({ trialExpiresAt: Date.now() + DAY, devices: { paying: { subscription: PAID } } });
+        await ring();
+        expect(google.state.rtdbReads.some((p) => p.startsWith('/subscriptions/'))).toBe(false);
     });
 
     it('rejects a bad signature', async () => {
@@ -155,14 +187,14 @@ describe('twilioCallStatusChanges', () => {
     });
 });
 
-describe('twilioIncomingMessage', () => {
+describe('twilioIncomingMessage (notifies entitled devices only)', () => {
     const sms = { AccountSid: SID, From: '+321', To: '+322', Body: 'hi & bye', MessageSid: 'SM1' };
 
-    it('pushes the shared data payload to every device and replies with an empty MessagingResponse', async () => {
-        google.rtdb.set(`/twilio/${SID}/messaging-tokens`, { 'tok:A': true, 'tok:B': true });
+    it('pushes the shared data payload to entitled devices and replies with an empty MessagingResponse', async () => {
+        seedLine({ trialExpiresAt: Date.now() + DAY, devices: { devA: { fcmToken: 'tok:A' } }, legacyTokens: { 'tok:B': true } });
         const res = await worker.fetch(post('twilioIncomingMessage', sms), env());
         expect(await res.text()).toBe('<?xml version="1.0" encoding="UTF-8"?><Response/>');
-        expect(google.fcmSent.map((s) => s.token).sort()).toEqual(['tok:A', 'tok:B']);
+        expect(google.fcmSent.map((m) => m.token).sort()).toEqual(['tok:A', 'tok:B']);
         expect(google.fcmSent[0].data).toEqual({
             dialcrest_type: 'incoming_message', accountSid: SID, from: '+321', to: '+322', body: 'hi & bye', messageSid: 'SM1',
         });
@@ -172,16 +204,29 @@ describe('twilioIncomingMessage', () => {
         });
     });
 
-    it('drops tokens FCM reports as unregistered and keeps the rest', async () => {
-        google.rtdb.set(`/twilio/${SID}/messaging-tokens`, { 'tok:A': true, 'tok:dead': true });
-        google.rtdb.set(`/twilio/${SID}/messaging-tokens/tok:dead`, true);
+    it('after the trial notifies only the subscribed user (not the co-user, not legacy registrations)', async () => {
+        seedLine({
+            trialExpiresAt: Date.now() - DAY,
+            devices: { paying: { subscription: PAID, fcmToken: 'tok:pay' }, freeloader: { fcmToken: 'tok:free' } },
+            subscriptions: { [PAID]: Date.now() + DAY },
+            legacyTokens: { 'tok:old': true },
+        });
+        await worker.fetch(post('twilioIncomingMessage', sms), env());
+        expect(google.fcmSent.map((m) => m.token)).toEqual(['tok:pay']);
+    });
+
+    it('clears a device token FCM reports as unregistered', async () => {
+        seedLine({ trialExpiresAt: Date.now() + DAY, devices: { devA: { fcmToken: 'tok:dead' }, devB: { fcmToken: 'tok:live' } } });
         google.unregisteredTokens.add('tok:dead');
         await worker.fetch(post('twilioIncomingMessage', sms), env());
-        expect(google.rtdb.get(`/twilio/${SID}/messaging-tokens`)).toEqual({ 'tok:A': true });
+        const deletes = google.fetchMock.mock.calls
+            .filter(([, init]) => init?.method === 'DELETE')
+            .map(([input]) => decodeURIComponent(new URL(String(input)).pathname));
+        expect(deletes).toEqual([`/twilio/${SID}/devices/devA/fcmToken.json`]);
     });
 
     it('sends nothing for a forged message', async () => {
-        google.rtdb.set(`/twilio/${SID}/messaging-tokens`, { 'tok:A': true });
+        seedLine({ trialExpiresAt: Date.now() + DAY, devices: { devA: { fcmToken: 'tok:A' } } });
         const res = await worker.fetch(post('twilioIncomingMessage', sms, { token: 'forged' }), env());
         expect(res.status).toBe(403);
         expect(google.fcmSent).toEqual([]);

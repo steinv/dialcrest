@@ -105,23 +105,23 @@ project `twilio-phone-peblet`), with business logic split out into
 | Function | What it does | Called from |
 | --- | --- | --- |
 | `twilioRegister` | Creates/updates the device's Twilio Voice push credential; also runs the "account onboarded" hook that records account creation and starts the 30-day trial. | `lib/services/twilio_service.dart` (`_register()`) |
-| `twilioAccessToken` | Verifies the caller's Auth Token, then mints a Twilio Voice access token if the line's trial is live or the device presents an active subscription. Otherwise refuses (`subscription-expired`) with an unregister-only token so the device can drop its own incoming-call registration. | `lib/services/twilio_service.dart` (`_mintAccessToken()`) |
+| `twilioAccessToken` | Verifies the caller's Auth Token, records this device in `/twilio/{sid}/devices` (with a pointer to its user's subscription, if any), then mints a Voice access token with the device's own identity if the line's trial is live or the device presents an active subscription; otherwise refuses (`subscription-expired`). | `lib/services/twilio_service.dart` (`_mintAccessToken()`) |
 | `twilioVerifyApplePurchase` | Verifies an App Store transaction and persists the resulting entitlement/expiry. | `lib/services/subscription_service.dart` (`_verifyPurchase()`, iOS) |
 | `twilioVerifyGooglePurchase` | Verifies a Play purchase token and persists the resulting entitlement/expiry. | `lib/services/subscription_service.dart` (`_verifyPurchase()`, Android) |
 | `twilioRefreshSubscription` | Re-checks the stored entitlement and returns current subscription status (keeps Settings accurate). | `lib/services/subscription_service.dart` (`refreshPaidStatus()`) |
 | `twilioGetIncomingAppSid` | Resolves (creating if needed) the tenant's incoming TwiML App SID. | `lib/services/twilio_service.dart` (`getIncomingAppSid()`) |
 | `twilioConfigureNumbers` | Wires the given number SIDs to ring this app, restoring any deselected number's original webhook config. | `lib/services/twilio_service.dart` (`configureNumbers()`) |
-| `twilioRegisterMessagingDevice` | Verifies the caller's Auth Token, then registers/refreshes the device's FCM token so incoming SMS can be pushed to it. | `lib/services/twilio_service.dart` (`_registerMessagingDevice()`) |
+| `twilioRegisterMessagingDevice` | Verifies the caller's Auth Token, then stores the device's FCM token on its device record so incoming SMS can be pushed to it (while its user is entitled). | `lib/services/twilio_service.dart` (`_registerMessagingDevice()`) |
 | `twilioLinkAccount` | Verifies the caller's Twilio credentials and stamps their anonymous Firebase identity with an `accountSid` custom claim, which the RTDB rules use to authorize account-scoped reads/writes (see [Security](#security)). | `lib/services/account_auth_service.dart` (`link()` / `ensureLinked()`) |
 
 ### Webhook/trigger (invoked by Twilio, Apple, or Google — never called from the app)
 
 | Function | What it does | Invoked by |
 | --- | --- | --- |
-| `twilioIncomingCall` | TwiML for an inbound PSTN call; dials the registered `<Client>` (the app). Not gated on the trial/subscription — entitlement is enforced at `twilioAccessToken` (see [`SUBSCRIPTION_NOTIFICATIONS.md`](SUBSCRIPTION_NOTIFICATIONS.md)). | Twilio, as the number's voice URL |
+| `twilioIncomingCall` | TwiML for an inbound PSTN call; rings the devices whose own user is entitled — the line's trial, or that device's subscription (see [`SUBSCRIPTION_NOTIFICATIONS.md`](SUBSCRIPTION_NOTIFICATIONS.md)). | Twilio, as the number's voice URL |
 | `twilioOutgoingCall` | TwiML for an outgoing call placed from the SDK; dials the destination using the account number as caller ID. | Twilio, as the TwiML App's outgoing voice URL |
 | `twilioCallStatusChanges` | Status-callback webhook that logs call lifecycle events. | Twilio, as a status callback |
-| `twilioIncomingMessage` | TwiML for inbound SMS/MMS; pushes an FCM notification to registered devices. | Twilio, as the number's SMS URL |
+| `twilioIncomingMessage` | TwiML for inbound SMS/MMS; pushes an FCM notification to the devices whose own user is entitled. | Twilio, as the number's SMS URL |
 | `twilioAppleNotifications` | App Store Server Notifications V2 webhook; verifies the notification's JWS signature, then re-verifies subscription state from Apple on any lifecycle event. | Apple (see [Subscription renewal notifications](#subscription-renewal-notifications-app-store--play)) |
 | `onPlaySubscriptionNotification` | Pub/Sub-triggered; consumes Google Play Real-time Developer Notifications and re-verifies purchase-token state. | Google Play RTDN, via Pub/Sub (see below) |
 
