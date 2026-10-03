@@ -275,12 +275,12 @@ class TwilioService {
   // Callbacks for incoming communications
   Function(String from)? onIncomingCall;
 
-  /// Fires while the app is foregrounded and a text arrives — drives the
-  /// in-app [NotificationOverlay] banner. In practice this only fires on iOS:
-  /// on Android, incoming-message pushes are handled natively instead (see
-  /// [_incomingMessageChannel] below), because this app's Twilio Voice FCM
-  /// service is Android's one registered FirebaseMessagingService, so
-  /// [FirebaseMessaging.onMessage] never reaches Dart there.
+  /// Fires while the app is foregrounded and a text arrives — updates the open
+  /// conversation list/thread live and drives the in-app [NotificationOverlay]
+  /// banner. On iOS it comes from [FirebaseMessaging.onMessage]; on Android the
+  /// app's own FirebaseMessagingService handles the push natively (so
+  /// onMessage never reaches Dart there) and forwards it over
+  /// [_incomingMessageChannel] as `onForegroundMessage` while the app is resumed.
   Function(String from, String body, String messageSid, String to)?
       onIncomingMessage;
 
@@ -289,8 +289,9 @@ class TwilioService {
   /// just be opened directly — no banner moment, unlike [onIncomingMessage].
   Function(String from, String body)? onOpenConversation;
 
-  /// Android equivalent of `FirebaseMessaging.getInitialMessage()`/
-  /// `onMessageOpenedApp` — see IncomingMessageFcmHandler.kt/MainActivity.kt.
+  /// Android equivalent of `FirebaseMessaging.onMessage` (`onForegroundMessage`)
+  /// and `getInitialMessage()`/`onMessageOpenedApp` — see
+  /// IncomingMessageFcmHandler.kt/MainActivity.kt.
   static const _incomingMessageChannel =
       MethodChannel('be.peblet.twilio_phone/incoming_message');
 
@@ -362,7 +363,7 @@ class TwilioService {
   /// Sets up everything needed to notify the user of an incoming text: asks
   /// for notification permission, registers this device's FCM token so the
   /// twilioIncomingMessage webhook can reach it, and wires up both the
-  /// foreground banner path (onIncomingMessage, effectively iOS-only) and the
+  /// foreground live-update/banner path (onIncomingMessage) and the
   /// "tap a notification to open the conversation" path (onOpenConversation,
   /// covering a cold start and an already-running tap on both platforms).
   Future<void> _initializeIncomingMessageHandling() async {
@@ -390,7 +391,14 @@ class TwilioService {
       _onMessageSubscription = FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
 
       _incomingMessageChannel.setMethodCallHandler((call) async {
-        if (call.method == 'onIncomingMessage') _handleNativeExtras(call.arguments);
+        switch (call.method) {
+          case 'onIncomingMessage':
+            _handleNativeExtras(call.arguments);
+          case 'onForegroundMessage':
+            // The native side falls back to a system notification unless this is true.
+            return _handleNativeForegroundMessage(call.arguments);
+        }
+        return null;
       });
       final initialExtras = await _incomingMessageChannel
           .invokeMethod<Map<Object?, Object?>>('getInitialIncomingMessage');
@@ -410,6 +418,25 @@ class TwilioService {
       message.data['messageSid'] ?? '',
       message.data['to'] ?? '',
     );
+  }
+
+  /// Android's [_handleForegroundMessage]: an incoming-message push that
+  /// IncomingMessageFcmHandler.kt forwarded because the app is resumed. Returns
+  /// whether it was taken (or deliberately suppressed by vacation mode); false
+  /// — no UI listening yet — makes the native side post the system notification.
+  bool _handleNativeForegroundMessage(Object? arguments) {
+    if (isVacationMode) return true;
+    final handler = onIncomingMessage;
+    if (handler == null || arguments is! Map) return false;
+    final from = arguments['from'] as String?;
+    if (from == null || from.isEmpty) return false;
+    handler(
+      from,
+      (arguments['body'] as String?) ?? '',
+      (arguments['messageSid'] as String?) ?? '',
+      (arguments['to'] as String?) ?? '',
+    );
+    return true;
   }
 
   /// Extras from a tapped [IncomingMessageFcmHandler] Android notification,
