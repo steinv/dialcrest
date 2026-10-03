@@ -371,7 +371,10 @@ export interface DeviceEntitlement {
  * what lets the inbound webhooks ring/notify exactly the devices whose own user
  * is entitled, and keep doing so across renewals without the device checking in.
  *
- * - No entitlement presented: entitled iff the line's trial is live; no pointer.
+ * - No entitlement presented: entitled iff the line's trial is live; the existing
+ *   pointer is KEPT (e.g. an iOS reinstall wipes the locally stored entitlement
+ *   but not the uid — clearing it would silence a paying user once the trial
+ *   ends, until they restore). Its record's expiry still decides reachability.
  * - Trial live and the device already has a pointer: entitled, keep it — no store
  *   round-trip (this runs on every token mint).
  * - Otherwise the presented entitlement is re-verified with the store (as
@@ -391,7 +394,7 @@ export function resolveDeviceEntitlement(
 ): Observable<DeviceEntitlement> {
     return trialActive(accountSid).pipe(
         switchMap((trial): Observable<DeviceEntitlement> => {
-            if (!entitlement) return of({ entitled: trial, subscription: null });
+            if (!entitlement) return of({ entitled: trial, subscription: currentPointer });
             if (trial && currentPointer) return of({ entitled: true, subscription: currentPointer });
             return verifyEntitlementState(accountSid, entitlement, config).pipe(
                 map((state) => ({ entitled: trial || state.expiresAt > Date.now(), subscription: state.recordPath })),

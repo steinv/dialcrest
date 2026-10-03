@@ -538,10 +538,16 @@ describe('resolveDeviceEntitlement (per-device gate + subscription pointer)', ()
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it('after the trial with nothing presented: not entitled, pointer cleared', async () => {
+    it('nothing presented (e.g. after an iOS reinstall): no token beyond the trial, but the pointer is kept', async () => {
         await afterTrial();
         expect(await lastValueFrom(resolveDeviceEntitlement('AC1', null, 'subscriptions/apple/orig1', reverificationConfig)))
-            .toEqual({ entitled: false, subscription: null });
+            .toEqual({ entitled: false, subscription: 'subscriptions/apple/orig1' });
+    });
+
+    it('nothing presented during the trial keeps the pointer too (so it still rings once the trial ends)', async () => {
+        await lastValueFrom(ensureTrialStarted('AC1'));
+        expect(await lastValueFrom(resolveDeviceEntitlement('AC1', null, 'subscriptions/apple/orig1', reverificationConfig)))
+            .toEqual({ entitled: true, subscription: 'subscriptions/apple/orig1' });
     });
 
     it('after the trial with an active purchase: entitled, pointer set', async () => {

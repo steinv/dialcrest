@@ -223,6 +223,9 @@ everyone on the line. So entitlement is resolved per **device**:
   points at it even if it has currently lapsed — its expiry already decides
   reachability, and a renewal arriving later (billing retry → store
   notification) reaches the device again without it checking in.
+- **Pointer survives an empty check-in**: a token mint with no entitlement
+  attached (e.g. after an iOS reinstall wiped the stored entitlement but not the
+  uid) keeps the device's pointer instead of clearing it.
 - **Presented Apple entitlements are signature-verified**
   (`verifyPresentedAppleTransaction`) before their `originalTransactionId` is
   used, so a forged JWS can't borrow another customer's subscription. They are
