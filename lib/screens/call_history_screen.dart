@@ -228,10 +228,9 @@ class CallHistoryScreenState extends State<CallHistoryScreen> {
         : l10n.callTypeOutgoing;
     final durationText = _formatDuration(l10n, call.duration);
     final subtitle = [
-      typeLabel,
-      formattedDate,
+      '$typeLabel · $formattedDate',
       if (durationText.isNotEmpty) durationText,
-    ].join(' · ');
+    ].join('\n');
 
     return ListTile(
       leading: CircleAvatar(
@@ -249,6 +248,7 @@ class CallHistoryScreenState extends State<CallHistoryScreen> {
       ),
       title: Text(contactName ?? call.phoneNumber),
       subtitle: Text(subtitle),
+      isThreeLine: durationText.isNotEmpty,
       trailing: IconButton(
         icon: Icon(Icons.call, color: Theme.of(context).colorScheme.secondary),
         onPressed: () => widget.onCall(call.phoneNumber),
