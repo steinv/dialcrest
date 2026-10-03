@@ -1,4 +1,5 @@
 import {
+    ACCOUNT_SID,
     DeviceRecord,
     WEBHOOK_PATHS,
     dbPaths,
@@ -33,12 +34,6 @@ export interface Env {
 
 type Route = typeof WEBHOOK_PATHS[keyof typeof WEBHOOK_PATHS];
 const ROUTES = new Set<string>(Object.values(WEBHOOK_PATHS));
-
-/**
- * A Twilio AccountSid: "AC" + 32 lowercase hex. Checked before the SID is used in
- * an RTDB path, so a crafted value can't walk to another node.
- */
-const ACCOUNT_SID = /^AC[0-9a-f]{32}$/;
 
 /**
  * Short-lived per-isolate cache of tenants' Auth Tokens — same policy as the

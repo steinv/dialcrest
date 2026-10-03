@@ -11,6 +11,7 @@ import { Database } from 'firebase-admin/database';
 import * as logger from 'firebase-functions/logger';
 import { FUNCTIONS_BASE_URL, isKnownWebhookUrl, isSignatureFailClosed, webhookPublicBaseUrl, webhookUrl } from './edge';
 import {
+    ACCOUNT_SID,
     DeviceRecord,
     WEBHOOK_PATHS,
     dbPaths,
@@ -187,12 +188,16 @@ export function resetAuthTokenCacheForTests(): void {
  * fail-open even with TWILIO_SIGNATURE_FAIL_CLOSED on: an outside caller can't
  * induce an RTDB outage, so it isn't a bypass, and an outage shouldn't drop calls.
  *
- * A request without a usable AccountSid is rejected outright: a genuine Twilio
- * webhook always carries one, and without it there is no tenant to check.
+ * A request without a well-formed AccountSid (ACCOUNT_SID: "AC" + 32 hex) is
+ * rejected outright, before the SID touches an RTDB path: a genuine Twilio webhook
+ * always carries one, and a crafted one (e.g. containing '.') would otherwise make
+ * the lookup throw — turning the read-error allowance above into a bypass.
  */
 export async function isValidTwilioSignature(request: Request, webhookPath: string): Promise<boolean> {
     const accountSid = request.body?.AccountSid;
-    if (typeof accountSid !== 'string' || accountSid === '') {
+    // Checked BEFORE the SID reaches an RTDB path: a malformed one (e.g. with '.')
+    // would make the lookup throw, and the read-error branch below allows.
+    if (typeof accountSid !== 'string' || !ACCOUNT_SID.test(accountSid)) {
         return false;
     }
     let authToken = readCachedAuthToken(accountSid);

@@ -12,6 +12,10 @@ rules must not be broken:
   Worker route) must authenticate its payload before doing any work — Twilio
   `X-Twilio-Signature`, Apple JWS (`verifyAppleNotificationSignature`), or Pub/Sub
   IAM. Never add a public endpoint that skips it.
+- **Validate the AccountSid's format (`ACCOUNT_SID`) before it reaches an RTDB
+  path** — in the functions and the Worker. A malformed SID can make the token
+  lookup throw, and the transient-read-error allowance must never become a
+  bypass.
 - **Don't reintroduce the signature fail-open.** Once `TWILIO_SIGNATURE_FAIL_CLOSED`
   is on, an `AccountSid` with no stored Auth Token must be rejected, not allowed.
   The fail-open is a one-time migration grace. Same policy in the Worker.
