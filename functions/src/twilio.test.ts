@@ -555,6 +555,14 @@ describe('verifyTwilioCredentials', () => {
         expect(twilioFactory()).not.toHaveBeenCalled();
     });
 
+    it('rejects a malformed AccountSid before it reaches an RTDB path', async () => {
+        await seedAuthToken(SID, AUTH_TOKEN);
+        for (const sid of [`${SID}/devices/x`, `${SID}.x`, 'ac' + SID.slice(2), 'AC1']) {
+            await expect(verifyTwilioCredentials(sid, AUTH_TOKEN)).rejects.toBeInstanceOf(InvalidTwilioCredentialsError);
+        }
+        expect(twilioFactory()).not.toHaveBeenCalled();
+    });
+
     it('propagates non-auth Twilio errors instead of calling them invalid credentials', async () => {
         const client = fakeTwilioClient();
         client.accountFetch.mockRejectedValue(Object.assign(new Error('Service unavailable'), { status: 503 }));

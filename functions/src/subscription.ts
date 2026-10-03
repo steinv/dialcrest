@@ -375,16 +375,21 @@ export interface DeviceEntitlement {
  *   pointer is KEPT (e.g. an iOS reinstall wipes the locally stored entitlement
  *   but not the uid — clearing it would silence a paying user once the trial
  *   ends, until they restore). Its record's expiry still decides reachability.
- * - Trial live and the device already has a pointer: entitled, keep it — no store
- *   round-trip (this runs on every token mint).
- * - Otherwise the presented entitlement is re-verified with the store (as
- *   isSubscriptionActive does) and the pointer is its record — even when that
- *   subscription has currently lapsed: the record's own expiry already decides
- *   reachability, and keeping the pointer means a renewal that lands later (e.g.
- *   after billing retry, via a store notification) reaches the device again
- *   without it checking in. This also
- *   runs DURING the trial for a device without a pointer, so someone who paid
- *   during the trial keeps ringing the moment it ends.
+ * - Trial live: entitled. The pointer follows the PRESENTED entitlement, so a
+ *   stale pointer (e.g. to a lapsed purchase the user has since replaced) is
+ *   corrected before the trial ends — someone who paid during the trial keeps
+ *   ringing the moment it ends. This runs on every token mint, so it avoids the
+ *   store: an entitlement whose record already exists (written when the purchase
+ *   was verified, or by a store notification) is pointed at directly. Only one
+ *   with no record yet is re-verified with the store, and a failure there is
+ *   remembered for a while (failedTrialEntitlements) so a permanently invalid
+ *   entitlement isn't sent to the store on every mint; the pointer is kept.
+ * - After the trial the presented entitlement is always re-verified with the
+ *   store (as isSubscriptionActive does) and the pointer is its record — even
+ *   when that subscription has currently lapsed: the record's own expiry already
+ *   decides reachability, and keeping the pointer means a renewal that lands
+ *   later (e.g. after billing retry, via a store notification) reaches the device
+ *   again without it checking in.
  * - A failed re-verification never grants a token beyond the trial, but keeps the
  *   existing pointer: that record's own expiry still governs ringing, so a store
  *   outage doesn't silence a paying user.
@@ -395,16 +400,92 @@ export function resolveDeviceEntitlement(
     return trialActive(accountSid).pipe(
         switchMap((trial): Observable<DeviceEntitlement> => {
             if (!entitlement) return of({ entitled: trial, subscription: currentPointer });
-            if (trial && currentPointer) return of({ entitled: true, subscription: currentPointer });
+            if (trial) {
+                return trialPointer(accountSid, entitlement, currentPointer, config).pipe(
+                    map((subscription) => ({ entitled: true, subscription })),
+                );
+            }
             return verifyEntitlementState(accountSid, entitlement, config).pipe(
-                map((state) => ({ entitled: trial || state.expiresAt > Date.now(), subscription: state.recordPath })),
+                map((state) => ({ entitled: state.expiresAt > Date.now(), subscription: state.recordPath })),
                 catchError((e) => {
                     console.error('Store entitlement re-verification failed', e);
-                    return of({ entitled: trial, subscription: currentPointer });
+                    return of({ entitled: false, subscription: currentPointer });
                 }),
             );
         }),
     );
+}
+
+/** How long a trial-time re-verification failure suppresses the next store call for that entitlement. */
+const FAILED_TRIAL_ENTITLEMENT_TTL_MS = 60 * 60 * 1000;
+const FAILED_TRIAL_ENTITLEMENTS_MAX = 1000;
+
+/**
+ * Entitlements (by entitlementKey) whose store re-verification failed during the
+ * trial, with when to try again. Per function instance, like authTokenCache in
+ * twilio.ts: it only bounds how often one instance asks the store.
+ */
+const failedTrialEntitlements = new Map<string, number>();
+
+function entitlementKey(entitlement: PresentedEntitlement): string {
+    const value = entitlement.store === 'app_store' ? entitlement.signedTransactionInfo : entitlement.purchaseToken;
+    return crypto.createHash('sha256').update(`${entitlement.store}:${value}`).digest('base64url');
+}
+
+/** The pointer a trialing device should hold — see resolveDeviceEntitlement. Never errors. */
+function trialPointer(
+    accountSid: string, entitlement: PresentedEntitlement, currentPointer: string | null, config: ReverificationConfig,
+): Observable<string | null> {
+    return existingRecordPath(entitlement, config.apple).pipe(
+        switchMap((existing) => {
+            if (existing) return of(existing);
+            const key = entitlementKey(entitlement);
+            if ((failedTrialEntitlements.get(key) ?? 0) > Date.now()) return of(currentPointer);
+            return verifyEntitlementState(accountSid, entitlement, config).pipe(
+                map((state) => state.recordPath),
+                catchError((e) => {
+                    console.error('Store entitlement re-verification failed', e);
+                    if (failedTrialEntitlements.size >= FAILED_TRIAL_ENTITLEMENTS_MAX) failedTrialEntitlements.clear();
+                    failedTrialEntitlements.set(key, Date.now() + FAILED_TRIAL_ENTITLEMENT_TTL_MS);
+                    return of(currentPointer);
+                }),
+            );
+        }),
+        catchError((e) => {
+            console.error('Presented store entitlement lookup failed', e);
+            return of(currentPointer);
+        }),
+    );
+}
+
+/**
+ * The path of the paid record a presented entitlement already has, or null if it
+ * has none yet — without a store round-trip. An Apple transaction is verified
+ * offline first (its signature is what makes the originalTransactionId trusted);
+ * a Google purchase token resolves through its redirect node, if superseded, to
+ * the chain root (see resolveGooglePaidKey).
+ */
+function existingRecordPath(entitlement: PresentedEntitlement, apple: AppleConfig): Observable<string | null> {
+    if (entitlement.store === 'app_store') {
+        return from(verifyPresentedAppleTransaction(entitlement.signedTransactionInfo, apple)).pipe(
+            switchMap(({ originalTransactionId }) => from(applePaidRef(originalTransactionId).once('value')).pipe(
+                map((snapshot) => (snapshot.exists() ? paidRecordPath('app_store', originalTransactionId) : null)),
+            )),
+        );
+    }
+    const { purchaseToken } = entitlement;
+    return from(googlePaidRef(purchaseToken).once('value')).pipe(
+        map((snapshot) => {
+            if (!snapshot.exists()) return null;
+            const value = snapshot.val();
+            return paidRecordPath('play_store', isGooglePaidRedirect(value) ? value.redirectTo : purchaseToken);
+        }),
+    );
+}
+
+/** Test-only: forget remembered trial-time re-verification failures. */
+export function resetFailedTrialEntitlementsForTests(): void {
+    failedTrialEntitlements.clear();
 }
 
 // ---------------------------------------------------------------------------

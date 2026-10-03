@@ -114,7 +114,8 @@ function tokensEqual(a: string, b: string): boolean {
  * is thrown. Other Twilio/RTDB errors propagate unchanged.
  */
 export async function verifyTwilioCredentials(accountSid: string, authToken: string): Promise<void> {
-    if (typeof accountSid !== 'string' || accountSid === '' || typeof authToken !== 'string' || authToken === '') {
+    // The SID is checked against ACCOUNT_SID before it reaches an RTDB path.
+    if (typeof accountSid !== 'string' || !ACCOUNT_SID.test(accountSid) || typeof authToken !== 'string' || authToken === '') {
         throw new InvalidTwilioCredentialsError(String(accountSid));
     }
     // Only the LATEST stored token proves ownership without a round-trip; the
