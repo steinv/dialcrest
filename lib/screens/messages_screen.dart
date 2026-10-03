@@ -1,8 +1,14 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:record/record.dart';
+import 'package:path_provider/path_provider.dart';
 import '../l10n/generated/app_localizations.dart';
 import '../models/message.dart';
 import '../services/storage_service.dart';
@@ -28,7 +34,15 @@ class MessagesScreen extends StatefulWidget {
   /// The conversation currently open (a remote phone number), or null to show
   /// the conversation list. Owned by the parent so the app bar can reflect it.
   final String? selectedContact;
-  final ValueChanged<String?> onSelectContact;
+
+  /// The channel of the open conversation (SMS or WhatsApp). Null when the
+  /// conversation list is showing. A number can have both an SMS and a WhatsApp
+  /// thread, so this disambiguates which one is open.
+  final Channel? selectedChannel;
+
+  /// Opens (number, channel) as the active conversation, or (null, null) to
+  /// return to the list. Owned by the parent so the app bar can reflect it.
+  final void Function(String? number, Channel? channel) onSelectConversation;
 
   /// Invoked from the empty state to start a new conversation (the parent
   /// switches to the dialer).
@@ -42,7 +56,8 @@ class MessagesScreen extends StatefulWidget {
     super.key,
     required this.twilioService,
     required this.selectedContact,
-    required this.onSelectContact,
+    required this.selectedChannel,
+    required this.onSelectConversation,
     required this.onStartConversation,
     required this.onCall,
   });
@@ -63,9 +78,29 @@ class MessagesScreenState extends State<MessagesScreen> {
   bool _hasError = false;
   bool _sending = false;
 
+  // Voice-note recording (WhatsApp only). While [_recording] is true the
+  // composer shows a recording row instead of the text field; [_recordPath] is
+  // the temp file the recorder writes to.
+  final AudioRecorder _recorder = AudioRecorder();
+  bool _recording = false;
+  String? _recordPath;
+  // Auto-stops (and sends) a voice note at the length cap so a recording can't
+  // grow an unbounded file.
+  Timer? _recordLimitTimer;
+
+  /// Hard cap on a staged attachment, matching the Storage rules' size check
+  /// (`request.resource.size < 16 * 1024 * 1024`) so the client fails fast with
+  /// a clear message instead of a rules rejection. Rejected at `>=` the cap, so
+  /// a file of exactly this size is refused on both sides rather than passing
+  /// the pre-check and then being denied by the rules.
+  static const int _maxMediaBytes = 16 * 1024 * 1024;
+
+  /// Longest a single voice note may record (~5 MB of AAC at this cap).
+  static const Duration _maxRecordingDuration = Duration(minutes: 5);
+
   // Tracks the open thread so we only auto-scroll to the newest message when
   // the conversation changes or a message is added, not on every rebuild.
-  String? _threadContact;
+  String? _threadKey;
   int _threadMessageCount = 0;
 
   @override
@@ -83,6 +118,8 @@ class MessagesScreenState extends State<MessagesScreen> {
     _scrollController.dispose();
     _threadScrollController.dispose();
     _messageController.dispose();
+    _recordLimitTimer?.cancel();
+    _recorder.dispose();
     super.dispose();
   }
 
@@ -106,6 +143,12 @@ class MessagesScreenState extends State<MessagesScreen> {
     final digits = number.replaceAll(RegExp(r'\D'), '');
     return digits.length > 9 ? digits.substring(digits.length - 9) : digits;
   }
+
+  /// The grouping key for a conversation: the number key plus the channel, so
+  /// the SMS thread and the WhatsApp thread to the same number stay separate
+  /// (and opening one keeps you in that technology).
+  String _convKey(String number, Channel channel) =>
+      '${channel.name}|${_key(number)}';
 
   /// (Re)loads the first page, replacing the list. Exposed so the parent can
   /// trigger a refresh from the app bar.
@@ -141,7 +184,10 @@ class MessagesScreenState extends State<MessagesScreen> {
       setState(() => _messages.add(message));
     }
     final openContact = widget.selectedContact;
-    return openContact != null && _key(openContact) == _key(message.phoneNumber);
+    final openChannel = widget.selectedChannel;
+    return openContact != null &&
+        openChannel == message.channel &&
+        _key(openContact) == _key(message.phoneNumber);
   }
 
   Future<void> _loadFirstPage() async {
@@ -195,12 +241,32 @@ class MessagesScreenState extends State<MessagesScreen> {
     }
   }
 
-  Future<void> _send(String number) async {
+  Future<void> _send(String number, Channel channel) async {
     final text = _messageController.text.trim();
     if (text.isEmpty || _sending) return;
+    await _dispatchSend(number, channel, body: text);
+  }
+
+  /// Shared send path for text and media. Optimistically appends the returned
+  /// message (which carries the on-device attachment for instant rendering) and
+  /// clears the composer; [media] is null for a plain text send.
+  Future<void> _dispatchSend(
+    String number,
+    Channel channel, {
+    String body = '',
+    OutgoingMedia? media,
+  }) async {
+    if (_sending) return;
+    // Reject an oversized attachment up front (matches the Storage rules cap)
+    // so the user gets a clear message rather than a mid-upload failure.
+    if (media != null && await media.file.length() >= _maxMediaBytes) {
+      if (mounted) _showError(AppLocalizations.of(context)!.mediaTooLarge);
+      return;
+    }
     setState(() => _sending = true);
     try {
-      final message = await widget.twilioService.sendMessage(number, text);
+      final message = await widget.twilioService
+          .sendMessage(number, body, channel: channel, media: media);
       if (!mounted) return;
       setState(() {
         _messages.add(message);
@@ -213,6 +279,139 @@ class MessagesScreenState extends State<MessagesScreen> {
       _showError(
         AppLocalizations.of(context)!.failedToSendMessage(e.toString()),
       );
+    }
+  }
+
+  /// Guesses the image MIME type from a picked file's extension; defaults to
+  /// JPEG (what the camera and most galleries hand back, and what WhatsApp
+  /// accepts most reliably).
+  String _imageContentType(String path) {
+    final ext = path.toLowerCase();
+    if (ext.endsWith('.png')) return 'image/png';
+    if (ext.endsWith('.gif')) return 'image/gif';
+    if (ext.endsWith('.webp')) return 'image/webp';
+    return 'image/jpeg';
+  }
+
+  /// Picks an image (camera or gallery) and sends it over WhatsApp, using any
+  /// text already in the composer as the caption. WhatsApp-only; the composer
+  /// only surfaces the attach button for that channel.
+  Future<void> _attachImage(String number, Channel channel) async {
+    final l10n = AppLocalizations.of(context)!;
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: Text(l10n.takePhoto),
+              onTap: () => Navigator.of(context).pop(ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: Text(l10n.chooseFromGallery),
+              onTap: () => Navigator.of(context).pop(ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (source == null) return;
+    try {
+      final picked = await ImagePicker()
+          .pickImage(source: source, imageQuality: 85, maxWidth: 2048);
+      if (picked == null || !mounted) return;
+      await _dispatchSend(
+        number,
+        channel,
+        body: _messageController.text.trim(),
+        media: OutgoingMedia(
+          file: File(picked.path),
+          contentType: _imageContentType(picked.path),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      _showError(l10n.failedToSendMessage(e.toString()));
+    }
+  }
+
+  /// Starts recording a voice note into a temp file. No-op if the mic
+  /// permission is denied (surfaces a message instead). Auto-stops and sends at
+  /// [_maxRecordingDuration] so a recording can't grow an unbounded file.
+  Future<void> _startRecording(String number, Channel channel) async {
+    final l10n = AppLocalizations.of(context)!;
+    try {
+      if (!await _recorder.hasPermission()) {
+        _showError(l10n.microphonePermissionDenied);
+        return;
+      }
+      final dir = await getTemporaryDirectory();
+      final path =
+          '${dir.path}/wa_voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      // AAC/m4a (audio/mp4) is WhatsApp-accepted and avoids the Opus-encoder
+      // availability issues of OGG (see docs/whatsapp-integration-plan.md §6).
+      await _recorder.start(
+        const RecordConfig(encoder: AudioEncoder.aacLc),
+        path: path,
+      );
+      if (!mounted) return;
+      setState(() {
+        _recording = true;
+        _recordPath = path;
+      });
+      _recordLimitTimer?.cancel();
+      _recordLimitTimer = Timer(_maxRecordingDuration, () {
+        if (!mounted || !_recording) return;
+        _showInfo(l10n.recordingLimitReached);
+        _stopAndSendRecording(number, channel);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      _showError(l10n.failedToSendMessage(e.toString()));
+    }
+  }
+
+  /// Stops the recorder and sends the captured voice note over WhatsApp.
+  Future<void> _stopAndSendRecording(String number, Channel channel) async {
+    _recordLimitTimer?.cancel();
+    String? path;
+    try {
+      path = await _recorder.stop();
+    } catch (_) {
+      // fall through to the stored path
+    }
+    if (!mounted) return;
+    setState(() => _recording = false);
+    final effective = path ?? _recordPath;
+    _recordPath = null;
+    if (effective == null) return;
+    await _dispatchSend(
+      number,
+      channel,
+      media: OutgoingMedia(file: File(effective), contentType: 'audio/mp4'),
+    );
+  }
+
+  /// Stops the recorder and discards the captured file without sending.
+  Future<void> _cancelRecording() async {
+    _recordLimitTimer?.cancel();
+    try {
+      await _recorder.stop();
+    } catch (_) {}
+    final path = _recordPath;
+    if (mounted) {
+      setState(() {
+        _recording = false;
+        _recordPath = null;
+      });
+    }
+    if (path != null) {
+      try {
+        await File(path).delete();
+      } catch (_) {}
     }
   }
 
@@ -265,9 +464,11 @@ class MessagesScreenState extends State<MessagesScreen> {
   /// conversation list (its tile is gone too).
   void _leaveThreadIfEmpty() {
     final contact = widget.selectedContact;
-    if (contact == null) return;
-    if (!_messages.any((m) => _key(m.phoneNumber) == _key(contact))) {
-      widget.onSelectContact(null);
+    final channel = widget.selectedChannel;
+    if (contact == null || channel == null) return;
+    if (!_messages.any((m) =>
+        m.channel == channel && _key(m.phoneNumber) == _key(contact))) {
+      widget.onSelectConversation(null, null);
     }
   }
 
@@ -407,7 +608,8 @@ class MessagesScreenState extends State<MessagesScreen> {
         await Provider.of<ContactsService>(context, listen: false)
             .openAddContact(conversation.phoneNumber);
       case _ConversationAction.open:
-        widget.onSelectContact(conversation.phoneNumber);
+        widget.onSelectConversation(
+            conversation.phoneNumber, conversation.channel);
       case _ConversationAction.call:
         widget.onCall(conversation.phoneNumber);
       case _ConversationAction.delete:
@@ -443,10 +645,12 @@ class MessagesScreenState extends State<MessagesScreen> {
   }
 
   /// Groups the fetched messages into conversations, newest-activity first.
+  /// Keyed by number *and* channel, so a number reached over both SMS and
+  /// WhatsApp appears as two separate threads.
   List<Conversation> _groupConversations(ContactsService contacts) {
     final byKey = <String, List<Message>>{};
     for (final m in _messages) {
-      byKey.putIfAbsent(_key(m.phoneNumber), () => []).add(m);
+      byKey.putIfAbsent(_convKey(m.phoneNumber, m.channel), () => []).add(m);
     }
     final conversations = byKey.values.map((msgs) {
       msgs.sort((a, b) => a.timestamp.compareTo(b.timestamp));
@@ -456,6 +660,7 @@ class MessagesScreenState extends State<MessagesScreen> {
         messages: msgs,
         contactName: contacts.getContactName(number),
         lastMessageTime: msgs.last.timestamp,
+        channel: msgs.last.channel,
       );
     }).toList()
       ..sort((a, b) => b.lastMessageTime.compareTo(a.lastMessageTime));
@@ -464,8 +669,10 @@ class MessagesScreenState extends State<MessagesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.selectedContact != null) {
-      return SafeArea(child: _buildThread(widget.selectedContact!));
+    if (widget.selectedContact != null && widget.selectedChannel != null) {
+      return SafeArea(
+        child: _buildThread(widget.selectedContact!, widget.selectedChannel!),
+      );
     }
     // Listen to the contacts so names resolve (and re-resolve) live.
     final contacts = context.watch<ContactsService>();
@@ -501,6 +708,7 @@ class MessagesScreenState extends State<MessagesScreen> {
 
   Widget _buildConversationTile(Conversation conversation) {
     final title = conversation.contactName ?? conversation.phoneNumber;
+    final isWhatsapp = conversation.channel == Channel.whatsapp;
     return ListTile(
       leading: CircleAvatar(
         backgroundColor: Theme.of(context).colorScheme.primary,
@@ -509,7 +717,15 @@ class MessagesScreenState extends State<MessagesScreen> {
           style: const TextStyle(color: Colors.white),
         ),
       ),
-      title: Text(title),
+      title: Row(
+        children: [
+          Flexible(child: Text(title, overflow: TextOverflow.ellipsis)),
+          if (isWhatsapp) ...[
+            const SizedBox(width: 6),
+            const _WhatsappBadge(),
+          ],
+        ],
+      ),
       subtitle: Text(
         conversation.previewText,
         maxLines: 1,
@@ -519,7 +735,8 @@ class MessagesScreenState extends State<MessagesScreen> {
         DateFormat.yMMMd().format(conversation.lastMessageTime),
         style: const TextStyle(color: Colors.grey),
       ),
-      onTap: () => widget.onSelectContact(conversation.phoneNumber),
+      onTap: () => widget.onSelectConversation(
+          conversation.phoneNumber, conversation.channel),
       // Long-press opens a sheet of actions for the whole conversation.
       onLongPress: () => _showConversationActions(conversation),
     );
@@ -583,15 +800,15 @@ class MessagesScreenState extends State<MessagesScreen> {
 
   // ---- Thread ------------------------------------------------------------
 
-  Widget _buildThread(String contact) {
-    final key = _key(contact);
+  Widget _buildThread(String contact, Channel channel) {
+    final convKey = _convKey(contact, channel);
     final messages = _messages
-        .where((m) => _key(m.phoneNumber) == key)
+        .where((m) => _convKey(m.phoneNumber, m.channel) == convKey)
         .toList()
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
-    if (contact != _threadContact || messages.length != _threadMessageCount) {
-      _threadContact = contact;
+    if (convKey != _threadKey || messages.length != _threadMessageCount) {
+      _threadKey = convKey;
       _threadMessageCount = messages.length;
       _scrollThreadToBottom();
     }
@@ -613,7 +830,7 @@ class MessagesScreenState extends State<MessagesScreen> {
                       _buildBubble(messages[index]),
                 ),
         ),
-        _buildComposer(contact),
+        _buildComposer(contact, channel),
       ],
     );
   }
@@ -676,8 +893,11 @@ class MessagesScreenState extends State<MessagesScreen> {
     );
   }
 
-  Widget _buildComposer(String contact) {
+  Widget _buildComposer(String contact, Channel channel) {
     final colorScheme = Theme.of(context).colorScheme;
+    // Image + voice attachments are a WhatsApp-only affordance (SMS/MMS sending
+    // isn't part of this app's send path).
+    final canAttach = channel == Channel.whatsapp;
     return Container(
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
@@ -686,46 +906,168 @@ class MessagesScreenState extends State<MessagesScreen> {
           BoxShadow(color: Colors.black12, offset: Offset(0, -1), blurRadius: 4),
         ],
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: _messageController,
-              decoration: InputDecoration(
-                hintText: AppLocalizations.of(context)!.typeMessageHint,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(24),
-                  borderSide: BorderSide.none,
-                ),
-                filled: true,
-                fillColor: colorScheme.surfaceContainerHighest,
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              ),
-              maxLines: null,
-              textCapitalization: TextCapitalization.sentences,
-              onSubmitted: (_) => _send(contact),
-            ),
+      child: SafeArea(
+        top: false,
+        child: _recording
+            ? _buildRecordingRow(contact, channel, colorScheme)
+            : _buildInputRow(contact, channel, colorScheme, canAttach),
+      ),
+    );
+  }
+
+  Widget _buildInputRow(String contact, Channel channel,
+      ColorScheme colorScheme, bool canAttach) {
+    return Row(
+      children: [
+        if (canAttach) ...[
+          IconButton(
+            tooltip: AppLocalizations.of(context)!.attachImage,
+            icon: Icon(Icons.attach_file, color: colorScheme.primary),
+            onPressed: _sending ? null : () => _attachImage(contact, channel),
           ),
-          const SizedBox(width: 8),
-          CircleAvatar(
-            backgroundColor: colorScheme.surfaceContainerHighest,
-            child: IconButton(
-              icon: _sending
-                  ? SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor:
-                            AlwaysStoppedAnimation<Color>(colorScheme.primary),
-                      ),
-                    )
-                  : Icon(Icons.send, color: colorScheme.primary),
-              onPressed: _sending ? null : () => _send(contact),
-            ),
+          IconButton(
+            tooltip: AppLocalizations.of(context)!.recordVoice,
+            icon: Icon(Icons.mic, color: colorScheme.primary),
+            onPressed:
+                _sending ? null : () => _startRecording(contact, channel),
           ),
         ],
+        Expanded(
+          child: TextField(
+            controller: _messageController,
+            decoration: InputDecoration(
+              hintText: AppLocalizations.of(context)!.typeMessageHint,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(24),
+                borderSide: BorderSide.none,
+              ),
+              filled: true,
+              fillColor: colorScheme.surfaceContainerHighest,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            ),
+            maxLines: null,
+            textCapitalization: TextCapitalization.sentences,
+            onSubmitted: (_) => _send(contact, channel),
+          ),
+        ),
+        const SizedBox(width: 8),
+        CircleAvatar(
+          backgroundColor: colorScheme.surfaceContainerHighest,
+          child: IconButton(
+            icon: _sending
+                ? SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor:
+                          AlwaysStoppedAnimation<Color>(colorScheme.primary),
+                    ),
+                  )
+                : Icon(Icons.send, color: colorScheme.primary),
+            onPressed: _sending ? null : () => _send(contact, channel),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// The composer while a voice note is being recorded: discard, a pulsing
+  /// indicator, and send. The send button spins while the recording uploads.
+  Widget _buildRecordingRow(
+      String contact, Channel channel, ColorScheme colorScheme) {
+    final l10n = AppLocalizations.of(context)!;
+    return Row(
+      children: [
+        IconButton(
+          tooltip: l10n.cancel,
+          icon: const Icon(Icons.delete_outline, color: Colors.red),
+          onPressed: _sending ? null : _cancelRecording,
+        ),
+        const _RecordingDot(),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            l10n.recording,
+            style: TextStyle(color: colorScheme.onSurfaceVariant),
+          ),
+        ),
+        CircleAvatar(
+          backgroundColor: colorScheme.surfaceContainerHighest,
+          child: IconButton(
+            icon: _sending
+                ? SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor:
+                          AlwaysStoppedAnimation<Color>(colorScheme.primary),
+                    ),
+                  )
+                : Icon(Icons.send, color: colorScheme.primary),
+            onPressed:
+                _sending ? null : () => _stopAndSendRecording(contact, channel),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// A small pulsing red dot shown while a voice note records.
+class _RecordingDot extends StatefulWidget {
+  const _RecordingDot();
+
+  @override
+  State<_RecordingDot> createState() => _RecordingDotState();
+}
+
+class _RecordingDotState extends State<_RecordingDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 800),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: Tween<double>(begin: 0.3, end: 1).animate(_controller),
+      child: const Icon(Icons.fiber_manual_record, color: Colors.red, size: 16),
+    );
+  }
+}
+
+/// A compact "WhatsApp" chip shown on a conversation row so WhatsApp threads
+/// are distinguishable from SMS threads in the single mixed list.
+class _WhatsappBadge extends StatelessWidget {
+  const _WhatsappBadge();
+
+  static const _whatsappGreen = Color(0xFF25D366);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: _whatsappGreen.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: const Text(
+        'WhatsApp',
+        style: TextStyle(
+          color: _whatsappGreen,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }

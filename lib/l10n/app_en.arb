@@ -527,5 +527,38 @@
   "@onboardingDoneIncompleteIntro": {},
 
   "onboardingDoneIncompleteHint": "Go Back to set them up now, or do it later in Settings.",
-  "@onboardingDoneIncompleteHint": {}
+  "@onboardingDoneIncompleteHint": {},
+
+  "chooseChannelTitle": "Send with",
+  "@chooseChannelTitle": {},
+
+  "channelSms": "SMS",
+  "@channelSms": {},
+
+  "channelWhatsapp": "WhatsApp",
+  "@channelWhatsapp": {},
+
+  "attachImage": "Attach image",
+  "@attachImage": {},
+
+  "recordVoice": "Record voice message",
+  "@recordVoice": {},
+
+  "recording": "Recording…",
+  "@recording": {},
+
+  "takePhoto": "Take photo",
+  "@takePhoto": {},
+
+  "chooseFromGallery": "Choose from gallery",
+  "@chooseFromGallery": {},
+
+  "microphonePermissionDenied": "Microphone permission is required to record a voice message.",
+  "@microphonePermissionDenied": {},
+
+  "mediaTooLarge": "That attachment is too large to send (max 16 MB).",
+  "@mediaTooLarge": {},
+
+  "recordingLimitReached": "Maximum recording length reached.",
+  "@recordingLimitReached": {}
 }

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
@@ -45,18 +47,22 @@ class _ImageAttachment extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final headers = twilioService.mediaHeaders;
+    // An optimistic just-sent image renders straight from the on-device file;
+    // everything else streams from Twilio behind Basic Auth.
+    final headers = media.isLocal ? null : twilioService.mediaHeaders;
+    final ImageProvider provider = media.isLocal
+        ? FileImage(File(media.localPath!))
+        : NetworkImage(media.url, headers: headers);
     return GestureDetector(
       onTap: () => Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => _FullScreenImage(url: media.url, headers: headers),
+        builder: (_) => _FullScreenImage(provider: provider),
       )),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxHeight: 200, minWidth: 120),
-          child: Image.network(
-            media.url,
-            headers: headers,
+          child: Image(
+            image: provider,
             fit: BoxFit.cover,
             loadingBuilder: (context, child, progress) {
               if (progress == null) return child;
@@ -79,10 +85,9 @@ class _ImageAttachment extends StatelessWidget {
 }
 
 class _FullScreenImage extends StatelessWidget {
-  final String url;
-  final Map<String, String> headers;
+  final ImageProvider provider;
 
-  const _FullScreenImage({required this.url, required this.headers});
+  const _FullScreenImage({required this.provider});
 
   @override
   Widget build(BuildContext context) {
@@ -94,7 +99,7 @@ class _FullScreenImage extends StatelessWidget {
       ),
       body: Center(
         child: InteractiveViewer(
-          child: Image.network(url, headers: headers),
+          child: Image(image: provider),
         ),
       ),
     );
@@ -252,8 +257,14 @@ class _AudioAttachmentState extends State<_AudioAttachment> {
       _failed = false;
     });
     try {
-      final bytes = await widget.twilioService.downloadMedia(widget.media.url);
-      await _player.play(BytesSource(bytes));
+      if (widget.media.isLocal) {
+        // Optimistic just-recorded voice note: play the on-device file
+        // directly, no Twilio round-trip.
+        await _player.play(DeviceFileSource(widget.media.localPath!));
+      } else {
+        final bytes = await widget.twilioService.downloadMedia(widget.media.url);
+        await _player.play(BytesSource(bytes));
+      }
     } catch (_) {
       if (mounted) setState(() => _failed = true);
     } finally {

@@ -1027,6 +1027,72 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Go Back to set them up now, or do it later in Settings.'**
   String get onboardingDoneIncompleteHint;
+
+  /// No description provided for @chooseChannelTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Send with'**
+  String get chooseChannelTitle;
+
+  /// No description provided for @channelSms.
+  ///
+  /// In en, this message translates to:
+  /// **'SMS'**
+  String get channelSms;
+
+  /// No description provided for @channelWhatsapp.
+  ///
+  /// In en, this message translates to:
+  /// **'WhatsApp'**
+  String get channelWhatsapp;
+
+  /// No description provided for @attachImage.
+  ///
+  /// In en, this message translates to:
+  /// **'Attach image'**
+  String get attachImage;
+
+  /// No description provided for @recordVoice.
+  ///
+  /// In en, this message translates to:
+  /// **'Record voice message'**
+  String get recordVoice;
+
+  /// No description provided for @recording.
+  ///
+  /// In en, this message translates to:
+  /// **'Recording…'**
+  String get recording;
+
+  /// No description provided for @takePhoto.
+  ///
+  /// In en, this message translates to:
+  /// **'Take photo'**
+  String get takePhoto;
+
+  /// No description provided for @chooseFromGallery.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose from gallery'**
+  String get chooseFromGallery;
+
+  /// No description provided for @microphonePermissionDenied.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone permission is required to record a voice message.'**
+  String get microphonePermissionDenied;
+
+  /// No description provided for @mediaTooLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'That attachment is too large to send (max 16 MB).'**
+  String get mediaTooLarge;
+
+  /// No description provided for @recordingLimitReached.
+  ///
+  /// In en, this message translates to:
+  /// **'Maximum recording length reached.'**
+  String get recordingLimitReached;
 }
 
 class _AppLocalizationsDelegate

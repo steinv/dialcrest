@@ -13,6 +13,8 @@ jest.mock('googleapis', () => require('./testUtils/googleFixtures').mockGoogleap
  * "subscription active" path can be observed end to end.
  */
 jest.mock('./twilio', () => ({
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    rememberAuthToken: jest.fn(() => require('rxjs').of(undefined)),
     accessToken: jest.fn().mockResolvedValue('fake-jwt-token'),
     createOrUpdatePushCredentials: jest.fn().mockResolvedValue({ androidSid: 'CR-android', iosSid: null }),
     getIncomingAppSid: jest.fn(),

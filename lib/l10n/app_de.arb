@@ -161,5 +161,16 @@
   "onboardingDoneBodyNoNumber": "Fügen Sie in den Einstellungen eine Telefonnummer hinzu, wenn Sie bereit sind, Anrufe zu empfangen.",
   "onboardingDoneTitleIncomplete": "Fast geschafft",
   "onboardingDoneIncompleteIntro": "Sie können jetzt abschließen, aber Folgendes muss noch erledigt werden, bevor Sie Anrufe tätigen und empfangen können:",
-  "onboardingDoneIncompleteHint": "Gehen Sie zurück, um dies jetzt einzurichten, oder erledigen Sie es später in den Einstellungen."
+  "onboardingDoneIncompleteHint": "Gehen Sie zurück, um dies jetzt einzurichten, oder erledigen Sie es später in den Einstellungen.",
+  "chooseChannelTitle": "Senden mit",
+  "channelSms": "SMS",
+  "channelWhatsapp": "WhatsApp",
+  "attachImage": "Bild anhängen",
+  "recordVoice": "Sprachnachricht aufnehmen",
+  "recording": "Aufnahme…",
+  "takePhoto": "Foto aufnehmen",
+  "chooseFromGallery": "Aus Galerie wählen",
+  "microphonePermissionDenied": "Für die Aufnahme einer Sprachnachricht ist die Mikrofonberechtigung erforderlich.",
+  "mediaTooLarge": "Dieser Anhang ist zu groß zum Senden (max. 16 MB).",
+  "recordingLimitReached": "Maximale Aufnahmedauer erreicht."
 }

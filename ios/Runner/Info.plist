@@ -33,6 +33,10 @@
 	</dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>This app needs access to the microphone.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>This app needs access to the camera to take photos to send in WhatsApp messages.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>This app needs access to your photos to send images in WhatsApp messages.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>This app uses your contacts to show names for your calls and messages.</string>
 	<key>UIApplicationSceneManifest</key>

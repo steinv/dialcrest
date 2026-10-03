@@ -577,4 +577,40 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get onboardingDoneIncompleteHint =>
       'Vuelve atrás para configurarlo ahora, o hazlo más tarde en Ajustes.';
+
+  @override
+  String get chooseChannelTitle => 'Enviar con';
+
+  @override
+  String get channelSms => 'SMS';
+
+  @override
+  String get channelWhatsapp => 'WhatsApp';
+
+  @override
+  String get attachImage => 'Adjuntar imagen';
+
+  @override
+  String get recordVoice => 'Grabar mensaje de voz';
+
+  @override
+  String get recording => 'Grabando…';
+
+  @override
+  String get takePhoto => 'Tomar foto';
+
+  @override
+  String get chooseFromGallery => 'Elegir de la galería';
+
+  @override
+  String get microphonePermissionDenied =>
+      'Se requiere permiso de micrófono para grabar un mensaje de voz.';
+
+  @override
+  String get mediaTooLarge =>
+      'Ese archivo adjunto es demasiado grande para enviarlo (máx. 16 MB).';
+
+  @override
+  String get recordingLimitReached =>
+      'Se alcanzó la duración máxima de grabación.';
 }

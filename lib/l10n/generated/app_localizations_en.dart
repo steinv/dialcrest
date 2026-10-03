@@ -571,4 +571,39 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get onboardingDoneIncompleteHint =>
       'Go Back to set them up now, or do it later in Settings.';
+
+  @override
+  String get chooseChannelTitle => 'Send with';
+
+  @override
+  String get channelSms => 'SMS';
+
+  @override
+  String get channelWhatsapp => 'WhatsApp';
+
+  @override
+  String get attachImage => 'Attach image';
+
+  @override
+  String get recordVoice => 'Record voice message';
+
+  @override
+  String get recording => 'Recording…';
+
+  @override
+  String get takePhoto => 'Take photo';
+
+  @override
+  String get chooseFromGallery => 'Choose from gallery';
+
+  @override
+  String get microphonePermissionDenied =>
+      'Microphone permission is required to record a voice message.';
+
+  @override
+  String get mediaTooLarge =>
+      'That attachment is too large to send (max 16 MB).';
+
+  @override
+  String get recordingLimitReached => 'Maximum recording length reached.';
 }

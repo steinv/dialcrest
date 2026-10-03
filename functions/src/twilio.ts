@@ -1,5 +1,5 @@
 import * as express from 'express';
-import twilio, { Twilio, twiml } from 'twilio';
+import twilio, { Twilio, twiml, validateRequest } from 'twilio';
 import { Request } from 'firebase-functions/https';
 import { catchError, forkJoin, from, map, Observable, of, switchMap } from 'rxjs';
 import { CredentialInstance, CredentialPushType } from 'twilio/lib/rest/conversations/v1/credential';
@@ -20,6 +20,144 @@ const OUTGOING_CALL_URL = `${FUNCTIONS_BASE_URL}/twilioOutgoingCall`;
 const INCOMING_CALL_URL = `${FUNCTIONS_BASE_URL}/twilioIncomingCall`;
 const STATUS_CALLBACK_URL = `${FUNCTIONS_BASE_URL}/twilioCallStatusChanges`;
 const INCOMING_MESSAGE_URL = `${FUNCTIONS_BASE_URL}/twilioIncomingMessage`;
+
+/**
+ * Persist a tenant's Twilio Auth Token so the inbound webhooks can validate
+ * X-Twilio-Signature (see isValidTwilioSignature). Twilio signs webhooks with
+ * the number-owning account's Auth Token, which we otherwise never store.
+ *
+ * Call this ONLY after an authenticated Twilio REST call has succeeded for
+ * (accountSid, authToken) — the callables enforce App Check but not account
+ * ownership, so a token that Twilio itself hasn't just accepted must not be
+ * trusted: writing it unproven would let any caller poison another tenant's
+ * stored secret (forge its webhooks, or break its genuine ones). Refreshing it
+ * on each such call keeps the copy self-healing across Twilio token rotation.
+ *
+ * Written under /twilio/{accountSid}/secret, which database.rules.json keeps
+ * unreadable and unwritable by clients (Admin SDK bypasses those rules).
+ *
+ * Best-effort and side-effect-only: an empty/blank token is refused (an empty
+ * stored value would silently disable enforcement), an unchanged token skips the
+ * write (this runs on the hot access-token path), and any failure is logged and
+ * swallowed so it can never break the callable that carried the token.
+ */
+export function rememberAuthToken(accountSid: string, authToken: string): Observable<void> {
+    if (typeof accountSid !== 'string' || accountSid === '' || typeof authToken !== 'string' || authToken === '') {
+        console.error(`Refusing to persist a missing/empty Twilio Auth Token for account "${accountSid}"`);
+        return of(undefined);
+    }
+    const ref = admin.database().ref(`/twilio/${accountSid}/secret/authToken`);
+    return from(ref.once('value')).pipe(
+        switchMap((snapshot) => (snapshot.val() === authToken ? of(undefined) : from(ref.set(authToken)))),
+        catchError((error) => {
+            console.error(`Failed to persist Twilio Auth Token for ${accountSid}`, error);
+            return of(undefined);
+        }),
+    );
+}
+
+/**
+ * Short-lived in-memory cache of a tenant's Auth Token, keyed by AccountSid. This
+ * lives in the function instance's global scope, so it survives across warm
+ * invocations and is empty again on every cold start; each instance keeps its own
+ * copy and nothing is shared across instances. It exists only to keep the webhook
+ * hot path off RTDB on back-to-back requests (one call fans out into an outgoing
+ * TwiML fetch plus several status callbacks within seconds). We cache only a token
+ * the DB actually returned — never the "no token" or read-failure cases — so a
+ * tenant that links for the first time starts enforcing on its next cold read
+ * rather than after this TTL. The TTL bounds staleness after an Auth Token
+ * rotation: until it expires, a stale cached token makes validateRequest reject
+ * genuine webhooks (403), so keep it short.
+ */
+const AUTH_TOKEN_CACHE_TTL_MS = 5 * 60 * 1000;
+const authTokenCache = new Map<string, { authToken: string; expires: number }>();
+
+function readCachedAuthToken(accountSid: string): string | null {
+    const entry = authTokenCache.get(accountSid);
+    if (!entry) return null;
+    if (entry.expires <= Date.now()) {
+        authTokenCache.delete(accountSid);
+        return null;
+    }
+    return entry.authToken;
+}
+
+/** Test-only: drop every cached Auth Token so one case's read can't leak into the next. */
+export function resetAuthTokenCacheForTests(): void {
+    authTokenCache.clear();
+}
+
+/**
+ * True iff an inbound webhook may proceed. Twilio computes the signature over the
+ * exact URL it was configured to call plus the POST params, so we pass the static
+ * webhook URL constant (these carry no query string) rather than reconstructing
+ * it from proxy-rewritten request headers. The signing key is the tenant's Auth
+ * Token, looked up by the request's AccountSid from where rememberAuthToken
+ * stored it (served from authTokenCache when a recent read is still fresh).
+ *
+ * Fail-open for tenants with no stored token: a tenant whose token isn't stored
+ * (registered before this validation shipped, or never back through a callable)
+ * has its signature check skipped, with a warning. This is not a new exposure —
+ * these webhooks are already unauthenticated in production, so skipping the check
+ * for such a tenant merely preserves today's behavior rather than dropping its
+ * inbound calls/SMS; every tenant that HAS a stored token is strictly better off,
+ * and one appears the moment its app next hits a callable. Once a token IS stored,
+ * enforcement is always strict: a missing header or bad signature is rejected.
+ *
+ * Fail-open on a read error too: these webhooks sit on the call-setup hot path and
+ * previously did no DB work, so a transient RTDB outage must not turn every
+ * outgoing call / status callback into a 500. A failed read is treated like "no
+ * stored token" — allow, with an error log — which just falls back to the
+ * pre-hardening behavior for the duration of the outage. The catch is scoped to
+ * the read alone so a genuine bug in validation still surfaces.
+ *
+ * A request without a usable AccountSid is rejected outright: a genuine Twilio
+ * webhook always carries one, and without it there is no tenant to check.
+ */
+export async function isValidTwilioSignature(request: Request, signedUrl: string): Promise<boolean> {
+    const accountSid = request.body?.AccountSid;
+    if (typeof accountSid !== 'string' || accountSid === '') {
+        return false;
+    }
+    let authToken = readCachedAuthToken(accountSid);
+    if (authToken === null) {
+        try {
+            const snapshot = await admin.database().ref(`/twilio/${accountSid}/secret/authToken`).once('value');
+            authToken = snapshot.val() as string | null;
+        } catch (error) {
+            console.error(`Allowing Twilio webhook for ${accountSid}: Auth Token read failed (signature not checked)`, error);
+            return true;
+        }
+        if (!authToken) {
+            console.warn(`Allowing Twilio webhook for ${accountSid}: no stored Auth Token (signature not checked)`);
+            return true;
+        }
+        authTokenCache.set(accountSid, { authToken, expires: Date.now() + AUTH_TOKEN_CACHE_TTL_MS });
+    }
+    const signature = request.header('X-Twilio-Signature');
+    if (typeof signature !== 'string') {
+        return false;
+    }
+    return validateRequest(authToken, signature, signedUrl, request.body ?? {});
+}
+
+/**
+ * Signature guard shared by the four Twilio webhooks: validates the request and,
+ * on failure, responds 403 and returns false so the handler bails before doing
+ * any work. These endpoints are public and App-Check-exempt (Twilio can't send
+ * an App Check token), so this signature check is their authentication.
+ */
+async function twilioSignatureGuard(request: Request, response: express.Response, signedUrl: string): Promise<boolean> {
+    if (await isValidTwilioSignature(request, signedUrl)) {
+        return true;
+    }
+    console.warn('Rejected Twilio webhook with an invalid signature', {
+        url: signedUrl,
+        accountSid: request.body?.AccountSid ?? null,
+    });
+    response.status(403).type('text/plain').send('Invalid Twilio signature');
+    return false;
+}
 
 /**
  * Voice SDK client identity for a tenant. Each user brings their own Twilio
@@ -338,6 +476,7 @@ export function accessToken(accountSid: string, authToken: string, callerId: str
  * @param response http response to be sent back to the caller
  */
 export async function callbackIncomingCall(request: Request, response: express.Response) {
+    if (!await twilioSignatureGuard(request, response, INCOMING_CALL_URL)) return;
     const accountSid = request.body.AccountSid;
     const voiceResponse = new twiml.VoiceResponse();
 
@@ -359,7 +498,8 @@ export async function callbackIncomingCall(request: Request, response: express.R
  * `From` (the account's number, used as caller ID) and `To` (the destination)
  * as POST params; dial the destination with the account number as caller ID.
  */
-export function callbackOutgoingCall(request: Request, response: express.Response) {
+export async function callbackOutgoingCall(request: Request, response: express.Response) {
+    if (!await twilioSignatureGuard(request, response, OUTGOING_CALL_URL)) return;
     const voiceResponse = new twiml.VoiceResponse();
     const to: string | undefined = request.body.To;
     const callerId: string | undefined = request.body.From;
@@ -374,7 +514,8 @@ export function callbackOutgoingCall(request: Request, response: express.Respons
 }
 
 // https://www.twilio.com/docs/voice/api/call-resource#statuscallback
-export function callbackCallStatusChanges(request: Request, response: express.Response) {
+export async function callbackCallStatusChanges(request: Request, response: express.Response) {
+    if (!await twilioSignatureGuard(request, response, STATUS_CALLBACK_URL)) return;
     console.log('callbackCallStatusChanges %j', request.body);
     request.body.From;
     request.body.To;
@@ -401,6 +542,7 @@ export function callbackCallStatusChanges(request: Request, response: express.Re
  * back to the sender, so the response is an empty MessagingResponse.
  */
 export async function callbackIncomingMessage(request: Request, response: express.Response) {
+    if (!await twilioSignatureGuard(request, response, INCOMING_MESSAGE_URL)) return;
     const accountSid = request.body.AccountSid;
     const from = request.body.From ?? '';
     const to = request.body.To ?? '';

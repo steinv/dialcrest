@@ -26,7 +26,7 @@
     track.style.transform = 'translateX(calc(-' + index + ' * (100% + 20px)))';
     dots.forEach(function (dot, d) { dot.classList.toggle('active', d === index); });
     if (!lightbox.hidden) {
-      lightboxImg.src = slides[index].querySelector('img').src;
+      lightboxImg.src = slides[index].querySelector('img').currentSrc || slides[index].querySelector('img').src;
       lightboxImg.alt = slides[index].querySelector('img').alt;
     }
   }
@@ -43,7 +43,7 @@
   function openLightbox(i) {
     goTo(i);
     var img = slides[i].querySelector('img');
-    lightboxImg.src = img.src;
+    lightboxImg.src = img.currentSrc || img.src;
     lightboxImg.alt = img.alt;
     lightbox.hidden = false;
     document.body.style.overflow = 'hidden';
