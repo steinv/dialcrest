@@ -1,6 +1,5 @@
 import {
     WEBHOOK_PATHS,
-    accountExpiresAt,
     dbPaths,
     emptyMessagingTwiml,
     incomingCallTwiml,
@@ -117,11 +116,6 @@ async function allowTokenless(env: Env, firebase: FirebaseConfig, route: Route, 
     return !failClosed;
 }
 
-/** Inbound PSTN call: ring the tenant's app while its trial OR cached paid entitlement is live. */
-async function incomingCall(expiresAt: Promise<number | null>, accountSid: string): Promise<Response> {
-    return xml(incomingCallTwiml(accountSid, await expiresAt, Date.now()));
-}
-
 /** Inbound SMS/MMS: data-only push to each of the tenant's devices, dropping tokens FCM no longer knows. */
 async function incomingMessage(firebase: FirebaseConfig, accountSid: string, params: URLSearchParams): Promise<Response> {
     const tokens = Object.keys((await rtdbGet<Record<string, boolean>>(firebase, dbPaths.messagingTokens(accountSid))) ?? {});
@@ -151,17 +145,6 @@ async function handle(request: Request, env: Env): Promise<Response> {
     const firebase = firebaseConfig(env);
     const typedRoute = route as Route;
 
-    // The incoming-call expiry reads don't depend on the signature check, so they
-    // run in parallel with it — that RTDB round-trip is in the caller's dead air.
-    // Never awaited on rejection; the catch keeps that from being unhandled.
-    const expiresAt = typedRoute === WEBHOOK_PATHS.incomingCall ?
-        Promise.all([
-            rtdbGet<number>(firebase, dbPaths.trialExpiresAt(accountSid)),
-            rtdbGet<number>(firebase, dbPaths.paidExpiresAt(accountSid)),
-        ]).then(([trial, paid]) => accountExpiresAt(trial, paid)) :
-        null;
-    expiresAt?.catch(() => undefined);
-
     if (!await authenticate(env, firebase, typedRoute, accountSid, request, params)) {
         console.warn({ event: 'twilio_webhook_rejected', path: route, accountSid });
         return text(403, 'Invalid Twilio signature');
@@ -169,7 +152,8 @@ async function handle(request: Request, env: Env): Promise<Response> {
 
     switch (typedRoute) {
     case WEBHOOK_PATHS.incomingCall:
-        return incomingCall(expiresAt as Promise<number | null>, accountSid);
+        // Always rings — inbound calls aren't entitlement-gated (see incomingCallTwiml).
+        return xml(incomingCallTwiml(accountSid));
     case WEBHOOK_PATHS.outgoingCall:
         return xml(outgoingCallTwiml(params.get('To') ?? undefined, params.get('From') ?? undefined));
     case WEBHOOK_PATHS.callStatusChanges:

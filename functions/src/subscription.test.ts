@@ -429,133 +429,57 @@ describe('Google RTDN handling and purchase-token rotation', () => {
 });
 
 /**
- * Regression: the inbound-call webhook only knows the AccountSid, and paid state
- * is keyed by store identity — so paying users stopped ringing once their trial
- * ended. Verified store state is now mirrored into /twilio/{sid}/paid, both when
- * an entitlement is presented and when a store notification arrives later.
+ * Paid subscriptions belong to the PERSON (store identity), never to the shared
+ * Twilio account: nothing about a purchase may be written under /twilio/{sid}
+ * (one customer must not pay for everyone on the line). And a store notification,
+ * which carries no account, must not erase which account last presented it.
  */
-describe('account paid cache (/twilio/{sid}/paid) for the inbound-call webhook', () => {
+describe('paid records stay store-keyed', () => {
     beforeEach(resetDb);
 
-    function mockApple(originalTransactionId: string, expiresDate: number) {
+    function mockApple(expiresDate: number) {
         mockAppleFetch({
             production: {
                 status: 200,
                 body: appleSubscriptionStatusesResponse([{
-                    transactionId: 't1', originalTransactionId, productId: 'monthly-dialcrest-license', expiresDate, autoRenewStatus: 1,
+                    transactionId: 't1', originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license', expiresDate, autoRenewStatus: 1,
                 }]),
             },
         });
     }
 
-    function presentApple(accountSid: string, originalTransactionId: string) {
-        return lastValueFrom(verifyApplePurchase(
-            accountSid, signedPayload({ originalTransactionId, productId: 'monthly-dialcrest-license' }), testAppleConfig,
-        ));
-    }
-
-    function appleRenewalNotification(originalTransactionId: string) {
-        const tx = signedPayload({ transactionId: 't2', originalTransactionId, productId: 'monthly-dialcrest-license', expiresDate: 1 });
-        return lastValueFrom(handleAppleNotification(
-            signedPayload({ notificationType: 'DID_RENEW', data: { signedTransactionInfo: tx } }), testAppleConfig,
-        ));
-    }
-
-    function mockGoogle(expiresAt: number, linkedPurchaseToken?: string) {
+    function mockGoogle(expiresAt: number) {
         googleMocks().subscriptionsV2Get.mockResolvedValueOnce(googleSubscriptionV2Response({
-            expiryTime: new Date(expiresAt).toISOString(), autoRenewEnabled: true, basePlanId: 'monthly-dialcrest-license', linkedPurchaseToken,
+            expiryTime: new Date(expiresAt).toISOString(), autoRenewEnabled: true, basePlanId: 'monthly-dialcrest-license',
         }));
     }
 
-    it('caches a verified Apple purchase on the presenting account', async () => {
-        mockApple('orig1', 5_000_000);
-        await presentApple('AC1', 'orig1');
-        expect(dbTree().twilio.AC1.paid).toMatchObject({ store: 'app_store', key: 'orig1', expiresAt: 5_000_000 });
-    });
-
-    it('caches a verified Google purchase on the presenting account', async () => {
+    it('verifying a purchase writes nothing under the Twilio account', async () => {
+        mockApple(5_000_000);
+        await lastValueFrom(verifyApplePurchase(
+            'AC1', signedPayload({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }), testAppleConfig,
+        ));
         mockGoogle(6_000_000);
         await lastValueFrom(verifyGooglePurchase('AC1', 'tokA', 'pkg', '{}'));
-        expect(dbTree().twilio.AC1.paid).toMatchObject({ store: 'play_store', key: 'tokA', expiresAt: 6_000_000 });
+        expect(dbTree().twilio).toBeUndefined();
     });
 
-    it('caches via isSubscriptionActive too (the twilioAccessToken path once the trial is over)', async () => {
-        jest.useFakeTimers().setSystemTime(0);
-        await lastValueFrom(ensureTrialStarted('AC1'));
-        jest.setSystemTime(THIRTY_DAYS_MS + 1);
-        mockApple('orig1', THIRTY_DAYS_MS * 3);
-        const entitlement: PresentedEntitlement = {
-            store: 'app_store', signedTransactionInfo: signedPayload({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }),
-        };
-        expect(await lastValueFrom(isSubscriptionActive('AC1', entitlement, reverificationConfig))).toBe(true);
-        expect(dbTree().twilio.AC1.paid.expiresAt).toBe(THIRTY_DAYS_MS * 3);
-        jest.useRealTimers();
+    it('an Apple notification keeps lastAccountSid', async () => {
+        mockApple(5_000_000);
+        await lastValueFrom(verifyApplePurchase(
+            'AC1', signedPayload({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }), testAppleConfig,
+        ));
+        mockApple(9_000_000);
+        const tx = signedPayload({ transactionId: 't2', originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license', expiresDate: 1 });
+        await lastValueFrom(handleAppleNotification(signedPayload({ notificationType: 'DID_RENEW', data: { signedTransactionInfo: tx } }), testAppleConfig));
+        expect(dbTree().subscriptions.apple.orig1).toMatchObject({ lastAccountSid: 'AC1', expiresAt: 9_000_000 });
     });
 
-    it('an Apple renewal notification keeps lastAccountSid and extends that account\'s cache', async () => {
-        mockApple('orig1', 5_000_000);
-        await presentApple('AC1', 'orig1');
-        mockApple('orig1', 9_000_000);
-        await appleRenewalNotification('orig1');
-        expect(dbTree().subscriptions.apple.orig1.lastAccountSid).toBe('AC1');
-        expect(dbTree().twilio.AC1.paid.expiresAt).toBe(9_000_000);
-    });
-
-    it('a Google refund notification shortens the cache of the same purchase', async () => {
+    it('a Google notification keeps lastAccountSid', async () => {
         mockGoogle(6_000_000);
         await lastValueFrom(verifyGooglePurchase('AC1', 'tokA', 'pkg', '{}'));
         mockGoogle(1_000);
         await lastValueFrom(handleGoogleNotification({ voidedPurchaseNotification: { purchaseToken: 'tokA' } }, 'pkg', '{}'));
-        expect(dbTree().subscriptions.google.tokA.lastAccountSid).toBe('AC1');
-        expect(dbTree().twilio.AC1.paid.expiresAt).toBe(1_000);
-    });
-
-    it('follows a rotated Google token to the chain root and the account behind it', async () => {
-        mockGoogle(6_000_000);
-        await lastValueFrom(verifyGooglePurchase('AC1', 'tokA', 'pkg', '{}'));
-        mockGoogle(8_000_000, 'tokA'); // upgrade: new token linked to tokA, arriving as a notification
-        await lastValueFrom(handleGoogleNotification({ subscriptionNotification: { purchaseToken: 'tokB' } }, 'pkg', '{}'));
-        expect(dbTree().twilio.AC1.paid).toMatchObject({ key: 'tokA', expiresAt: 8_000_000 });
-    });
-
-    it('a notification for a record no account ever presented caches nothing', async () => {
-        mockApple('orig1', 5_000_000);
-        await appleRenewalNotification('orig1');
-        expect(dbTree().twilio).toBeUndefined();
-    });
-
-    it('a lapsed other purchase never shadows a longer-lived one on the same account', async () => {
-        mockApple('orig-new', 9_000_000);
-        await presentApple('AC1', 'orig-new');
-        mockApple('orig-old', 2_000_000);
-        await presentApple('AC1', 'orig-old');
-        expect(dbTree().twilio.AC1.paid).toMatchObject({ key: 'orig-new', expiresAt: 9_000_000 });
-    });
-
-    it('a longer-lived other purchase replaces the cached one', async () => {
-        mockApple('orig-old', 2_000_000);
-        await presentApple('AC1', 'orig-old');
-        mockGoogle(9_000_000);
-        await lastValueFrom(verifyGooglePurchase('AC1', 'tokA', 'pkg', '{}'));
-        expect(dbTree().twilio.AC1.paid).toMatchObject({ store: 'play_store', key: 'tokA', expiresAt: 9_000_000 });
-    });
-
-    it('a failing cache write never fails the verification it rides on', async () => {
-        mockApple('orig1', 5_000_000);
-        const realDatabase = admin.database;
-        const spy = jest.spyOn(admin, 'database').mockImplementation(() => {
-            const db = realDatabase();
-            return {
-                ...db,
-                ref: (path: string) => path.endsWith('/paid') ?
-                    { transaction: () => Promise.reject(new Error('RTDB down')) } :
-                    db.ref(path),
-            } as unknown as ReturnType<typeof admin.database>;
-        });
-        try {
-            await expect(presentApple('AC1', 'orig1')).resolves.toMatchObject({ isActive: expect.any(Boolean), expiresAt: 5_000_000 });
-        } finally {
-            spy.mockRestore();
-        }
+        expect(dbTree().subscriptions.google.tokA).toMatchObject({ lastAccountSid: 'AC1', expiresAt: 1_000 });
     });
 });

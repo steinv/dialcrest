@@ -409,15 +409,14 @@ describe('getIncomingAppSid', () => {
 });
 
 /**
- * Regression: callbackIncomingCall used to check only the trial expiry, so once
- * a PAYING user's 30-day trial ended every inbound call heard "temporarily
- * unavailable". It must ring while the trial OR the cached paid entitlement
- * (/twilio/{sid}/paid, written by subscription.ts) is live.
+ * Inbound calls are deliberately not entitlement-gated: the webhook only knows
+ * the line, while paid subscriptions belong to a person, so any gate here either
+ * silences paying users or lets one customer pay for the whole line. Entitlement
+ * is enforced at twilioAccessToken instead.
  */
-describe('callbackIncomingCall entitlement gate', () => {
+describe('callbackIncomingCall always rings', () => {
     const INCOMING_PATH = 'twilioIncomingCall';
-    const RING = '<Dial><Client>AC1</Client></Dial>';
-    const UNAVAILABLE = '<Say>This number is temporarily unavailable.</Say>';
+    const RING = '<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Client>AC1</Client></Dial></Response>';
 
     async function incomingCall(): Promise<string> {
         await seedAuthToken('AC1', AUTH_TOKEN);
@@ -433,32 +432,31 @@ describe('callbackIncomingCall entitlement gate', () => {
         return sent;
     }
 
-    const future = () => Date.now() + 60_000;
-    const past = () => Date.now() - 60_000;
-
-    it('rings a paying user whose trial has expired', async () => {
-        await admin.database().ref('/twilio/AC1/trial/expiresAt').set(past());
-        await admin.database().ref('/twilio/AC1/paid').set({ expiresAt: future(), store: 'app_store', key: 'orig1', updatedAt: 0 });
-        expect(await incomingCall()).toContain(RING);
+    it('during the trial', async () => {
+        await admin.database().ref('/twilio/AC1/trial/expiresAt').set(Date.now() + 60_000);
+        expect(await incomingCall()).toBe(RING);
     });
 
-    it('rings a paid account that has no trial record at all', async () => {
-        await admin.database().ref('/twilio/AC1/paid').set({ expiresAt: future(), store: 'play_store', key: 'tokA', updatedAt: 0 });
-        expect(await incomingCall()).toContain(RING);
+    it('after the trial has expired (paying users keep receiving calls)', async () => {
+        await admin.database().ref('/twilio/AC1/trial/expiresAt').set(Date.now() - 60_000);
+        expect(await incomingCall()).toBe(RING);
     });
 
-    it('rings during the trial with no purchase', async () => {
-        await admin.database().ref('/twilio/AC1/trial/expiresAt').set(future());
-        expect(await incomingCall()).toContain(RING);
+    it('with no trial record at all', async () => {
+        expect(await incomingCall()).toBe(RING);
     });
 
-    it('is unavailable once both the trial and the paid entitlement have expired', async () => {
-        await admin.database().ref('/twilio/AC1/trial/expiresAt').set(past());
-        await admin.database().ref('/twilio/AC1/paid').set({ expiresAt: past(), store: 'app_store', key: 'orig1', updatedAt: 0 });
-        expect(await incomingCall()).toContain(UNAVAILABLE);
-    });
-
-    it('is unavailable with neither a trial nor a purchase', async () => {
-        expect(await incomingCall()).toContain(UNAVAILABLE);
+    it('still requires a valid Twilio signature', async () => {
+        await seedAuthToken('AC1', AUTH_TOKEN);
+        const body = { AccountSid: 'AC1', From: '+321', To: '+322' };
+        const signature = twilioSignature('forged-token', `${LEGACY_BASE}/${INCOMING_PATH}`, body);
+        let status = 0;
+        const response = {
+            type: () => response,
+            status: (code: number) => { status = code; return response; },
+            send: () => response,
+        };
+        await callbackIncomingCall(fakeRequest({ signature, body }), response as unknown as Parameters<typeof callbackIncomingCall>[1]);
+        expect(status).toBe(403);
     });
 });

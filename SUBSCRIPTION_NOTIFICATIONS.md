@@ -183,28 +183,24 @@ File: `functions/src/subscription.ts` (plus `functions/src/index.ts` wiring).
   from `req.data` into the gate. Keep the `failed-precondition`
   `'subscription-expired'` error for the false case.
 
-### Account paid cache (for the inbound-call webhook)
+### Inbound calls are not entitlement-gated (decided)
 
 The inbound-call webhook (`twilioIncomingCall`, and its Worker port) only knows
-the `AccountSid` and is presented no entitlement, so it can't run the OR gate's
-store branch. It originally checked only the trial — silencing **paying** users'
-inbound calls once their trial ended. Fixed with an account-level mirror of the
-verified paid state:
+the `AccountSid`, and every device on a line shares that one Voice identity
+(`<Client>{accountSid}</Client>` rings them all), while a paid subscription
+belongs to a person. Any gate in the webhook is therefore per **line**: checking
+only the trial silenced paying users once the trial ended, and an account-level
+paid flag (`/twilio/{sid}/paid`, tried and removed) let one customer's
+subscription cover everyone on the line.
 
-- `/twilio/{accountSid}/paid` = `{ expiresAt, store, key, updatedAt }`, written
-  only from store-verified state, whenever a refresh runs: on presentation
-  (`twilioAccessToken` past the trial, `twilioVerify*Purchase`,
-  `twilioRefreshSubscription`) for the presenting account, and on store
-  notifications for the record's `lastAccountSid`.
-- `lastAccountSid` is therefore never overwritten with null by a notification
-  refresh (previously it was, which would have broken this link).
-- The same store record always overwrites the cache (a refund/expiry shortens
-  it); a different record only replaces it when it lasts longer.
-- The webhook rings while `max(trial.expiresAt, paid.expiresAt) > now`
-  (`accountExpiresAt` in `functions/src/shared/webhooks.ts`).
-- Known limit: a purchase used on several Twilio accounts keeps only the
-  *last* presenting account current via notifications; the others refresh their
-  cache whenever their app mints a token.
+So inbound calls always ring, with or without a trial. Entitlement is enforced
+where the person is known — `twilioAccessToken` (outgoing calls, and minting the
+token a device needs to register for incoming calls). Accepted consequence: a
+device that registered while entitled keeps receiving inbound calls after its
+entitlement lapses (Twilio keeps an idle push binding for up to a year).
+
+Separately: a store notification (no account) no longer overwrites a paid
+record's `lastAccountSid` with null.
 
 ---
 

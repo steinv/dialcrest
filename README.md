@@ -118,7 +118,7 @@ project `twilio-phone-peblet`), with business logic split out into
 
 | Function | What it does | Invoked by |
 | --- | --- | --- |
-| `twilioIncomingCall` | TwiML for an inbound PSTN call; dials the registered `<Client>` (the app) while the account's trial **or** paid subscription is live, otherwise says "temporarily unavailable". | Twilio, as the number's voice URL |
+| `twilioIncomingCall` | TwiML for an inbound PSTN call; dials the registered `<Client>` (the app). Not gated on the trial/subscription — entitlement is enforced at `twilioAccessToken` (see [`SUBSCRIPTION_NOTIFICATIONS.md`](SUBSCRIPTION_NOTIFICATIONS.md)). | Twilio, as the number's voice URL |
 | `twilioOutgoingCall` | TwiML for an outgoing call placed from the SDK; dials the destination using the account number as caller ID. | Twilio, as the TwiML App's outgoing voice URL |
 | `twilioCallStatusChanges` | Status-callback webhook that logs call lifecycle events. | Twilio, as a status callback |
 | `twilioIncomingMessage` | TwiML for inbound SMS/MMS; pushes an FCM notification to registered devices. | Twilio, as the number's SMS URL |
@@ -164,8 +164,8 @@ custom claim**:
    (`trial`, `twiml-app-sid`, `configuration`) with
    `auth.token.accountSid === $accountSid` — so possession of the verified claim,
    and nothing else, grants access. Everything else (including `secret`, which
-   holds the tenant's Auth Token for webhook signature validation, and the `paid`
-   subscription cache) is server-only. There are no publicly readable/writable
+   holds the tenant's Auth Token for webhook signature validation) is
+   server-only. There are no publicly readable/writable
    nodes.
 
 **Account switching** works because the claim is re-established on every login:

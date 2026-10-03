@@ -113,42 +113,27 @@ describe('authentication', () => {
 });
 
 describe('twilioIncomingCall', () => {
-    it('rings the tenant\'s client while the subscription is active', async () => {
+    const RING = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Client>${SID}</Client></Dial></Response>`;
+
+    it('rings the tenant\'s client during the trial', async () => {
         google.rtdb.set(`/twilio/${SID}/trial/expiresAt`, Date.now() + 60_000);
         const res = await worker.fetch(post('twilioIncomingCall', { AccountSid: SID, From: '+321', To: '+322' }), env());
         expect(res.status).toBe(200);
         expect(res.headers.get('Content-Type')).toBe('text/xml');
-        expect(await res.text()).toBe(`<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Client>${SID}</Client></Dial></Response>`);
+        expect(await res.text()).toBe(RING);
     });
 
-    it('announces unavailability once expired', async () => {
+    it('still rings once the trial has expired (inbound calls are not entitlement-gated)', async () => {
         google.rtdb.set(`/twilio/${SID}/trial/expiresAt`, Date.now() - 1);
-        const res = await worker.fetch(post('twilioIncomingCall', { AccountSid: SID }), env());
-        expect(await res.text()).toContain('<Say>This number is temporarily unavailable.</Say>');
+        expect(await (await worker.fetch(post('twilioIncomingCall', { AccountSid: SID }), env())).text()).toBe(RING);
     });
 
-    // Regression: only the trial expiry used to be checked, silencing paying users once their trial ended.
-    it('rings a paying user whose trial has expired', async () => {
-        google.rtdb.set(`/twilio/${SID}/trial/expiresAt`, Date.now() - 1);
-        google.rtdb.set(`/twilio/${SID}/paid/expiresAt`, Date.now() + 60_000);
-        const res = await worker.fetch(post('twilioIncomingCall', { AccountSid: SID }), env());
-        expect(await res.text()).toContain(`<Dial><Client>${SID}</Client></Dial>`);
+    it('reads no subscription state', async () => {
+        await worker.fetch(post('twilioIncomingCall', { AccountSid: SID }), env());
+        expect(google.state.rtdbReads).toEqual([`/twilio/${SID}/secret/authToken`]);
     });
 
-    it('rings a paid account with no trial record', async () => {
-        google.rtdb.set(`/twilio/${SID}/paid/expiresAt`, Date.now() + 60_000);
-        const res = await worker.fetch(post('twilioIncomingCall', { AccountSid: SID }), env());
-        expect(await res.text()).toContain('<Dial><Client>');
-    });
-
-    it('is unavailable once both trial and paid entitlement have expired', async () => {
-        google.rtdb.set(`/twilio/${SID}/trial/expiresAt`, Date.now() - 1);
-        google.rtdb.set(`/twilio/${SID}/paid/expiresAt`, Date.now() - 1);
-        const res = await worker.fetch(post('twilioIncomingCall', { AccountSid: SID }), env());
-        expect(await res.text()).toContain('temporarily unavailable');
-    });
-
-    it('does not leak the expiry read result when the signature is bad', async () => {
+    it('rejects a bad signature', async () => {
         const res = await worker.fetch(post('twilioIncomingCall', { AccountSid: SID }, { token: 'forged' }), env());
         expect(res.status).toBe(403);
         expect(await res.text()).toBe('Invalid Twilio signature');

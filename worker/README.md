@@ -6,7 +6,7 @@ replacing the Cloud Functions of the same names (design and migration:
 
 | Path | Does |
 |---|---|
-| `/twilioIncomingCall` | TwiML ringing the tenant's app (or "unavailable" once expired) |
+| `/twilioIncomingCall` | TwiML ringing the tenant's app (not entitlement-gated) |
 | `/twilioOutgoingCall` | TwiML dialing `To` with `From` as caller id |
 | `/twilioCallStatusChanges` | logs the status callback, 202 |
 | `/twilioIncomingMessage` | data-only FCM push to the tenant's devices, empty MessagingResponse |

@@ -1,5 +1,5 @@
 import { twiml } from 'twilio';
-import { accountExpiresAt, emptyMessagingTwiml, incomingCallTwiml, outgoingCallTwiml } from './webhooks';
+import { emptyMessagingTwiml, incomingCallTwiml, outgoingCallTwiml } from './webhooks';
 
 /**
  * The shared TwiML builders replace the twilio package's VoiceResponse /
@@ -9,17 +9,10 @@ import { accountExpiresAt, emptyMessagingTwiml, incomingCallTwiml, outgoingCallT
 const NASTY = 'a&b<c>d"e\'f\tg\nh';
 
 describe('shared TwiML builders match the twilio package byte-for-byte', () => {
-    it('incoming call, subscription active', () => {
+    it('incoming call', () => {
         const expected = new twiml.VoiceResponse();
         expected.dial().client('AC1');
-        expect(incomingCallTwiml('AC1', 2000, 1000)).toBe(expected.toString());
-    });
-
-    it('incoming call, expired or no expiry', () => {
-        const expected = new twiml.VoiceResponse();
-        expected.say('This number is temporarily unavailable.');
-        expect(incomingCallTwiml('AC1', 1000, 1000)).toBe(expected.toString());
-        expect(incomingCallTwiml('AC1', null, 1000)).toBe(expected.toString());
+        expect(incomingCallTwiml('AC1')).toBe(expected.toString());
     });
 
     it('outgoing call with caller id', () => {
@@ -52,18 +45,3 @@ describe('shared TwiML builders match the twilio package byte-for-byte', () => {
     });
 });
 
-describe('accountExpiresAt (trial OR paid)', () => {
-    it('takes the later of the two expiries', () => {
-        expect(accountExpiresAt(100, 500)).toBe(500);
-        expect(accountExpiresAt(500, 100)).toBe(500);
-    });
-
-    it('uses whichever one exists', () => {
-        expect(accountExpiresAt(null, 500)).toBe(500);
-        expect(accountExpiresAt(100, null)).toBe(100);
-    });
-
-    it('is null when neither exists', () => {
-        expect(accountExpiresAt(null, null)).toBeNull();
-    });
-});

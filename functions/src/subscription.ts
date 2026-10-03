@@ -8,7 +8,6 @@ import { google } from 'googleapis';
 import { Environment, SignedDataVerifier, VerificationException, VerificationStatus } from '@apple/app-store-server-library';
 import { catchError, from, map, Observable, of, switchMap } from 'rxjs';
 import admin from 'firebase-admin';
-import { dbPaths } from './shared/webhooks';
 
 /**
  * Subscriptions live on TWO independent axes (see SUBSCRIPTION_NOTIFICATIONS.md):
@@ -56,9 +55,9 @@ interface PaidRecord {
     originalTransactionId: string | null; // Apple
     purchaseToken: string | null; // Google
     linkedPurchaseToken: string | null; // Google — previous token this one renewed/replaced
-    // Last Twilio account that presented this entitlement. Store notifications
-    // (which carry no account) use it to keep that account's /twilio/{sid}/paid
-    // cache current, so it is never overwritten with null — see buildPaidRecord.
+    // Last Twilio account that presented this entitlement (informational). A store
+    // notification carries no account, so it never overwrites this with null —
+    // see buildPaidRecord.
     lastAccountSid?: string | null;
     lastVerifiedAt: number;
 }
@@ -233,8 +232,7 @@ function toStatus(state: { expiresAt: number; autoRenew: boolean; productId: str
  * Builds a PaidRecord from re-verified store state plus the store-specific
  * identifiers. With no `accountSid` (a store notification), lastAccountSid is
  * left out rather than set to null: records are written with update(), so this
- * keeps the account that last presented the entitlement — which the
- * notification needs, to refresh that account's paid cache.
+ * keeps the account that last presented the entitlement instead of erasing it.
  */
 function buildPaidRecord(
     accountSid: string | null,
@@ -250,59 +248,6 @@ function buildPaidRecord(
         lastVerifiedAt: Date.now(),
         ...storeFields,
     };
-}
-
-/**
- * Account-level cache of the paid entitlement at /twilio/{accountSid}/paid. The
- * paid record itself is keyed by store identity (it belongs to the person), but
- * the inbound-call webhook only knows the AccountSid and gets no entitlement
- * presented — so without this, a paying user's calls stopped ringing the moment
- * their trial ended. Written only from store-verified state (never from client
- * input). `key` names the store record it mirrors.
- */
-interface AccountPaidCache {
-    expiresAt: number;
-    store: Store;
-    key: string;
-    updatedAt: number;
-}
-
-/**
- * Mirrors verified store state into `accountSid`'s paid cache. The same store
- * record always overwrites (so an expiry or refund can shorten it); a different
- * one only replaces it when it lasts longer, so a lapsed old subscription can
- * never shadow a live newer one on the same account.
- *
- * Best-effort: a failure is logged and swallowed. It must not fail the
- * verification it rides on — twilioAccessToken treats a verification error as
- * "not entitled" and would refuse a paying user a token.
- */
-function recordAccountEntitlement(
-    accountSid: string | null | undefined, entry: { store: Store; key: string; expiresAt: number },
-): Observable<void> {
-    if (!accountSid) return of(undefined);
-    return from(admin.database().ref(dbPaths.paid(accountSid)).transaction((current: AccountPaidCache | null) => {
-        if (current && current.key !== entry.key && current.expiresAt >= entry.expiresAt) return undefined; // keep the longer-lived one
-        return { ...entry, updatedAt: Date.now() };
-    })).pipe(
-        map(() => undefined),
-        catchError((e) => {
-            console.error(`Failed to update the paid cache for ${accountSid}`, e);
-            return of(undefined);
-        }),
-    );
-}
-
-/**
- * The account to mirror a refresh into: the presenting account, or — for a
- * store notification, which has none — the one that last presented this record.
- * Read before the record is written so the refresh can't race it.
- */
-function accountForRecord(accountSid: string | null, recordRef: ReturnType<typeof applePaidRef>): Observable<string | null> {
-    if (accountSid !== null) return of(accountSid);
-    return from(recordRef.once('value')).pipe(
-        map((snapshot) => (snapshot.val() as Partial<PaidRecord> | null)?.lastAccountSid ?? null),
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -493,23 +438,17 @@ function extractAppleSubscriptionState(body: AppleSubscriptionStatusesResponse, 
 function refreshAppleSubscription(
     accountSid: string | null, originalTransactionId: string, productIdHint: string, config: AppleConfig,
 ): Observable<{ expiresAt: number; autoRenew: boolean; productId: string }> {
-    const ref = applePaidRef(originalTransactionId);
     return from(fetchAppleSubscriptionStatuses(originalTransactionId, config)).pipe(
         map((body) => extractAppleSubscriptionState(body, productIdHint)),
-        switchMap((state) => accountForRecord(accountSid, ref).pipe(switchMap((account) => {
+        switchMap((state) => {
             const record = buildPaidRecord(accountSid, state, {
                 store: 'app_store',
                 originalTransactionId,
                 purchaseToken: null,
                 linkedPurchaseToken: null,
             });
-            return from(ref.update(record)).pipe(
-                switchMap(() => recordAccountEntitlement(account, {
-                    store: 'app_store', key: originalTransactionId, expiresAt: state.expiresAt,
-                })),
-                map(() => state),
-            );
-        }))),
+            return from(applePaidRef(originalTransactionId).update(record)).pipe(map(() => state));
+        }),
     );
 }
 
@@ -688,11 +627,7 @@ function refreshGoogleSubscription(
             });
             return acknowledge$.pipe(
                 switchMap(() => resolveGooglePaidKey(purchaseToken, linkedPurchaseToken)),
-                switchMap((key) => accountForRecord(accountSid, googlePaidRef(key)).pipe(
-                    switchMap((account) => writeGooglePaidRecord(key, purchaseToken, record).pipe(
-                        switchMap(() => recordAccountEntitlement(account, { store: 'play_store', key, expiresAt: state.expiresAt })),
-                    )),
-                )),
+                switchMap((key) => writeGooglePaidRecord(key, purchaseToken, record)),
                 map(() => state),
             );
         }),

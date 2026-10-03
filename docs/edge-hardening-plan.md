@@ -388,7 +388,7 @@ Cloud Functions.
 | Endpoint | Logic | Deps in the Worker |
 |---|---|---|
 | `twilioOutgoingCall` | `To`/`From` → TwiML `<Dial callerId>` | 1 RTDB read (token for sig) |
-| `twilioIncomingCall` | read `trial/expiresAt` → TwiML `<Dial><Client>` | 2 RTDB reads |
+| `twilioIncomingCall` | TwiML `<Dial><Client>` (not entitlement-gated) | 1 RTDB read (token for sig) |
 | `twilioCallStatusChanges` | log / record | 1 RTDB read |
 | `twilioIncomingMessage` | read `messaging-tokens` → **data-only FCM fan-out** | 2 RTDB reads + N FCM sends |
 
