@@ -13,6 +13,7 @@ import { FUNCTIONS_BASE_URL, isKnownWebhookUrl, isSignatureFailClosed, webhookPu
 import {
     ACCOUNT_SID,
     DeviceRecord,
+    StoredAuthTokens,
     WEBHOOK_PATHS,
     dbPaths,
     deviceIdentity,
@@ -24,6 +25,7 @@ import {
     incomingMessageTargets,
     outgoingCallTwiml,
     subscriptionsToCheck,
+    webhookSigningTokens,
 } from './shared/webhooks';
 
 // Friendly names used to find/create resources in each tenant's Twilio account.
@@ -70,12 +72,11 @@ export function rememberAuthToken(accountSid: string, authToken: string): Observ
         console.error(`Refusing to persist a missing/empty Twilio Auth Token for account "${accountSid}"`);
         return of(undefined);
     }
-    const ref = admin.database().ref(dbPaths.authToken(accountSid));
-    return from(ref.once('value')).pipe(
+    return from(admin.database().ref(dbPaths.authToken(accountSid)).once('value')).pipe(
         switchMap((snapshot) => snapshot.val() === authToken ?
             of(undefined) :
             from(twilio(accountSid, authToken).api.v2010.accounts(accountSid).fetch()).pipe(
-                switchMap(() => from(ref.set(authToken))),
+                switchMap(() => from(storeVerifiedAuthToken(accountSid, authToken))),
             )),
         map(() => undefined),
         catchError((error) => {
@@ -116,8 +117,9 @@ export async function verifyTwilioCredentials(accountSid: string, authToken: str
     if (typeof accountSid !== 'string' || accountSid === '' || typeof authToken !== 'string' || authToken === '') {
         throw new InvalidTwilioCredentialsError(String(accountSid));
     }
-    const ref = admin.database().ref(dbPaths.authToken(accountSid));
-    const stored = readCachedAuthToken(accountSid) ?? (await ref.once('value')).val() as string | null;
+    // Only the LATEST stored token proves ownership without a round-trip; the
+    // previous one is kept for webhook signatures only and may since be revoked.
+    const stored = (await readStoredAuthTokens(accountSid)).authToken;
     if (stored && tokensEqual(stored, authToken)) return;
     try {
         await twilio(accountSid, authToken).api.v2010.accounts(accountSid).fetch();
@@ -125,8 +127,37 @@ export async function verifyTwilioCredentials(accountSid: string, authToken: str
         if ((error as { status?: number })?.status === 401) throw new InvalidTwilioCredentialsError(accountSid);
         throw error;
     }
-    await ref.set(authToken);
-    authTokenCache.set(accountSid, { authToken, expires: Date.now() + AUTH_TOKEN_CACHE_TTL_MS });
+    await storeVerifiedAuthToken(accountSid, authToken);
+}
+
+/**
+ * Stores a token Twilio just accepted as the tenant's latest Auth Token, keeping
+ * the one it replaces as previousAuthToken. An account has a primary and, during
+ * a rotation, a secondary Auth Token; both authenticate API calls, but Twilio
+ * signs webhooks with the PRIMARY. If the app presents the secondary, storing it
+ * alone would make every webhook fail validation until the secondary is promoted
+ * — keeping both, and accepting a signature under either, avoids that. Done in a
+ * transaction so concurrent callables can't lose a token.
+ */
+async function storeVerifiedAuthToken(accountSid: string, authToken: string): Promise<void> {
+    const result = await admin.database().ref(dbPaths.secret(accountSid)).transaction((current: StoredAuthTokens | null) => {
+        if (current?.authToken === authToken) return current;
+        return { ...(current ?? {}), authToken, previousAuthToken: current?.authToken ?? current?.previousAuthToken ?? null };
+    });
+    const secret = { ...(result?.snapshot?.val() ?? { authToken }) } as StoredAuthTokens;
+    authTokenCache.set(accountSid, { secret, expires: Date.now() + AUTH_TOKEN_CACHE_TTL_MS });
+}
+
+/** The tenant's stored Auth Tokens, from authTokenCache or one RTDB read (only a non-empty result is cached). */
+async function readStoredAuthTokens(accountSid: string): Promise<StoredAuthTokens> {
+    const cached = readCachedAuthTokens(accountSid);
+    if (cached) return cached;
+    // Copied: the cache must not alias whatever object the snapshot handed back.
+    const secret = { ...((await admin.database().ref(dbPaths.secret(accountSid)).once('value')).val() ?? {}) } as StoredAuthTokens;
+    if (webhookSigningTokens(secret).length > 0) {
+        authTokenCache.set(accountSid, { secret, expires: Date.now() + AUTH_TOKEN_CACHE_TTL_MS });
+    }
+    return secret;
 }
 
 /**
@@ -143,16 +174,16 @@ export async function verifyTwilioCredentials(accountSid: string, authToken: str
  * genuine webhooks (403), so keep it short.
  */
 const AUTH_TOKEN_CACHE_TTL_MS = 5 * 60 * 1000;
-const authTokenCache = new Map<string, { authToken: string; expires: number }>();
+const authTokenCache = new Map<string, { secret: StoredAuthTokens; expires: number }>();
 
-function readCachedAuthToken(accountSid: string): string | null {
+function readCachedAuthTokens(accountSid: string): StoredAuthTokens | null {
     const entry = authTokenCache.get(accountSid);
     if (!entry) return null;
     if (entry.expires <= Date.now()) {
         authTokenCache.delete(accountSid);
         return null;
     }
-    return entry.authToken;
+    return entry.secret;
 }
 
 /** Test-only: drop every cached Auth Token so one case's read can't leak into the next. */
@@ -192,6 +223,10 @@ export function resetAuthTokenCacheForTests(): void {
  * rejected outright, before the SID touches an RTDB path: a genuine Twilio webhook
  * always carries one, and a crafted one (e.g. containing '.') would otherwise make
  * the lookup throw — turning the read-error allowance above into a bypass.
+ *
+ * A signature valid under EITHER stored token (latest or previous, see
+ * storeVerifiedAuthToken) is accepted: Twilio signs with the account's primary
+ * token while the app may have presented the secondary during a rotation.
  */
 export async function isValidTwilioSignature(request: Request, webhookPath: string): Promise<boolean> {
     const accountSid = request.body?.AccountSid;
@@ -200,25 +235,22 @@ export async function isValidTwilioSignature(request: Request, webhookPath: stri
     if (typeof accountSid !== 'string' || !ACCOUNT_SID.test(accountSid)) {
         return false;
     }
-    let authToken = readCachedAuthToken(accountSid);
-    if (authToken === null) {
-        try {
-            const snapshot = await admin.database().ref(dbPaths.authToken(accountSid)).once('value');
-            authToken = snapshot.val() as string | null;
-        } catch (error) {
-            console.error(`Allowing Twilio webhook for ${accountSid}: Auth Token read failed (signature not checked)`, error);
-            return true;
-        }
-        if (!authToken) {
-            return allowTokenlessWebhook(accountSid, webhookPath);
-        }
-        authTokenCache.set(accountSid, { authToken, expires: Date.now() + AUTH_TOKEN_CACHE_TTL_MS });
+    let tokens: string[];
+    try {
+        tokens = webhookSigningTokens(await readStoredAuthTokens(accountSid));
+    } catch (error) {
+        console.error(`Allowing Twilio webhook for ${accountSid}: Auth Token read failed (signature not checked)`, error);
+        return true;
+    }
+    if (tokens.length === 0) {
+        return allowTokenlessWebhook(accountSid, webhookPath);
     }
     const signature = request.header('X-Twilio-Signature');
     if (typeof signature !== 'string') {
         return false;
     }
-    return validateRequest(authToken, signature, `${FUNCTIONS_BASE_URL}/${webhookPath}`, request.body ?? {});
+    const url = `${FUNCTIONS_BASE_URL}/${webhookPath}`;
+    return tokens.some((token) => validateRequest(token, signature, url, request.body ?? {}));
 }
 
 /**

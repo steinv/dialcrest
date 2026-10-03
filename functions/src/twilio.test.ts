@@ -694,3 +694,47 @@ describe('isValidTwilioSignature — AccountSid format', () => {
             expect(await isValidTwilioSignature(fakeRequest({ body }), WEBHOOK_PATH)).toBe(false);
         });
 });
+
+describe('primary + secondary Auth Token (keep both, accept either)', () => {
+    const PRIMARY = 'primary-token';
+    const SECONDARY = 'secondary-token';
+
+    async function rotateToSecondary() {
+        await seedAuthToken(SID, PRIMARY);
+        twilioFactory().mockReturnValue(fakeTwilioClient()); // Twilio accepts the secondary
+        await verifyTwilioCredentials(SID, SECONDARY);
+    }
+
+    function signedWith(token: string) {
+        return fakeRequest({ signature: twilioSignature(token, WEBHOOK_URL, PARAMS), body: PARAMS });
+    }
+
+    it('storing the secondary keeps the primary as previousAuthToken', async () => {
+        await rotateToSecondary();
+        expect(dbTree().twilio[SID].secret).toEqual({ authToken: SECONDARY, previousAuthToken: PRIMARY });
+    });
+
+    it('webhooks signed with the primary still validate after the app presented the secondary', async () => {
+        await rotateToSecondary();
+        resetAuthTokenCacheForTests();
+        expect(await isValidTwilioSignature(signedWith(PRIMARY), WEBHOOK_PATH)).toBe(true);
+        expect(await isValidTwilioSignature(signedWith(SECONDARY), WEBHOOK_PATH)).toBe(true);
+        expect(await isValidTwilioSignature(signedWith('some-other-token'), WEBHOOK_PATH)).toBe(false);
+    });
+
+    it('the previous token does not prove ownership without asking Twilio (it may be revoked)', async () => {
+        await rotateToSecondary();
+        const client = fakeTwilioClient();
+        client.accountFetch.mockRejectedValue(Object.assign(new Error('Authenticate'), { status: 401 }));
+        twilioFactory().mockReturnValue(client);
+        await expect(verifyTwilioCredentials(SID, PRIMARY)).rejects.toBeInstanceOf(InvalidTwilioCredentialsError);
+        expect(client.accountFetch).toHaveBeenCalled();
+    });
+
+    it('rememberAuthToken (twilioRegister) keeps the previous token the same way', async () => {
+        await seedAuthToken(SID, PRIMARY);
+        twilioFactory().mockReturnValue(fakeTwilioClient());
+        await lastValueFrom(rememberAuthToken(SID, SECONDARY));
+        expect(dbTree().twilio[SID].secret).toEqual({ authToken: SECONDARY, previousAuthToken: PRIMARY });
+    });
+});

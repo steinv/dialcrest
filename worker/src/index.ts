@@ -1,6 +1,7 @@
 import {
     ACCOUNT_SID,
     DeviceRecord,
+    StoredAuthTokens,
     WEBHOOK_PATHS,
     dbPaths,
     emptyMessagingTwiml,
@@ -11,6 +12,7 @@ import {
     incomingMessageTargets,
     outgoingCallTwiml,
     subscriptionsToCheck,
+    webhookSigningTokens,
 } from '../../functions/src/shared/webhooks';
 import { FirebaseConfig, rtdbDelete, rtdbGet, sendDataMessage } from './firebase';
 import { isTransient, parseServiceAccount } from './google';
@@ -41,7 +43,7 @@ const ROUTES = new Set<string>(Object.values(WEBHOOK_PATHS));
  * and the TTL bounds how long a rotated token keeps being used.
  */
 const AUTH_TOKEN_CACHE_TTL_MS = 5 * 60 * 1000;
-const authTokenCache = new Map<string, { authToken: string; expires: number }>();
+const authTokenCache = new Map<string, { tokens: string[]; expires: number }>();
 
 /** Test-only: drop every cached Auth Token. */
 export function resetAuthTokenCacheForTests(): void {
@@ -78,24 +80,29 @@ function text(status: number, body: string): Response {
  */
 async function authenticate(env: Env, firebase: FirebaseConfig, route: Route, accountSid: string, request: Request, params: URLSearchParams) {
     const cached = authTokenCache.get(accountSid);
-    let authToken = cached && cached.expires > Date.now() ? cached.authToken : null;
-    if (authToken === null) {
+    let tokens = cached && cached.expires > Date.now() ? cached.tokens : null;
+    if (tokens === null) {
         try {
-            authToken = await rtdbGet<string>(firebase, dbPaths.authToken(accountSid));
+            tokens = webhookSigningTokens(await rtdbGet<StoredAuthTokens>(firebase, dbPaths.secret(accountSid)));
         } catch (error) {
             if (!isTransient(error)) throw error;
             console.error({ event: 'twilio_webhook_token_read_failed', accountSid, path: route, error: String(error) });
             return true;
         }
-        if (!authToken) {
+        if (tokens.length === 0) {
             return allowTokenless(env, firebase, route, accountSid);
         }
-        authTokenCache.set(accountSid, { authToken, expires: Date.now() + AUTH_TOKEN_CACHE_TTL_MS });
+        authTokenCache.set(accountSid, { tokens, expires: Date.now() + AUTH_TOKEN_CACHE_TTL_MS });
     }
     const signature = request.headers.get('X-Twilio-Signature');
     if (!signature) return false;
     const url = `${env.PUBLIC_BASE_URL.replace(/\/+$/, '')}/${route}`;
-    return isValidTwilioSignature(authToken, signature, url, params);
+    // Either stored token: Twilio signs with the primary while the app may have
+    // presented (and the backend stored) the secondary during a rotation.
+    for (const token of tokens) {
+        if (await isValidTwilioSignature(token, signature, url, params)) return true;
+    }
+    return false;
 }
 
 async function allowTokenless(env: Env, firebase: FirebaseConfig, route: Route, accountSid: string): Promise<boolean> {

@@ -52,6 +52,13 @@ export const DEVICE_UID = /^[A-Za-z0-9]{1,128}$/;
 /** RTDB paths the webhooks read/write, relative to the database root. */
 export const dbPaths = {
     authToken: (accountSid: string) => `/twilio/${accountSid}/secret/authToken`,
+    /**
+     * The tenant's stored Auth Tokens ({ authToken, previousAuthToken? }): the latest
+     * verified one, plus the one it replaced — Twilio signs webhooks with the
+     * account's PRIMARY token while the app may be presenting the secondary during
+     * a rotation, so webhooks accept a signature under either (StoredAuthTokens).
+     */
+    secret: (accountSid: string) => `/twilio/${accountSid}/secret`,
     createdAt: (accountSid: string) => `/twilio/${accountSid}/createdAt`,
     trialExpiresAt: (accountSid: string) => `/twilio/${accountSid}/trial/expiresAt`,
     /** Per-device registry (DeviceRecord), keyed by the device's Firebase uid. Server-only. */
@@ -64,6 +71,17 @@ export const dbPaths = {
     messagingTokens: (accountSid: string) => `/twilio/${accountSid}/messaging-tokens`,
     messagingToken: (accountSid: string, fcmToken: string) => `/twilio/${accountSid}/messaging-tokens/${fcmToken}`,
 };
+
+/** The /twilio/{sid}/secret node. */
+export interface StoredAuthTokens {
+    authToken?: string | null;
+    previousAuthToken?: string | null;
+}
+
+/** The distinct, non-empty Auth Tokens a webhook signature may validate against (latest first). */
+export function webhookSigningTokens(secret: StoredAuthTokens | null): string[] {
+    return [...new Set([secret?.authToken, secret?.previousAuthToken].filter((t): t is string => typeof t === 'string' && t !== ''))];
+}
 
 // ---------------------------------------------------------------------------
 // Per-device entitlement — who an inbound call rings / an inbound SMS notifies

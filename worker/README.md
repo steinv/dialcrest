@@ -12,9 +12,12 @@ replacing the Cloud Functions of the same names (design and migration:
 | `/twilioIncomingMessage` | data-only FCM push to the line's entitled devices, empty MessagingResponse |
 
 Every request is authenticated with `X-Twilio-Signature` against the tenant's
-Auth Token from RTDB (`/twilio/<sid>/secret/authToken`, written by the
-callables), validated against `PUBLIC_BASE_URL/<path>` — never the request's
-Host. Same fail-closed policy as the functions (`TWILIO_SIGNATURE_FAIL_CLOSED`).
+Auth Tokens from RTDB (`/twilio/<sid>/secret`: the latest verified token and the
+one it replaced, written by the callables — a signature under either is
+accepted, since Twilio signs with the primary while the app may present the
+secondary during a rotation), validated against `PUBLIC_BASE_URL/<path>` — never
+the request's Host. The AccountSid must be well-formed (`AC` + 32 hex) before it
+is used in any RTDB path. Same fail-closed policy as the functions (`TWILIO_SIGNATURE_FAIL_CLOSED`).
 
 TwiML, RTDB paths and the push payload come from
 [`functions/src/shared/webhooks.ts`](../functions/src/shared/webhooks.ts), which

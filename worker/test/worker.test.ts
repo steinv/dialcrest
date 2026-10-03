@@ -37,7 +37,7 @@ let google: ReturnType<typeof installFakeGoogle>;
 
 beforeEach(() => {
     google = installFakeGoogle();
-    google.rtdb.set(`/twilio/${SID}/secret/authToken`, TOKEN);
+    google.rtdb.set(`/twilio/${SID}/secret`, { authToken: TOKEN });
     resetAuthTokenCacheForTests();
     resetGoogleTokenCacheForTests();
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -80,14 +80,21 @@ describe('authentication', () => {
         expect((await worker.fetch(post('twilioOutgoingCall', { AccountSid: SID, To: '+1' }, { signedUrl }), env())).status).toBe(403);
     });
 
+    it('accepts a signature under the previous Auth Token (rotation)', async () => {
+        google.rtdb.set(`/twilio/${SID}/secret`, { authToken: 'rotated', previousAuthToken: TOKEN });
+        expect((await worker.fetch(post('twilioOutgoingCall', { AccountSid: SID, To: '+1' }), env())).status).toBe(200);
+        expect((await worker.fetch(post('twilioOutgoingCall', { AccountSid: SID, To: '+1' }, { token: 'rotated' }), env())).status).toBe(200);
+        expect((await worker.fetch(post('twilioOutgoingCall', { AccountSid: SID, To: '+1' }, { token: 'forged' }), env())).status).toBe(403);
+    });
+
     it('allows a tokenless tenant while fail-closed is off', async () => {
-        google.rtdb.delete(`/twilio/${SID}/secret/authToken`);
+        google.rtdb.delete(`/twilio/${SID}/secret`);
         expect((await worker.fetch(post('twilioOutgoingCall', { AccountSid: SID, To: '+1' }, { token: null }), env())).status).toBe(200);
         expect(console.warn).toHaveBeenCalledWith(expect.objectContaining({ event: 'twilio_webhook_tokenless', knownTenant: false, outcome: 'allowed' }));
     });
 
     it('rejects a tokenless tenant when TWILIO_SIGNATURE_FAIL_CLOSED is "true"', async () => {
-        google.rtdb.delete(`/twilio/${SID}/secret/authToken`);
+        google.rtdb.delete(`/twilio/${SID}/secret`);
         google.rtdb.set(`/twilio/${SID}/createdAt`, 1);
         const res = await worker.fetch(post('twilioOutgoingCall', { AccountSid: SID, To: '+1' }), env({ TWILIO_SIGNATURE_FAIL_CLOSED: 'true' }));
         expect(res.status).toBe(403);
@@ -107,7 +114,7 @@ describe('authentication', () => {
     it('caches the Auth Token and the Google access token across requests', async () => {
         await worker.fetch(post('twilioOutgoingCall', { AccountSid: SID, To: '+1' }), env());
         await worker.fetch(post('twilioCallStatusChanges', { AccountSid: SID, CallStatus: 'ringing' }), env());
-        expect(google.state.rtdbReads.filter((p) => p.endsWith('/secret/authToken'))).toHaveLength(1);
+        expect(google.state.rtdbReads.filter((p) => p.endsWith('/secret'))).toHaveLength(1);
         expect(google.state.tokenRequests).toBe(1);
     });
 });
