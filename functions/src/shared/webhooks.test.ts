@@ -72,31 +72,36 @@ describe('per-device entitlement rules', () => {
         stale: { subscription: PAID, fcmToken: 'fcmStale', lastSeen: NOW - DEVICE_STALE_MS - 1 },
     };
 
-    it('needs no subscription reads while the trial is live', () => {
+    it('needs no subscription reads while the license override is live', () => {
         expect(subscriptionsToCheck(devices, NOW + 1, NOW)).toEqual([]);
     });
 
-    it('reads each distinct subscription of fresh devices once the trial is over', () => {
+    it('reads each distinct subscription of fresh devices once the override is over', () => {
         expect(subscriptionsToCheck(devices, NOW - 1, NOW)).toEqual([PAID]);
     });
 
-    it('entitles every fresh device during the trial, most recent first', () => {
+    it('entitles every fresh device while the override is live, most recent first', () => {
         expect(entitledDevices(devices, NOW + 1, {}, NOW).map((d) => d.uid)).toEqual(['free', 'paying']);
     });
 
-    it('entitles only devices with a live subscription after the trial', () => {
+    it('entitles only devices with a live subscription without an override', () => {
         expect(entitledDevices(devices, NOW - 1, { [PAID]: NOW + 1 }, NOW).map((d) => d.uid)).toEqual(['paying']);
         expect(entitledDevices(devices, NOW - 1, { [PAID]: NOW - 1 }, NOW)).toEqual([]);
         expect(entitledDevices(devices, null, { [PAID]: NOW + 1 }, NOW).map((d) => d.uid)).toEqual(['paying']);
     });
 
-    it('rings the legacy identity only during the trial', () => {
+    it('treats a non-number override as none (it is hand-edited in the console)', () => {
+        expect(subscriptionsToCheck(devices, true as unknown as number, NOW)).toEqual([PAID]);
+        expect(entitledDevices(devices, String(NOW + 1) as unknown as number, {}, NOW)).toEqual([]);
+    });
+
+    it('rings the legacy identity only while the override is live', () => {
         const entitled = [{ uid: 'paying' }];
         expect(incomingCallIdentities('AC1', entitled, NOW + 1, NOW)).toEqual(['AC1', 'AC1_paying']);
         expect(incomingCallIdentities('AC1', entitled, NOW - 1, NOW)).toEqual(['AC1_paying']);
     });
 
-    it('pushes SMS to entitled devices, and to legacy tokens only during the trial', () => {
+    it('pushes SMS to entitled devices, and to legacy tokens only while the override is live', () => {
         const entitled = entitledDevices(devices, NOW - 1, { [PAID]: NOW + 1 }, NOW);
         expect(incomingMessageTargets('AC1', entitled, { fcmOld: true }, NOW - 1, NOW).map((t) => t.fcmToken)).toEqual(['fcmPay']);
         expect(incomingMessageTargets('AC1', entitled, { fcmOld: true }, NOW + 1, NOW).map((t) => t.fcmToken)).toEqual(['fcmPay', 'fcmOld']);

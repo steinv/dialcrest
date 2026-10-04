@@ -34,7 +34,10 @@ export const testAppleConfig: AppleConfig = {
 
 /** Builds the `GET /inApps/v1/subscriptions/{id}` response body Apple's server API returns. */
 export function appleSubscriptionStatusesResponse(
-    transactions: Array<{ transactionId: string; originalTransactionId: string; productId: string; expiresDate: number; autoRenewStatus: 0 | 1 }>,
+    transactions: Array<{
+        transactionId: string; originalTransactionId: string; productId: string; expiresDate: number; autoRenewStatus: 0 | 1;
+        offerType?: number; offerDiscountType?: string; revocationDate?: number; gracePeriodExpiresDate?: number;
+    }>,
 ) {
     return {
         data: [
@@ -45,8 +48,14 @@ export function appleSubscriptionStatusesResponse(
                         originalTransactionId: tx.originalTransactionId,
                         productId: tx.productId,
                         expiresDate: tx.expiresDate,
+                        offerType: tx.offerType,
+                        offerDiscountType: tx.offerDiscountType,
+                        revocationDate: tx.revocationDate,
                     }),
-                    signedRenewalInfo: signedPayload({ autoRenewStatus: tx.autoRenewStatus }),
+                    signedRenewalInfo: signedPayload({
+                        autoRenewStatus: tx.autoRenewStatus,
+                        gracePeriodExpiresDate: tx.gracePeriodExpiresDate,
+                    }),
                 })),
             },
         ],

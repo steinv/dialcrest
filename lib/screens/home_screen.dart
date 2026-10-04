@@ -224,7 +224,8 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// Shows the first-run onboarding wizard once per account on this device, for
   /// a brand-new user who hasn't finished (or skipped) it yet. Pushed after the
   /// first frame — HomeScreen builds behind it, so it's ready the moment the
-  /// wizard is finished/skipped. Reuses the existing [_twilioService] instance.
+  /// wizard is finished/skipped. Reuses the existing [_twilioService] and
+  /// [_subscriptionService] instances.
   void _maybeShowOnboarding(StorageService storageService) {
     final accountSid = storageService.accountSid;
     if (accountSid == null) return;
@@ -234,7 +235,10 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       Navigator.of(context).push(
         MaterialPageRoute(
           fullscreenDialog: true,
-          builder: (_) => OnboardingScreen(twilioService: _twilioService),
+          builder: (_) => OnboardingScreen(
+            twilioService: _twilioService,
+            subscriptionService: _subscriptionService,
+          ),
         ),
       );
     });

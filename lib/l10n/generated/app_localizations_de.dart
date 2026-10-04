@@ -331,11 +331,24 @@ class AppLocalizationsDe extends AppLocalizations {
   String get licensePlanYearly => 'Dialcrest-Lizenz — Jährliches Abonnement';
 
   @override
-  String get purchasingUnavailable =>
-      'Käufe sind auf dieser Plattform nicht verfügbar.';
+  String get licenseNone => 'Noch keine Lizenz';
 
   @override
-  String get trialExpired => 'Testphase abgelaufen';
+  String get licenseFreeTrialOffer =>
+      'Neue Abonnenten erhalten die ersten 30 Tage gratis. Wenn Sie vor Ende der Testphase kündigen, wird nichts berechnet.';
+
+  @override
+  String get licenseFreeTrialTitle => '30 Tage kostenlos testen';
+
+  @override
+  String licenseFreeTrialPrices(String monthly, String yearly) {
+    return 'Nach der kostenlosen Testphase zahlen Sie je nach gewähltem Abo $monthly pro Monat oder $yearly pro Jahr. Wenn Sie vor Ende der Testphase kündigen, wird nichts berechnet.';
+  }
+
+  @override
+  String licenseOverrideUntil(Object date) {
+    return 'Von Dialcrest bereitgestellte Lizenz bis $date';
+  }
 
   @override
   String get subscriptionExpired => 'Abonnement abgelaufen';
@@ -348,7 +361,7 @@ class AppLocalizationsDe extends AppLocalizations {
       other: 'Tage',
       one: 'Tag',
     );
-    return 'Testphase — noch $days $_temp0';
+    return 'Kostenlose Testphase — noch $days $_temp0';
   }
 
   @override
@@ -576,6 +589,41 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get onboardingDoneIncompleteHint =>
       'Gehen Sie zurück, um dies jetzt einzurichten, oder erledigen Sie es später in den Einstellungen.';
+
+  @override
+  String get onboardingLicenseTitle => 'Ihre Lizenz';
+
+  @override
+  String get onboardingLicenseBody =>
+      'Mit einer Lizenz können Sie auf diesem Gerät Anrufe tätigen und empfangen und werden über neue Nachrichten benachrichtigt.';
+
+  @override
+  String get onboardingLicenseActive =>
+      'Dieses Gerät hat bereits eine aktive Lizenz. Alles ist bereit.';
+
+  @override
+  String get onboardingLicenseSkipTitle =>
+      'Wenn Sie diesen Schritt überspringen';
+
+  @override
+  String get onboardingLicenseCanText =>
+      'Können Sie Nachrichten senden und lesen';
+
+  @override
+  String get onboardingLicenseCanHistory =>
+      'Können Sie Ihre Anrufliste ansehen';
+
+  @override
+  String get onboardingLicenseCannotCall =>
+      'Können Sie keine Anrufe tätigen oder empfangen';
+
+  @override
+  String get onboardingLicenseCannotNotify =>
+      'Werden Sie nicht über neue Nachrichten benachrichtigt';
+
+  @override
+  String get onboardingLicenseSkipHint =>
+      'Sie können die kostenlose Testphase später starten oder eine Lizenz in den Einstellungen erwerben.';
 
   @override
   String get chooseChannelTitle => 'Senden mit';

@@ -320,15 +320,15 @@ describe('getIncomingAppSid', () => {
 
 const DAY = 24 * 60 * 60 * 1000;
 
-/** Seeds the per-device registry and (optionally) the line's trial and subscription records. */
+/** Seeds the per-device registry and (optionally) the line's license override and subscription records. */
 async function seedLine(opts: {
-    trialExpiresAt?: number;
+    licenseOverride?: number;
     devices?: Record<string, { subscription?: string | null; fcmToken?: string; lastSeen?: number }>;
     subscriptions?: Record<string, number>; // record path → expiresAt
     legacyTokens?: string[];
 }) {
     const db = admin.database();
-    if (opts.trialExpiresAt !== undefined) await db.ref(`/twilio/${SID}/trial/expiresAt`).set(opts.trialExpiresAt);
+    if (opts.licenseOverride !== undefined) await db.ref(`/twilio/${SID}/licenseOverride`).set(opts.licenseOverride);
     for (const [uid, record] of Object.entries(opts.devices ?? {})) {
         await db.ref(`/twilio/${SID}/devices/${uid}`).set({ lastSeen: Date.now(), ...record });
     }
@@ -354,7 +354,7 @@ function signedWebhook(path: string, body: Record<string, string>) {
 
 /**
  * Inbound calls ring only the devices whose OWN user is entitled — the line's
- * trial, or the device's subscription pointer — each under its own identity, so
+ * license override, or the device's subscription pointer — each under its own identity, so
  * an unsubscribed co-user isn't rung while subscribed users on the line are.
  */
 describe('callbackIncomingCall rings entitled devices only', () => {
@@ -365,17 +365,17 @@ describe('callbackIncomingCall rings entitled devices only', () => {
         return sent.body;
     }
 
-    it('during the trial rings every device, plus the legacy shared identity for not-yet-updated apps', async () => {
-        await seedLine({ trialExpiresAt: Date.now() + DAY, devices: { devA: {}, devB: {} } });
+    it('while the license override is live rings every device, plus the legacy shared identity for not-yet-updated apps', async () => {
+        await seedLine({ licenseOverride: Date.now() + DAY, devices: { devA: {}, devB: {} } });
         const twiml = await incomingCall();
         expect(twiml).toContain(`<Client>${SID}</Client>`);
         expect(twiml).toContain(`<Client>${SID}_devA</Client>`);
         expect(twiml).toContain(`<Client>${SID}_devB</Client>`);
     });
 
-    it('after the trial rings the subscribed user but not the unsubscribed co-user on the same line', async () => {
+    it('without an override rings the subscribed user but not the unsubscribed co-user on the same line', async () => {
         await seedLine({
-            trialExpiresAt: Date.now() - DAY,
+            licenseOverride: Date.now() - DAY,
             devices: { paying: { subscription: 'subscriptions/apple/orig1' }, freeloader: {} },
             subscriptions: { 'subscriptions/apple/orig1': Date.now() + DAY },
         });
@@ -385,27 +385,27 @@ describe('callbackIncomingCall rings entitled devices only', () => {
 
     it('stops ringing a device whose subscription record has expired (renewals/refunds apply without check-in)', async () => {
         await seedLine({
-            trialExpiresAt: Date.now() - DAY,
+            licenseOverride: Date.now() - DAY,
             devices: { lapsed: { subscription: 'subscriptions/google/tokA' } },
             subscriptions: { 'subscriptions/google/tokA': Date.now() - 1 },
         });
         expect(await incomingCall()).toContain('This number is temporarily unavailable.');
     });
 
-    it('never rings the legacy shared identity after the trial (it cannot be gated per person)', async () => {
-        await seedLine({ trialExpiresAt: Date.now() - DAY });
+    it('never rings the legacy shared identity without an override (it cannot be gated per person)', async () => {
+        await seedLine({ licenseOverride: Date.now() - DAY });
         expect(await incomingCall()).toContain('This number is temporarily unavailable.');
     });
 
     it('ignores devices not seen for over a year', async () => {
-        await seedLine({ trialExpiresAt: Date.now() + DAY, devices: { gone: { lastSeen: Date.now() - 400 * DAY } } });
+        await seedLine({ licenseOverride: Date.now() + DAY, devices: { gone: { lastSeen: Date.now() - 400 * DAY } } });
         expect(await incomingCall()).not.toContain(`${SID}_gone`);
     });
 
     it('rings at most 10 clients, most recently seen first', async () => {
         const devices: Record<string, { lastSeen: number }> = {};
         for (let i = 0; i < 12; i++) devices[`dev${i}`] = { lastSeen: Date.now() - i * 1000 };
-        await seedLine({ trialExpiresAt: Date.now() + DAY, devices });
+        await seedLine({ licenseOverride: Date.now() + DAY, devices });
         const twiml = await incomingCall();
         expect((twiml.match(/<Client>/g) ?? []).length).toBe(10);
         expect(twiml).toContain(`<Client>${SID}_dev0</Client>`);
@@ -440,14 +440,14 @@ describe('callbackIncomingMessage notifies entitled devices only', () => {
         return { sent, tokens: sendMock.mock.calls.map(([message]) => message.token).sort() };
     }
 
-    it('during the trial pushes to every device and to legacy registrations', async () => {
-        await seedLine({ trialExpiresAt: Date.now() + DAY, devices: { devA: { fcmToken: 'fcmA' } }, legacyTokens: ['fcmOld'] });
+    it('while the license override is live pushes to every device and to legacy registrations', async () => {
+        await seedLine({ licenseOverride: Date.now() + DAY, devices: { devA: { fcmToken: 'fcmA' } }, legacyTokens: ['fcmOld'] });
         expect((await incomingSms()).tokens).toEqual(['fcmA', 'fcmOld']);
     });
 
-    it('after the trial pushes to the subscribed user only — not the co-user, not legacy registrations', async () => {
+    it('without an override pushes to the subscribed user only — not the co-user, not legacy registrations', async () => {
         await seedLine({
-            trialExpiresAt: Date.now() - DAY,
+            licenseOverride: Date.now() - DAY,
             devices: { paying: { subscription: 'subscriptions/apple/orig1', fcmToken: 'fcmPay' }, freeloader: { fcmToken: 'fcmFree' } },
             subscriptions: { 'subscriptions/apple/orig1': Date.now() + DAY },
             legacyTokens: ['fcmOld'],
@@ -458,12 +458,12 @@ describe('callbackIncomingMessage notifies entitled devices only', () => {
     });
 
     it('pushes a token registered under two device records only once', async () => {
-        await seedLine({ trialExpiresAt: Date.now() + DAY, devices: { oldUid: { fcmToken: 'same' }, newUid: { fcmToken: 'same' } } });
+        await seedLine({ licenseOverride: Date.now() + DAY, devices: { oldUid: { fcmToken: 'same' }, newUid: { fcmToken: 'same' } } });
         expect((await incomingSms()).tokens).toEqual(['same']);
     });
 
     it('deletes the record of a device whose token FCM reports as unregistered (its install is gone)', async () => {
-        await seedLine({ trialExpiresAt: Date.now() + DAY, devices: { devA: { fcmToken: 'dead' }, devB: { fcmToken: 'live' } } });
+        await seedLine({ licenseOverride: Date.now() + DAY, devices: { devA: { fcmToken: 'dead' }, devB: { fcmToken: 'live' } } });
         sendMock.mockImplementation(({ token }: { token: string }) => token === 'dead' ?
             Promise.reject({ code: 'messaging/registration-token-not-registered' }) : Promise.resolve('ok'));
         await incomingSms();
@@ -487,7 +487,7 @@ describe('device registry writes', () => {
 
     it('a stale record\'s subscription no longer notifies the install once a new uid registers it (end to end)', async () => {
         const db = admin.database();
-        await db.ref(`/twilio/${SID}/trial/expiresAt`).set(Date.now() - DAY);
+        await db.ref(`/twilio/${SID}/licenseOverride`).set(Date.now() - DAY);
         await db.ref('/subscriptions/apple/orig1').set({ expiresAt: Date.now() + DAY });
         await db.ref(`/twilio/${SID}/devices/oldUid`).set({ fcmToken: 'fcmA', subscription: 'subscriptions/apple/orig1', lastSeen: Date.now() });
         await lastValueFrom(registerMessagingDevice(SID, 'newUid', 'fcmA')); // a different, unsubscribed person on this install

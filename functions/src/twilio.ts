@@ -667,29 +667,29 @@ function checkInDevice(accountSid: string, uid: string, fields: Partial<DeviceRe
 
 /**
  * Reads what both inbound webhooks need to decide who is entitled: the device
- * registry and the line's trial expiry, then the expiry of each subscription
- * record a device points at (only when the trial is over). All reads parallel.
+ * registry and the line's license override, then the expiry of each subscription
+ * record a device points at (only when the override isn't live). All reads parallel.
  */
 async function readEntitledDevices(accountSid: string, now: number) {
     const db = admin.database();
-    const [devices, trialExpiresAt] = await Promise.all([
+    const [devices, licenseOverride] = await Promise.all([
         db.ref(dbPaths.devices(accountSid)).once('value').then((s) => s.val() as Record<string, DeviceRecord> | null),
-        db.ref(dbPaths.trialExpiresAt(accountSid)).once('value').then((s) => s.val() as number | null),
+        db.ref(dbPaths.licenseOverride(accountSid)).once('value').then((s) => s.val() as number | null),
     ]);
-    const paths = subscriptionsToCheck(devices, trialExpiresAt, now);
+    const paths = subscriptionsToCheck(devices, licenseOverride, now);
     const expiries = await Promise.all(paths.map((path) =>
         db.ref(dbPaths.subscriptionExpiresAt(path)).once('value').then((s) => s.val() as number | null)));
     const subscriptionExpiries = Object.fromEntries(paths.map((path, i) => [path, expiries[i]]));
-    return { trialExpiresAt, entitled: entitledDevices(devices, trialExpiresAt, subscriptionExpiries, now) };
+    return { licenseOverride, entitled: entitledDevices(devices, licenseOverride, subscriptionExpiries, now) };
 }
 
 /**
  * TwiML for an inbound PSTN call: ring the devices of this line whose OWN user
- * is entitled — the line's trial is live, or the device's subscription pointer
+ * is entitled — the line's license override is live, or the device's subscription pointer
  * (DeviceRecord.subscription) names a store record that hasn't expired. Each
  * device registers under its own identity (deviceIdentity), so subscribed users
  * keep ringing while an unsubscribed co-user on the same Twilio account doesn't.
- * While the trial is live the legacy shared identity rings too, for apps that
+ * While the override is live the legacy shared identity rings too, for apps that
  * haven't updated yet. See shared/webhooks.ts incomingCallIdentities.
  * <Response><Dial><Client>{AccountSid}_{uid}</Client>…</Dial></Response>
  * @param request http request that initiated this function
@@ -699,10 +699,10 @@ export async function callbackIncomingCall(request: Request, response: express.R
     if (!await twilioSignatureGuard(request, response, INCOMING_CALL_PATH)) return;
     const accountSid: string = request.body.AccountSid;
     const now = Date.now();
-    const { trialExpiresAt, entitled } = await readEntitledDevices(accountSid, now);
+    const { licenseOverride, entitled } = await readEntitledDevices(accountSid, now);
     response.type('text/xml')
         .status(200)
-        .send(incomingCallTwiml(incomingCallIdentities(accountSid, entitled, trialExpiresAt, now)));
+        .send(incomingCallTwiml(incomingCallIdentities(accountSid, entitled, licenseOverride, now)));
 }
 
 /**
@@ -736,7 +736,7 @@ export async function callbackCallStatusChanges(request: Request, response: expr
  * TwiML webhook for an inbound SMS/MMS (configured as the number's smsUrl by
  * configureNumber). Pushes a silent/data-only FCM message to every device of
  * this tenant whose own user is entitled (registerMessagingDevice +
- * entitledDevices; legacy messaging-tokens only while the trial is live) — so an
+ * entitledDevices; legacy messaging-tokens only while the license override is live) — so an
  * unsubscribed co-user stops getting notifications while subscribed users on the
  * same Twilio account keep them — and the client shows an
  * in-app banner (foreground) or an OS notification (background/terminated) —
@@ -757,11 +757,11 @@ export async function callbackIncomingMessage(request: Request, response: expres
     const messageSid = request.body.MessageSid ?? '';
 
     const now = Date.now();
-    const [{ trialExpiresAt, entitled }, legacyTokens] = await Promise.all([
+    const [{ licenseOverride, entitled }, legacyTokens] = await Promise.all([
         readEntitledDevices(accountSid, now),
         admin.database().ref(dbPaths.messagingTokens(accountSid)).once('value').then((s) => s.val() as Record<string, unknown> | null),
     ]);
-    const targets = incomingMessageTargets(accountSid, entitled, legacyTokens, trialExpiresAt, now);
+    const targets = incomingMessageTargets(accountSid, entitled, legacyTokens, licenseOverride, now);
 
     if (targets.length > 0) {
         const results = await Promise.allSettled(targets.map(({ fcmToken }) => admin.messaging().send({
@@ -797,7 +797,7 @@ export async function callbackIncomingMessage(request: Request, response: expres
 export function registerMessagingDevice(accountSid: string, uid: string, fcmToken: string): Observable<void> {
     return forkJoin([
         checkInDevice(accountSid, uid, { fcmToken }),
-        // Migrated off the legacy registry, which would otherwise push to this token unconditionally during the trial.
+        // Migrated off the legacy registry, which would otherwise push to this token unconditionally while the license override is live.
         from(admin.database().ref(dbPaths.messagingToken(accountSid, fcmToken)).remove()),
     ]).pipe(map(() => undefined));
 }

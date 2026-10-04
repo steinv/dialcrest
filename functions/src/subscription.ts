@@ -6,38 +6,30 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { google } from 'googleapis';
 import { Environment, SignedDataVerifier, VerificationException, VerificationStatus } from '@apple/app-store-server-library';
-import { catchError, from, map, Observable, of, switchMap } from 'rxjs';
+import { catchError, defer, from, map, Observable, of, switchMap } from 'rxjs';
 import admin from 'firebase-admin';
 
 /**
- * Subscriptions live on TWO independent axes (see SUBSCRIPTION_NOTIFICATIONS.md):
+ * Licenses live on TWO independent axes (see SUBSCRIPTION_NOTIFICATIONS.md):
  *
- *  - Trial axis, keyed on accountSid at /twilio/{accountSid}/trial.
- *    Auto-started on registration (ensureTrialStarted), no store interaction.
- *    A trial is a per-LINE grant: everyone sharing a Twilio account shares it.
+ *  - License override, keyed on accountSid at /twilio/{accountSid}/licenseOverride:
+ *    an epoch-ms timestamp set by hand (Firebase console), never by code. It
+ *    licenses every device on the LINE until then — for ourselves, trusted
+ *    partners and the store review accounts. Absent for everyone else.
  *
  *  - Paid axis, keyed on the STORE identity at /subscriptions/{store}/{id}
  *    (Apple originalTransactionId / Google purchaseToken). A paid subscription
  *    belongs to the PERSON (their Apple ID / Google account), not the line, so
  *    it works on any Twilio account they sign into and two store accounts can
- *    never overwrite each other's record.
+ *    never overwrite each other's record. New subscribers start with the
+ *    store's own 30-day free trial (configured in App Store Connect / Play
+ *    Console), which the store reports as an active subscription.
  *
  * Enforcement (isSubscriptionActive) is an OR gate: an account can mint a token
- * if its trial is still live OR the device presents an active store entitlement.
+ * if its license override is live OR the device presents an active store entitlement.
  */
-type Plan = 'trial' | 'monthly' | 'yearly';
+type Plan = 'monthly' | 'yearly';
 type Store = 'app_store' | 'play_store';
-
-/**
- * Trial record at /twilio/{accountSid}/trial. Store fields no longer
- * live here — paid state moved to the store-keyed PaidRecord.
- */
-interface TrialRecord {
-    plan: 'trial';
-    trialStartedAt: number;
-    expiresAt: number;
-    lastVerifiedAt: number;
-}
 
 /**
  * Paid record at /subscriptions/{store}/{id}. `expiresAt` is the single field
@@ -47,9 +39,11 @@ interface TrialRecord {
  * no separate reverse index is needed.
  */
 interface PaidRecord {
-    plan: 'monthly' | 'yearly';
+    plan: Plan;
     expiresAt: number;
     autoRenew: boolean;
+    /** In the store's free-trial period; `expiresAt` is then the trial's end. */
+    freeTrial: boolean;
     store: Store;
     productId: string; // Apple product id, or Android base plan id — see planFromId
     originalTransactionId: string | null; // Apple
@@ -72,6 +66,7 @@ interface PaidState {
     expiresAt: number;
     autoRenew: boolean;
     productId: string;
+    freeTrial: boolean;
     /** e.g. `subscriptions/apple/123` — what a device's `subscription` pointer stores. */
     recordPath: string;
 }
@@ -80,6 +75,7 @@ export interface SubscriptionStatus {
     plan: Plan;
     expiresAt: number;
     autoRenew: boolean;
+    freeTrial: boolean;
     isActive: boolean;
 }
 
@@ -103,8 +99,6 @@ export interface ReverificationConfig {
     googleServiceAccountJson: string;
 }
 
-const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-
 /**
  * 'monthly-dialcrest-license' / 'yearly-dialcrest-license'. On iOS these are
  * the literal App Store Connect product ids (Apple has no "base plan"
@@ -118,7 +112,25 @@ const YEARLY_PLAN_ID = 'yearly-dialcrest-license';
 /** The single Play Console product both Android base plans live under. */
 const ANDROID_PRODUCT_ID = 'dialcrest';
 
-function planFromId(id: string): 'monthly' | 'yearly' {
+/**
+ * Play offers whose id starts with this are the free-trial offers (Play Console
+ * → dialcrest → each base plan → offer `free-trial-monthly` / `free-trial-yearly`).
+ */
+const GOOGLE_FREE_TRIAL_OFFER_PREFIX = 'free-trial';
+
+/** Google subscription states that grant no access, regardless of the line item's expiryTime. */
+const GOOGLE_INACTIVE_STATES = new Set([
+    'SUBSCRIPTION_STATE_EXPIRED',
+    'SUBSCRIPTION_STATE_ON_HOLD',
+    'SUBSCRIPTION_STATE_PAUSED',
+    'SUBSCRIPTION_STATE_PENDING',
+    'SUBSCRIPTION_STATE_PENDING_PURCHASE_CANCELED',
+]);
+
+/** Upper bound on a store free trial (30 days, plus slack for the store's own rounding). */
+const MAX_FREE_TRIAL_MS = 32 * 24 * 60 * 60 * 1000;
+
+function planFromId(id: string): Plan {
     return id === YEARLY_PLAN_ID ? 'yearly' : 'monthly';
 }
 
@@ -126,9 +138,9 @@ function planFromId(id: string): 'monthly' | 'yearly' {
 // Database refs
 // ---------------------------------------------------------------------------
 
-/** Trial axis, keyed on accountSid. Read directly by the app (database.rules.json). */
-function trialRef(accountSid: string) {
-    return admin.database().ref(`/twilio/${accountSid}/trial`);
+/** License override, keyed on accountSid. Read directly by the app (database.rules.json). */
+function licenseOverrideRef(accountSid: string) {
+    return admin.database().ref(`/twilio/${accountSid}/licenseOverride`);
 }
 
 /** Paid axis, keyed on the Apple original transaction id. */
@@ -234,11 +246,12 @@ export function ensureAccountCreated(accountSid: string): Observable<void> {
     return from(createdAtRef(accountSid).transaction((current) => current ?? now)).pipe(map(() => undefined));
 }
 
-function toStatus(state: { expiresAt: number; autoRenew: boolean; productId: string }): SubscriptionStatus {
+function toStatus(state: { expiresAt: number; autoRenew: boolean; productId: string; freeTrial: boolean }): SubscriptionStatus {
     return {
         plan: planFromId(state.productId),
         expiresAt: state.expiresAt,
         autoRenew: state.autoRenew,
+        freeTrial: state.freeTrial,
         isActive: state.expiresAt > Date.now(),
     };
 }
@@ -251,13 +264,14 @@ function toStatus(state: { expiresAt: number; autoRenew: boolean; productId: str
  */
 function buildPaidRecord(
     accountSid: string | null,
-    state: { expiresAt: number; autoRenew: boolean; productId: string },
+    state: { expiresAt: number; autoRenew: boolean; productId: string; freeTrial: boolean },
     storeFields: Pick<PaidRecord, 'store' | 'originalTransactionId' | 'purchaseToken' | 'linkedPurchaseToken'>,
 ): PaidRecord {
     return {
         plan: planFromId(state.productId),
         expiresAt: state.expiresAt,
         autoRenew: state.autoRenew,
+        freeTrial: state.freeTrial,
         productId: state.productId,
         ...(accountSid === null ? {} : { lastAccountSid: accountSid }),
         lastVerifiedAt: Date.now(),
@@ -266,39 +280,15 @@ function buildPaidRecord(
 }
 
 // ---------------------------------------------------------------------------
-// Trial axis
+// License override
 // ---------------------------------------------------------------------------
 
-/**
- * Starts a 30-day trial for `accountSid` the first time it's seen — a no-op if
- * a trial record already exists. Called from twilioRegister, the existing
- * de-facto "account onboarded" hook (see index.ts), guarded by an RTDB
- * transaction so calling it concurrently/repeatedly never resets an existing
- * trial.
- */
-export function ensureTrialStarted(accountSid: string): Observable<void> {
-    const now = Date.now();
-    const trial: TrialRecord = {
-        plan: 'trial',
-        trialStartedAt: now,
-        expiresAt: now + THIRTY_DAYS_MS,
-        lastVerifiedAt: now,
-    };
-    return from(trialRef(accountSid).transaction((current) => current ?? trial)).pipe(map(() => undefined));
-}
-
-/**
- * True if `accountSid`'s trial is still live. A missing record backfills a
- * fresh trial rather than failing closed: normally twilioRegister creates it
- * first, but an account that registered before the subscription system existed
- * would otherwise be locked out permanently.
- */
-function trialActive(accountSid: string): Observable<boolean> {
-    return from(trialRef(accountSid).once('value')).pipe(
-        switchMap((snapshot) => {
-            const record = snapshot.val() as TrialRecord | null;
-            if (!record) return ensureTrialStarted(accountSid).pipe(map(() => true));
-            return of(record.expiresAt > Date.now());
+/** True if `accountSid` has a license override that hasn't expired. Anything but a number counts as none. */
+function overrideActive(accountSid: string): Observable<boolean> {
+    return from(licenseOverrideRef(accountSid).once('value')).pipe(
+        map((snapshot) => {
+            const until: unknown = snapshot.val();
+            return typeof until === 'number' && until > Date.now();
         }),
     );
 }
@@ -308,17 +298,17 @@ function trialActive(accountSid: string): Observable<boolean> {
 // ---------------------------------------------------------------------------
 
 /**
- * True if the account may mint a Voice token: its trial is still live, OR the
- * device presented a store entitlement that re-verifies as active. The trial
- * check is a cheap cached read and runs first, so a trialing user (who has no
- * entitlement to present) never triggers a store round-trip. Re-verifying the
+ * True if the account may mint a Voice token: its license override is live, OR
+ * the device presented a store entitlement that re-verifies as active. The
+ * override check is a cheap cached read and runs first, so an overridden line
+ * never triggers a store round-trip. Re-verifying the
  * presented entitlement also refreshes the paid record, so a renewal that
  * already happened but wasn't yet pushed by a notification still counts.
  */
 export function isSubscriptionActive(
     accountSid: string, entitlement: PresentedEntitlement | null, config: ReverificationConfig,
 ): Observable<boolean> {
-    return trialActive(accountSid).pipe(
+    return overrideActive(accountSid).pipe(
         switchMap((active) => {
             if (active) return of(true);
             if (!entitlement) return of(false);
@@ -359,94 +349,132 @@ function verifyEntitlementState(
 
 /** What resolveDeviceEntitlement decided for one device. */
 export interface DeviceEntitlement {
-    /** May this device mint a Voice token (the trial-OR-entitlement gate)? */
+    /** May this device mint a Voice token (the override-OR-entitlement gate)? */
     entitled: boolean;
     /** The device's subscription pointer to store (DeviceRecord.subscription). */
     subscription: string | null;
 }
 
 /**
- * The trial-OR-entitlement gate for one DEVICE, plus the subscription pointer the
+ * The override-OR-entitlement gate for one DEVICE, plus the subscription pointer the
  * device registry (shared/webhooks.ts DeviceRecord) should hold for it — which is
  * what lets the inbound webhooks ring/notify exactly the devices whose own user
  * is entitled, and keep doing so across renewals without the device checking in.
  *
- * - No entitlement presented: entitled iff the line's trial is live; the existing
- *   pointer is KEPT (e.g. an iOS reinstall wipes the locally stored entitlement
- *   but not the uid — clearing it would silence a paying user once the trial
- *   ends, until they restore). Its record's expiry still decides reachability.
- * - Trial live: entitled. The pointer follows the PRESENTED entitlement, so a
+ * - No entitlement presented: entitled iff the line's license override is live;
+ *   the existing pointer is KEPT (e.g. an iOS reinstall wipes the locally stored
+ *   entitlement but not the uid — clearing it would silence a paying user until
+ *   they restore). Its record's expiry still decides reachability.
+ * - Override live: entitled. The pointer follows the PRESENTED entitlement, so a
  *   stale pointer (e.g. to a lapsed purchase the user has since replaced) is
- *   corrected before the trial ends — someone who paid during the trial keeps
- *   ringing the moment it ends. This runs on every token mint, so it avoids the
+ *   corrected before the override ends — someone who also paid keeps ringing the
+ *   moment it ends. This runs on every token mint, so it avoids the
  *   store: an entitlement whose record already exists (written when the purchase
  *   was verified, or by a store notification) is pointed at directly. Only one
  *   with no record yet is re-verified with the store, and a failure there is
- *   remembered for a while (failedTrialEntitlements) so a permanently invalid
+ *   remembered for a while (failedOverrideEntitlements) so a permanently invalid
  *   entitlement isn't sent to the store on every mint; the pointer is kept.
- * - After the trial the presented entitlement is always re-verified with the
- *   store (as isSubscriptionActive does) and the pointer is its record — even
+ * - Without an override, a presented entitlement whose stored record is active
+ *   and was verified with the store within STORED_EXPIRY_TRUST_MS is trusted as
+ *   is (trustedStoredRecord), so a subscriber's token mints don't call Apple or
+ *   Google every time. Store notifications rewrite the record on renewals and
+ *   refunds; the window bounds how long a missed notification can matter.
+ *   Otherwise the entitlement is re-verified with the store (as
+ *   isSubscriptionActive does) and the pointer is its record — even
  *   when that subscription has currently lapsed: the record's own expiry already
  *   decides reachability, and keeping the pointer means a renewal that lands
  *   later (e.g. after billing retry, via a store notification) reaches the device
  *   again without it checking in.
- * - A failed re-verification never grants a token beyond the trial, but keeps the
+ * - A failed re-verification never grants a token beyond the override, but keeps the
  *   existing pointer: that record's own expiry still governs ringing, so a store
  *   outage doesn't silence a paying user.
  */
 export function resolveDeviceEntitlement(
     accountSid: string, entitlement: PresentedEntitlement | null, currentPointer: string | null, config: ReverificationConfig,
 ): Observable<DeviceEntitlement> {
-    return trialActive(accountSid).pipe(
-        switchMap((trial): Observable<DeviceEntitlement> => {
-            if (!entitlement) return of({ entitled: trial, subscription: currentPointer });
-            if (trial) {
-                return trialPointer(accountSid, entitlement, currentPointer, config).pipe(
+    return overrideActive(accountSid).pipe(
+        switchMap((override): Observable<DeviceEntitlement> => {
+            if (!entitlement) return of({ entitled: override, subscription: currentPointer });
+            if (override) {
+                return overridePointer(accountSid, entitlement, currentPointer, config).pipe(
                     map((subscription) => ({ entitled: true, subscription })),
                 );
             }
-            return verifyEntitlementState(accountSid, entitlement, config).pipe(
+            // Deferred: building the store lookup already fires the API request.
+            const reverified$ = defer(() => verifyEntitlementState(accountSid, entitlement, config)).pipe(
                 map((state) => ({ entitled: state.expiresAt > Date.now(), subscription: state.recordPath })),
                 catchError((e) => {
                     console.error('Store entitlement re-verification failed', e);
                     return of({ entitled: false, subscription: currentPointer });
                 }),
             );
+            return trustedStoredRecord(entitlement, config.apple).pipe(
+                switchMap((recordPath) => (recordPath ?
+                    of({ entitled: true, subscription: recordPath }) : reverified$)),
+            );
         }),
     );
 }
 
-/** How long a trial-time re-verification failure suppresses the next store call for that entitlement. */
-const FAILED_TRIAL_ENTITLEMENT_TTL_MS = 60 * 60 * 1000;
-const FAILED_TRIAL_ENTITLEMENTS_MAX = 1000;
+/** How long a stored paid record's expiry is trusted after its last store verification. */
+const STORED_EXPIRY_TRUST_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Entitlements (by entitlementKey) whose store re-verification failed during the
- * trial, with when to try again. Per function instance, like authTokenCache in
+ * The path of the presented entitlement's stored record if it can be trusted
+ * without asking the store — it exists, hasn't expired, and was verified with the
+ * store within STORED_EXPIRY_TRUST_MS — else null. Never errors: any failure
+ * (e.g. an Apple transaction that fails offline verification) yields null, so the
+ * caller falls back to the store and never grants on an unreadable record.
+ */
+function trustedStoredRecord(entitlement: PresentedEntitlement, apple: AppleConfig): Observable<string | null> {
+    return existingRecordPath(entitlement, apple).pipe(
+        switchMap((recordPath) => {
+            if (!recordPath) return of(null);
+            return from(admin.database().ref(`/${recordPath}`).once('value')).pipe(
+                map((snapshot) => {
+                    const record = snapshot.val() as Partial<PaidRecord> | null;
+                    const now = Date.now();
+                    const trusted = typeof record?.expiresAt === 'number' && record.expiresAt > now &&
+                        typeof record.lastVerifiedAt === 'number' && now - record.lastVerifiedAt < STORED_EXPIRY_TRUST_MS;
+                    return trusted ? recordPath : null;
+                }),
+            );
+        }),
+        catchError(() => of(null)),
+    );
+}
+
+/** How long an override-time re-verification failure suppresses the next store call for that entitlement. */
+const FAILED_OVERRIDE_ENTITLEMENT_TTL_MS = 60 * 60 * 1000;
+const FAILED_OVERRIDE_ENTITLEMENTS_MAX = 1000;
+
+/**
+ * Entitlements (by entitlementKey) whose store re-verification failed while the
+ * line's license override was live, with when to try again. Per function instance, like authTokenCache in
  * twilio.ts: it only bounds how often one instance asks the store.
  */
-const failedTrialEntitlements = new Map<string, number>();
+const failedOverrideEntitlements = new Map<string, number>();
 
 function entitlementKey(entitlement: PresentedEntitlement): string {
     const value = entitlement.store === 'app_store' ? entitlement.signedTransactionInfo : entitlement.purchaseToken;
     return crypto.createHash('sha256').update(`${entitlement.store}:${value}`).digest('base64url');
 }
 
-/** The pointer a trialing device should hold — see resolveDeviceEntitlement. Never errors. */
-function trialPointer(
+/** The pointer a device on an overridden line should hold — see resolveDeviceEntitlement. Never errors. */
+function overridePointer(
     accountSid: string, entitlement: PresentedEntitlement, currentPointer: string | null, config: ReverificationConfig,
 ): Observable<string | null> {
     return existingRecordPath(entitlement, config.apple).pipe(
         switchMap((existing) => {
             if (existing) return of(existing);
             const key = entitlementKey(entitlement);
-            if ((failedTrialEntitlements.get(key) ?? 0) > Date.now()) return of(currentPointer);
+            if ((failedOverrideEntitlements.get(key) ?? 0) > Date.now()) return of(currentPointer);
             return verifyEntitlementState(accountSid, entitlement, config).pipe(
                 map((state) => state.recordPath),
                 catchError((e) => {
                     console.error('Store entitlement re-verification failed', e);
-                    if (failedTrialEntitlements.size >= FAILED_TRIAL_ENTITLEMENTS_MAX) failedTrialEntitlements.clear();
-                    failedTrialEntitlements.set(key, Date.now() + FAILED_TRIAL_ENTITLEMENT_TTL_MS);
+                    if (failedOverrideEntitlements.size >= FAILED_OVERRIDE_ENTITLEMENTS_MAX) failedOverrideEntitlements.clear();
+                    failedOverrideEntitlements.set(key, Date.now() + FAILED_OVERRIDE_ENTITLEMENT_TTL_MS);
                     return of(currentPointer);
                 }),
             );
@@ -483,9 +511,9 @@ function existingRecordPath(entitlement: PresentedEntitlement, apple: AppleConfi
     );
 }
 
-/** Test-only: forget remembered trial-time re-verification failures. */
-export function resetFailedTrialEntitlementsForTests(): void {
-    failedTrialEntitlements.clear();
+/** Test-only: forget remembered override-time re-verification failures. */
+export function resetFailedOverrideEntitlementsForTests(): void {
+    failedOverrideEntitlements.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -534,10 +562,33 @@ interface AppleTransactionInfo {
     originalTransactionId: string;
     productId: string;
     expiresDate: number;
+    /** 1 = introductory offer (our free trial is the only one). */
+    offerType?: number;
+    offerDiscountType?: string;
+    /** Set when Apple refunded the transaction or revoked it; `expiresDate` is left unchanged. */
+    revocationDate?: number;
+}
+
+/** True if this transaction is the introductory free-trial period. */
+function isAppleFreeTrial(tx: AppleTransactionInfo): boolean {
+    return tx.offerType === 1 && tx.offerDiscountType === 'FREE_TRIAL';
 }
 
 interface AppleRenewalInfo {
     autoRenewStatus: 0 | 1;
+    /** Present while a failed renewal is in the billing grace period; access lasts until then. */
+    gracePeriodExpiresDate?: number;
+}
+
+/**
+ * When access to an Apple subscription ends: the refund/revocation date if it was
+ * revoked (Apple keeps the original `expiresDate`), else the end of a billing grace
+ * period if one is running (Apple doesn't move `expiresDate` for it), else `expiresDate`.
+ */
+function appleAccessEnds(tx: AppleTransactionInfo, renewal: AppleRenewalInfo): number {
+    if (typeof tx.revocationDate === 'number') return Math.min(tx.expiresDate, tx.revocationDate);
+    if (typeof renewal.gracePeriodExpiresDate === 'number') return Math.max(tx.expiresDate, renewal.gracePeriodExpiresDate);
+    return tx.expiresDate;
 }
 
 interface AppleSubscriptionStatusesResponse {
@@ -572,14 +623,20 @@ async function fetchAppleSubscriptionStatuses(originalTransactionId: string, con
  */
 function extractAppleSubscriptionState(body: AppleSubscriptionStatusesResponse, productIdHint: string) {
     const entries = (body.data ?? []).flatMap((group) => group.lastTransactions ?? []);
-    const decoded = entries.map((entry) => ({
-        tx: decodeAppleSignedPayload<AppleTransactionInfo>(entry.signedTransactionInfo),
-        renewal: decodeAppleSignedPayload<AppleRenewalInfo>(entry.signedRenewalInfo),
-    }));
+    const decoded = entries.map((entry) => {
+        const tx = decodeAppleSignedPayload<AppleTransactionInfo>(entry.signedTransactionInfo);
+        const renewal = decodeAppleSignedPayload<AppleRenewalInfo>(entry.signedRenewalInfo);
+        return { tx, renewal, accessEnds: appleAccessEnds(tx, renewal) };
+    });
     const match = decoded.find((d) => d.tx.productId === productIdHint) ??
-        decoded.sort((a, b) => b.tx.expiresDate - a.tx.expiresDate)[0];
+        decoded.sort((a, b) => b.accessEnds - a.accessEnds)[0];
     if (!match) throw new Error(`No subscription transactions found for product ${productIdHint}`);
-    return { productId: match.tx.productId, expiresAt: match.tx.expiresDate, autoRenew: match.renewal.autoRenewStatus === 1 };
+    return {
+        productId: match.tx.productId,
+        expiresAt: match.accessEnds,
+        autoRenew: match.renewal.autoRenewStatus === 1,
+        freeTrial: isAppleFreeTrial(match.tx),
+    };
 }
 
 /**
@@ -868,12 +925,19 @@ function refreshGoogleSubscription(
             // Only one product ('dialcrest') is ever purchased, so there's exactly one line item.
             const lineItem = purchase.lineItems?.[0];
             if (!lineItem?.expiryTime) throw new Error(`Google subscription lookup returned no line items for token ${purchaseToken}`);
+            // A revoked/expired, on-hold, paused or pending subscription grants no access
+            // whatever expiryTime says; capping it at now records it as already over. (In a
+            // grace period Google itself extends expiryTime, so that needs no special case.)
+            const expiryTime = new Date(lineItem.expiryTime).getTime();
+            const expiresAt = GOOGLE_INACTIVE_STATES.has(purchase.subscriptionState ?? '') ?
+                Math.min(expiryTime, Date.now()) : expiryTime;
             const state = {
-                expiresAt: new Date(lineItem.expiryTime).getTime(),
+                expiresAt,
                 autoRenew: Boolean(lineItem.autoRenewingPlan?.autoRenewEnabled),
                 // The base plan id ('monthly-dialcrest-license'/'yearly-dialcrest-license') is
                 // what distinguishes the plan — the product id itself is always ANDROID_PRODUCT_ID.
                 productId: lineItem.offerDetails?.basePlanId ?? '',
+                freeTrial: isGoogleFreeTrial(lineItem.offerDetails?.offerId, purchase.startTime, expiresAt),
             };
             // Required within 3 days of purchase or Google auto-refunds it; a no-op on renewals.
             // Annotated as Observable<unknown>: a bare ternary here produces a union of two
@@ -899,6 +963,17 @@ function refreshGoogleSubscription(
             );
         }),
     );
+}
+
+/**
+ * True while a Google subscription bought through a free-trial offer is still in
+ * its first period. The API has no per-phase field, and the offer id stays the
+ * same after the trial converts, so the trial is told apart by its expiry still
+ * being within the trial length of the purchase's start.
+ */
+function isGoogleFreeTrial(offerId: string | null | undefined, startTime: string | null | undefined, expiresAt: number): boolean {
+    if (!offerId?.startsWith(GOOGLE_FREE_TRIAL_OFFER_PREFIX) || !startTime) return false;
+    return expiresAt - new Date(startTime).getTime() <= MAX_FREE_TRIAL_MS;
 }
 
 /**

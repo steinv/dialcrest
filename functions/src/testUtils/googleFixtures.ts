@@ -38,6 +38,9 @@ export function googleSubscriptionV2Response(opts: {
     productId?: string;
     acknowledgementState?: 'ACKNOWLEDGEMENT_STATE_PENDING' | 'ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED';
     linkedPurchaseToken?: string;
+    offerId?: string;
+    startTime?: string;
+    subscriptionState?: string;
 }) {
     return {
         data: {
@@ -45,12 +48,14 @@ export function googleSubscriptionV2Response(opts: {
                 {
                     expiryTime: opts.expiryTime,
                     autoRenewingPlan: { autoRenewEnabled: opts.autoRenewEnabled },
-                    offerDetails: { basePlanId: opts.basePlanId },
+                    offerDetails: { basePlanId: opts.basePlanId, offerId: opts.offerId },
                     productId: opts.productId ?? 'dialcrest',
                 },
             ],
             acknowledgementState: opts.acknowledgementState ?? 'ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED',
             linkedPurchaseToken: opts.linkedPurchaseToken,
+            startTime: opts.startTime,
+            subscriptionState: opts.subscriptionState ?? 'SUBSCRIPTION_STATE_ACTIVE',
         },
     };
 }

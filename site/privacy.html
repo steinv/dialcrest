@@ -81,8 +81,8 @@
   Firebase, which our backend stores associated with your Account SID; this token identifies
   your device for delivering notifications, not you personally.</p>
 
-  <p><strong>Subscription status.</strong> The App offers a free trial followed by a paid
-  subscription, purchased through the Apple App Store or Google Play. When you subscribe, your
+  <p><strong>Subscription status.</strong> The App offers a paid subscription, with a free trial
+  for new subscribers, purchased through the Apple App Store or Google Play. When you subscribe, your
   purchase receipt/token is sent to our backend to verify the purchase with Apple or Google. We
   store your subscription status (plan, expiration date, auto-renew flag) associated with your
   Twilio Account SID in our database, so the App can check your access level. We do not receive
@@ -125,7 +125,7 @@
   <h2>Data retention and deletion</h2>
   <p>The credentials and call/message cache on your device are deleted when you log out or
   uninstall the App. On our backend we keep, per Twilio Account SID, your Auth Token, your
-  devices' push tokens, your trial and subscription records, and your number configuration
+  devices' push tokens, your subscription records, and your number configuration
   until you ask us to delete them. WhatsApp media is deleted after 7 days and logs after 30
   days, as described above. To delete your data from our backend, or for any other privacy
   request, contact us using the details below. You can also rotate your Auth Token in the

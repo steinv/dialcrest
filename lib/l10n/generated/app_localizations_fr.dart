@@ -331,11 +331,24 @@ class AppLocalizationsFr extends AppLocalizations {
   String get licensePlanYearly => 'Licence Dialcrest — Abonnement annuel';
 
   @override
-  String get purchasingUnavailable =>
-      'Les achats ne sont pas disponibles sur cette plateforme.';
+  String get licenseNone => 'Pas encore de licence';
 
   @override
-  String get trialExpired => 'Essai expiré';
+  String get licenseFreeTrialOffer =>
+      'Les nouveaux abonnés bénéficient des 30 premiers jours gratuits. Résiliez avant la fin de l\'essai et vous ne serez pas débité.';
+
+  @override
+  String get licenseFreeTrialTitle => 'Essai gratuit de 30 jours';
+
+  @override
+  String licenseFreeTrialPrices(String monthly, String yearly) {
+    return 'Après l\'essai gratuit, vous payez $monthly par mois ou $yearly par an, selon la formule choisie. Résiliez avant la fin de l\'essai et vous ne serez pas débité.';
+  }
+
+  @override
+  String licenseOverrideUntil(Object date) {
+    return 'Licence offerte par Dialcrest jusqu\'au $date';
+  }
 
   @override
   String get subscriptionExpired => 'Abonnement expiré';
@@ -348,7 +361,7 @@ class AppLocalizationsFr extends AppLocalizations {
       other: 'jours restants',
       one: 'jour restant',
     );
-    return 'Essai — $days $_temp0';
+    return 'Essai gratuit — $days $_temp0';
   }
 
   @override
@@ -575,6 +588,40 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String get onboardingDoneIncompleteHint =>
       'Revenez en arrière pour les configurer maintenant, ou faites-le plus tard dans les Réglages.';
+
+  @override
+  String get onboardingLicenseTitle => 'Votre licence';
+
+  @override
+  String get onboardingLicenseBody =>
+      'Une licence vous permet de passer et de recevoir des appels, et d\'être averti des nouveaux messages sur cet appareil.';
+
+  @override
+  String get onboardingLicenseActive =>
+      'Cet appareil dispose déjà d\'une licence active. Tout est prêt.';
+
+  @override
+  String get onboardingLicenseSkipTitle => 'Si vous passez cette étape';
+
+  @override
+  String get onboardingLicenseCanText =>
+      'Vous pouvez envoyer et lire des messages';
+
+  @override
+  String get onboardingLicenseCanHistory =>
+      'Vous pouvez consulter votre historique d\'appels';
+
+  @override
+  String get onboardingLicenseCannotCall =>
+      'Vous ne pouvez pas passer ni recevoir d\'appels';
+
+  @override
+  String get onboardingLicenseCannotNotify =>
+      'Vous ne serez pas averti des nouveaux messages';
+
+  @override
+  String get onboardingLicenseSkipHint =>
+      'Vous pourrez démarrer votre essai gratuit ou acheter une licence plus tard dans les Réglages.';
 
   @override
   String get chooseChannelTitle => 'Envoyer avec';

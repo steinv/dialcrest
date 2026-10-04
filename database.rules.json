@@ -11,7 +11,10 @@
           ".read": false,
           ".write": false
         },
-        "trial": {
+        /* License override: an epoch-ms timestamp set by hand in the Firebase
+           console (licenses every device on the line until then). Readable by
+           the account so Settings can show it; never client-writable. */
+        "licenseOverride": {
           ".read": "auth.token.accountSid === $accountSid"
         },
         "twiml-app-sid": {

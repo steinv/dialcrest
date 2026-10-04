@@ -1,5 +1,12 @@
 # Subscriptions: store-account paid + per-line trial, with store notifications
 
+> **Superseded in part.** The app-side per-line trial described below has been
+> removed. New subscribers now get the stores' own 30-day free-trial offer, and
+> the per-line axis is a hand-set **license override** at
+> `/twilio/{accountSid}/licenseOverride` (an epoch-ms expiry). See the README
+> section "Licenses: subscriptions, free trial, license override". The paid
+> axis, notifications and per-device gating below are unchanged.
+
 This is the plan and runbook for reworking how Dialcrest tracks subscriptions.
 It covers the target model, the store-console setup you have to do by hand, the
 code changes, the real-time notification wiring, migration, and how to test it

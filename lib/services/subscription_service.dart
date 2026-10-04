@@ -19,17 +19,15 @@ class PurchaseCanceledException implements Exception {
   const PurchaseCanceledException();
 }
 
-/// Per-accountSid subscription: a 30-day trial (started server-side the first
-/// time this account registers — see functions/src/subscription.ts
-/// ensureTrialStarted), then an auto-renewing purchase of one of
-/// [monthlyProductId]/[yearlyProductId]. Purchases are made through the
+/// A device's license: an auto-renewing purchase of one of
+/// [monthlyProductId]/[yearlyProductId] — new subscribers start with the
+/// store's own 30-day free trial — or the line's license override (an expiry
+/// timestamp set by hand at /twilio/{accountSid}/licenseOverride, see
+/// functions/src/subscription.ts). Purchases are made through the
 /// platform store (required for digital subscriptions sold in-app on
 /// Android/iOS) and verified server-side against the Apple/Google server
 /// APIs — this class never decides subscription state on its own, it only
 /// relays the store purchase to the Cloud Function that does.
-///
-/// Billing is Android/iOS only; [isSupported] is false on Linux, where the
-/// Settings screen shows trial/expiry status with no purchase UI.
 class SubscriptionService {
   /// These plan ids double as the App Store Connect product ids (Apple has no
   /// "base plan" concept, so iOS just has two separate products with these
@@ -42,6 +40,11 @@ class SubscriptionService {
 
   /// The single Play Billing product both Android base plans live under.
   static const String _androidProductId = 'dialcrest';
+
+  /// Play offers whose id starts with this are the 30-day free-trial offers
+  /// (`free-trial-monthly` / `free-trial-yearly`, one per base plan). Play only
+  /// returns them to users who are still eligible.
+  static const String _androidFreeTrialOfferPrefix = 'free-trial';
 
   final String accountSid;
   final StorageService _storageService;
@@ -78,7 +81,12 @@ class SubscriptionService {
   /// automatic mid-dial recovery again this session once it's failed once.
   bool _entitlementRecoveryExhausted = false;
 
-  bool get isSupported => Platform.isAndroid || Platform.isIOS;
+  /// Whether to advertise the 30-day free trial. On Android, set by
+  /// [loadProducts] to whether Play returned a free-trial offer (it only does
+  /// for eligible users). iOS doesn't expose eligibility here, so the trial is
+  /// always advertised — worded as being for new subscribers.
+  bool get freeTrialOffered => Platform.isIOS || _androidFreeTrialOffered;
+  bool _androidFreeTrialOffered = false;
 
   /// Called after a purchase or restore verifies as active, so the device can
   /// re-register for incoming calls and SMS notifications immediately (see
@@ -90,7 +98,6 @@ class SubscriptionService {
     required this.accountSid,
     required StorageService storageService,
   }) : _storageService = storageService {
-    if (!isSupported) return;
     _purchaseSubscription = _inAppPurchase.purchaseStream.listen(
       _onPurchaseUpdate,
       onError: (e) => debugPrint('Subscription purchase stream error: $e'),
@@ -109,11 +116,10 @@ class SubscriptionService {
   }
 
   /// The store entitlement to attach to a gated backend call (twilioAccessToken
-  /// / twilioRefreshSubscription), or null if this device has only ever
-  /// trialed. The backend re-verifies whatever token this returns against the
+  /// / twilioRefreshSubscription), or empty if this device never purchased. The backend re-verifies whatever token this returns against the
   /// store, so a persisted-but-stale token is fine — it names the subscription,
   /// the store reports its current state. Deliberately does not query the store
-  /// (which can prompt for sign-in), so trialing users hit no store friction.
+  /// (which can prompt for sign-in).
   ///
   /// TODO(ios): on iOS, StoreKit 2's Transaction.currentEntitlements could
   /// recover a paid entitlement after a reinstall WITHOUT a sign-in prompt
@@ -134,35 +140,46 @@ class SubscriptionService {
     _purchaseSubscription?.cancel();
   }
 
-  /// Current subscription status (trial countdown, active plan, or expired)
-  /// for display in Settings. Read directly from RTDB rather than through a
-  /// Cloud Function — database.rules.json opens read access to exactly this
-  /// child node. `isActive` is derived on-device from `expiresAt`, which is
-  /// only as fresh as the last write from twilioRegister/twilioAccessToken/a
-  /// purchase verification; the authoritative, re-verified check that
-  /// actually gates calling still lives server-side in twilioAccessToken.
-  Future<SubscriptionStatus> fetchStatus() async {
-    // The subscription node is account-scoped in RTDB rules, so authorize this
-    // read with the account claim first (see AccountAuthService).
-    await AccountAuthService.instance
-        .ensureLinked(accountSid, _storageService.authToken);
+  /// The line's license override (see [SubscriptionStatus.override]), or null
+  /// if it has none. Read directly from RTDB rather than through a Cloud
+  /// Function — database.rules.json opens read access to exactly this child.
+  /// The authoritative check that actually gates calling still lives
+  /// server-side in twilioAccessToken.
+  Future<SubscriptionStatus?> fetchOverride() async {
+    // The node is account-scoped in RTDB rules, so authorize this read with
+    // the account claim first (see AccountAuthService).
+    await AccountAuthService.instance.ensureLinked(
+      accountSid,
+      _storageService.authToken,
+    );
     final snapshot = await FirebaseDatabase.instanceFor(
       app: Firebase.app(),
       databaseURL:
           'https://twilio-phone-peblet-default-rtdb.europe-west1.firebasedatabase.app',
-    ).ref('/twilio/$accountSid/trial').get();
-    final record = snapshot.value;
-    if (record == null) {
-      // twilioRegister hasn't run yet (e.g. first launch, still offline) —
-      // report an already-expired trial rather than crashing Settings.
-      return SubscriptionStatus(
-        plan: 'trial',
-        expiresAt: DateTime.fromMillisecondsSinceEpoch(0),
-        autoRenew: false,
-        isActive: false,
-      );
-    }
-    return SubscriptionStatus.fromRecord(record as Map);
+    ).ref('/twilio/$accountSid/licenseOverride').get();
+    final until = snapshot.value;
+    if (until is! num) return null;
+    return SubscriptionStatus.override(
+      DateTime.fromMillisecondsSinceEpoch(until.toInt()),
+    );
+  }
+
+  /// The license to show for this device, or null if it has none: an active
+  /// paid subscription (free trial included) wins, then an active license
+  /// override, else a lapsed paid subscription (shown as expired). The paid
+  /// side is re-verified against the store, so it self-heals after a renewal;
+  /// a failed refresh (offline, …) degrades to "no paid subscription" rather
+  /// than failing the whole lookup.
+  Future<SubscriptionStatus?> fetchLicense() async {
+    final overrideFuture = fetchOverride();
+    final paidFuture = refreshPaidStatus().catchError(
+      (_) => null as SubscriptionStatus?,
+    );
+    final override = await overrideFuture;
+    final paid = await paidFuture;
+    if (paid != null && paid.isActive) return paid;
+    if (override != null && override.isActive) return override;
+    return paid;
   }
 
   /// Queries the store for the two subscription plans' localized prices.
@@ -170,7 +187,6 @@ class SubscriptionService {
   /// reached or the products aren't configured yet, so Settings can fall
   /// back to a plain plan name instead of failing to load entirely.
   Future<List<ProductDetails>> loadProducts() async {
-    if (!isSupported) return [];
     try {
       final available = await _inAppPurchase.isAvailable();
       if (!available) return [];
@@ -200,8 +216,9 @@ class SubscriptionService {
   /// `id == _androidProductId` — so they're re-keyed here by base plan id
   /// (matching [monthlyProductId]/[yearlyProductId]) to line up with the
   /// rest of the app, which otherwise treats Android like iOS's two
-  /// separate product ids. Discounted offers (`offerId != null`) are
-  /// skipped in favor of the plain base plan.
+  /// separate product ids. Per base plan the free-trial offer is preferred
+  /// (Play only returns it to eligible users), else the plain base plan;
+  /// any other offer is ignored.
   Future<List<ProductDetails>> _loadAndroidProducts() async {
     final response = await _inAppPurchase.queryProductDetails({
       _androidProductId,
@@ -210,28 +227,42 @@ class SubscriptionService {
       debugPrint('queryProductDetails error: ${response.error}');
     }
     final byBasePlan = <String, GooglePlayProductDetails>{};
+    final freeTrialPlans = <String>{};
     for (final product in response.productDetails) {
       if (product is! GooglePlayProductDetails) continue;
       final index = product.subscriptionIndex;
       final offers = product.productDetails.subscriptionOfferDetails;
       if (index == null || offers == null) continue;
       final offer = offers[index];
-      if (offer.offerId != null) continue;
+      final isFreeTrial =
+          offer.offerId?.startsWith(_androidFreeTrialOfferPrefix) ?? false;
+      if (offer.offerId != null && !isFreeTrial) continue;
+      if (freeTrialPlans.contains(offer.basePlanId)) continue;
       byBasePlan[offer.basePlanId] = product;
+      if (isFreeTrial) freeTrialPlans.add(offer.basePlanId);
     }
+    _androidFreeTrialOffered = freeTrialPlans.isNotEmpty;
     final result = <ProductDetails>[];
     for (final planId in productIds) {
       final match = byBasePlan[planId];
       if (match == null) continue;
       _storeProducts[planId] = match;
+      // match.price comes from the offer's first pricing phase, which for
+      // the free-trial offer is the free one — show the recurring
+      // (last-phase) price the user actually pays after the trial.
+      final recurring = match
+          .productDetails
+          .subscriptionOfferDetails![match.subscriptionIndex!]
+          .pricingPhases
+          .last;
       result.add(
         ProductDetails(
           id: planId,
           title: match.title,
           description: match.description,
-          price: match.price,
-          rawPrice: match.rawPrice,
-          currencyCode: match.currencyCode,
+          price: recurring.formattedPrice,
+          rawPrice: recurring.priceAmountMicros / 1000000.0,
+          currencyCode: recurring.priceCurrencyCode,
           currencySymbol: match.currencySymbol,
         ),
       );
@@ -319,8 +350,7 @@ class SubscriptionService {
   /// for either plan, so the server derives the actual plan itself from the
   /// Play API's base plan id.
   Future<SubscriptionStatus> _verifyPurchase(PurchaseDetails purchase) async {
-    final verificationData =
-        purchase.verificationData.serverVerificationData;
+    final verificationData = purchase.verificationData.serverVerificationData;
     // Persist first so the entitlement survives even if verification fails
     // transiently — later token requests re-present it and the backend
     // re-verifies against the store.
@@ -343,8 +373,7 @@ class SubscriptionService {
   }
 
   /// Re-verifies this device's stored paid entitlement against the store and
-  /// returns its current status, or null if the device has no paid entitlement
-  /// (trial-only). Used by Settings so paid state self-heals after a renewal
+  /// returns its current status, or null if the device has no paid entitlement. Used by Settings so paid state self-heals after a renewal
   /// instead of relying on a stale cached expiry.
   Future<SubscriptionStatus?> refreshPaidStatus() async {
     final entitlement = currentEntitlement;
@@ -362,7 +391,6 @@ class SubscriptionService {
   /// recover it. This can prompt for store sign-in, so it's an explicit
   /// user-initiated action (a "Restore purchases" button), never automatic.
   Future<void> restorePurchases() async {
-    if (!isSupported) return;
     await _inAppPurchase.restorePurchases();
   }
 

@@ -126,29 +126,29 @@ async function allowTokenless(env: Env, firebase: FirebaseConfig, route: Route, 
 /**
  * Who an inbound call/SMS may reach — the Worker twin of readEntitledDevices in
  * functions/src/twilio.ts, using the same shared rules: the device registry and
- * the line's trial, then (only once the trial is over) each subscription record
+ * the line's license override, then (only when it isn't live) each subscription record
  * a device points at. Devices whose own user isn't entitled are left out, so an
  * unsubscribed co-user on a shared line isn't rung/notified.
  */
 async function readEntitledDevices(firebase: FirebaseConfig, accountSid: string, now: number) {
-    const [devices, trialExpiresAt] = await Promise.all([
+    const [devices, licenseOverride] = await Promise.all([
         rtdbGet<Record<string, DeviceRecord>>(firebase, dbPaths.devices(accountSid)),
-        rtdbGet<number>(firebase, dbPaths.trialExpiresAt(accountSid)),
+        rtdbGet<number>(firebase, dbPaths.licenseOverride(accountSid)),
     ]);
-    const paths = subscriptionsToCheck(devices, trialExpiresAt, now);
+    const paths = subscriptionsToCheck(devices, licenseOverride, now);
     const expiries = await Promise.all(paths.map((path) => rtdbGet<number>(firebase, dbPaths.subscriptionExpiresAt(path))));
     const subscriptionExpiries = Object.fromEntries(paths.map((path, i) => [path, expiries[i]]));
-    return { trialExpiresAt, entitled: entitledDevices(devices, trialExpiresAt, subscriptionExpiries, now) };
+    return { licenseOverride, entitled: entitledDevices(devices, licenseOverride, subscriptionExpiries, now) };
 }
 
 /** Inbound SMS/MMS: data-only push to each entitled device, dropping tokens FCM no longer knows. */
 async function incomingMessage(firebase: FirebaseConfig, accountSid: string, params: URLSearchParams): Promise<Response> {
     const now = Date.now();
-    const [{ trialExpiresAt, entitled }, legacyTokens] = await Promise.all([
+    const [{ licenseOverride, entitled }, legacyTokens] = await Promise.all([
         readEntitledDevices(firebase, accountSid, now),
         rtdbGet<Record<string, unknown>>(firebase, dbPaths.messagingTokens(accountSid)),
     ]);
-    const targets = incomingMessageTargets(accountSid, entitled, legacyTokens, trialExpiresAt, now);
+    const targets = incomingMessageTargets(accountSid, entitled, legacyTokens, licenseOverride, now);
     const data = incomingMessagePushData({
         accountSid,
         from: params.get('From') ?? '',
@@ -193,8 +193,8 @@ async function handle(request: Request, env: Env): Promise<Response> {
     switch (typedRoute) {
     case WEBHOOK_PATHS.incomingCall: {
         // Rings only devices whose own user is entitled (see incomingCallIdentities).
-        const { trialExpiresAt, entitled } = await (callTargets as ReturnType<typeof readEntitledDevices>);
-        return xml(incomingCallTwiml(incomingCallIdentities(accountSid, entitled, trialExpiresAt, now)));
+        const { licenseOverride, entitled } = await (callTargets as ReturnType<typeof readEntitledDevices>);
+        return xml(incomingCallTwiml(incomingCallIdentities(accountSid, entitled, licenseOverride, now)));
     }
     case WEBHOOK_PATHS.outgoingCall:
         return xml(outgoingCallTwiml(params.get('To') ?? undefined, params.get('From') ?? undefined));

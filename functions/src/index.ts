@@ -29,7 +29,6 @@ import {
 } from './twilio';
 import {
     ensureAccountCreated,
-    ensureTrialStarted,
     handleAppleNotification,
     handleGoogleNotification,
     resolveDeviceEntitlement,
@@ -95,8 +94,7 @@ exports.twilioIncomingMessage = onRequest({ region: REGION, cors: true, timeoutS
  * the FCM/APN push credential in THAT account using our shared FCM secret, and
  * persist the resulting CR... SID(s) under /twilio/{accountSid}/push-credential.
  * Also the de-facto "account onboarded" hook: records this account's creation
- * timestamp and starts its 30-day trial the first time it's ever seen (see
- * ensureAccountCreated, ensureTrialStarted).
+ * timestamp the first time it's ever seen (see ensureAccountCreated).
  */
 exports.twilioRegister = onCall({ enforceAppCheck: true, region: REGION, cors: true, timeoutSeconds: 30, secrets: [twilioPebletSecret] },
     (req) => {
@@ -105,7 +103,6 @@ exports.twilioRegister = onCall({ enforceAppCheck: true, region: REGION, cors: t
         const authToken = req.data['authToken'];
         return lastValueFrom(
             ensureAccountCreated(accountSid).pipe(
-                switchMap(() => ensureTrialStarted(accountSid)),
                 switchMap(() => createOrUpdatePushCredentials(
                     accountSid, authToken, iosApnCertificate.value(), iosApnPrivateKey, androidFcmSecret,
                 )),
@@ -124,7 +121,7 @@ exports.twilioRegister = onCall({ enforceAppCheck: true, region: REGION, cors: t
  * The caller must first prove it holds the account's Auth Token
  * (verifyTwilioCredentials) — 'permission-denied' otherwise.
  *
- * Gated on the PERSON's subscription: the line's trial, or the store entitlement
+ * Gated on the PERSON's subscription: the line's license override, or the store entitlement
  * this device presents (resolveDeviceEntitlement). Every call also records the
  * device's check-in and subscription pointer (/twilio/{sid}/devices/{uid}), which
  * is what the inbound webhooks use to ring / notify only entitled devices — so an
@@ -249,8 +246,8 @@ exports.onPlaySubscriptionNotification = onMessagePublished(
 
 /**
  * Re-verifies the store entitlement a device presents and returns its current
- * status, for the Settings screen to show accurate paid state (the trial side
- * is read straight from RTDB). Same re-verification enforcement uses, so
+ * status, for the Settings screen to show accurate paid state (the license
+ * override is read straight from RTDB). Same re-verification enforcement uses, so
  * Settings self-heals after a renewal instead of showing a stale expiry.
  */
 exports.twilioRefreshSubscription = onCall(

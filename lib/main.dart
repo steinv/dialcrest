@@ -79,12 +79,14 @@ void main() async {
   // testers via Firebase App Distribution need the debug provider instead
   // — pass --dart-define=appCheckDebugProvider=true when building those.
   final useDebugAppCheckProvider = kDebugMode || const bool.fromEnvironment('appCheckDebugProvider');
+  const appCheckDebugTokenDefine = String.fromEnvironment('APP_CHECK_DEBUG_TOKEN');
+  const appCheckDebugToken = appCheckDebugTokenDefine == '' ? null : appCheckDebugTokenDefine;
   await FirebaseAppCheck.instance.activate(
     providerAndroid: useDebugAppCheckProvider
-        ? const AndroidDebugProvider()
+        ? const AndroidDebugProvider(debugToken: appCheckDebugToken)
         : const AndroidPlayIntegrityProvider(),
     providerApple: useDebugAppCheckProvider
-        ? const AppleDebugProvider()
+        ? const AppleDebugProvider(debugToken: appCheckDebugToken)
         : const AppleAppAttestWithDeviceCheckFallbackProvider(),
   );
   // Establish the anonymous Firebase identity that authorizes account-scoped

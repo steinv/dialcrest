@@ -2,7 +2,6 @@ import admin from 'firebase-admin';
 import { lastValueFrom } from 'rxjs';
 import {
     ensureAccountCreated,
-    ensureTrialStarted,
     isSubscriptionActive,
     resolveDeviceEntitlement,
     verifyEntitlement,
@@ -12,7 +11,7 @@ import {
     handleGoogleNotification,
     verifyGooglePurchase,
     setAppleVerificationForTests,
-    resetFailedTrialEntitlementsForTests,
+    resetFailedOverrideEntitlementsForTests,
     verifyAppleNotificationSignature,
     PresentedEntitlement,
     ReverificationConfig,
@@ -39,6 +38,11 @@ function googleMocks() {
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
+/** Sets the line's license override (an epoch-ms timestamp), as an admin would in the Firebase console. */
+async function grantOverride(accountSid: string, until: unknown = Date.now() + THIRTY_DAYS_MS) {
+    await admin.database().ref(`/twilio/${accountSid}/licenseOverride`).set(until);
+}
+
 // App-presented Apple transactions are signature-verified: trust the throwaway test CA.
 beforeAll(() => setAppleVerificationForTests([testAppleRootCertificate]));
 afterAll(() => setAppleVerificationForTests(null));
@@ -49,7 +53,7 @@ const reverificationConfig: ReverificationConfig = {
     googleServiceAccountJson: '{}',
 };
 
-describe('trial axis', () => {
+describe('account bookkeeping', () => {
     beforeEach(resetDb);
     afterEach(() => jest.useRealTimers());
 
@@ -61,47 +65,47 @@ describe('trial axis', () => {
         expect(dbTree().twilio.AC1.createdAt).toBe(1000);
     });
 
-    it('starts a 30-day trial and never resets it on repeat calls', async () => {
-        jest.useFakeTimers().setSystemTime(0);
-        await lastValueFrom(ensureTrialStarted('AC1'));
-        expect(dbTree().twilio.AC1.trial).toEqual({
-            plan: 'trial', trialStartedAt: 0, expiresAt: THIRTY_DAYS_MS, lastVerifiedAt: 0,
-        });
-        jest.setSystemTime(1000);
-        await lastValueFrom(ensureTrialStarted('AC1'));
-        expect(dbTree().twilio.AC1.trial.trialStartedAt).toBe(0);
-        expect(dbTree().twilio.AC1.trial.expiresAt).toBe(THIRTY_DAYS_MS);
+    it('never grants a license on its own (no trial, no override)', async () => {
+        await lastValueFrom(ensureAccountCreated('AC1'));
+        expect(dbTree().twilio.AC1.trial).toBeUndefined();
+        expect(dbTree().twilio.AC1.licenseOverride).toBeUndefined();
     });
 });
 
-describe('isSubscriptionActive (the trial-OR-entitlement gate)', () => {
+describe('isSubscriptionActive (the override-OR-entitlement gate)', () => {
     beforeEach(() => {
         resetDb();
         jest.useFakeTimers().setSystemTime(0);
     });
     afterEach(() => jest.useRealTimers());
 
-    it('is active while the trial has not expired, with no entitlement presented', async () => {
-        await lastValueFrom(ensureTrialStarted('AC1'));
+    it('is active while the license override has not expired, with no entitlement presented', async () => {
+        await grantOverride('AC1');
         const active = await lastValueFrom(isSubscriptionActive('AC1', null, reverificationConfig));
         expect(active).toBe(true);
     });
 
-    it('backfills a trial (and stays active) for an account that predates the subscription system', async () => {
-        const active = await lastValueFrom(isSubscriptionActive('AC-legacy', null, reverificationConfig));
-        expect(active).toBe(true);
-        expect(dbTree().twilio['AC-legacy'].trial.plan).toBe('trial');
+    it('is inactive with no override and no entitlement, and backfills nothing', async () => {
+        const active = await lastValueFrom(isSubscriptionActive('AC1', null, reverificationConfig));
+        expect(active).toBe(false);
+        expect(dbTree().twilio).toBeUndefined();
     });
 
-    it('is inactive once the trial has expired and no entitlement is presented', async () => {
-        await lastValueFrom(ensureTrialStarted('AC1'));
+    it.each([true, 'forever', { until: THIRTY_DAYS_MS }])('treats a non-number override (%p) as none', async (value) => {
+        await grantOverride('AC1', value);
+        const active = await lastValueFrom(isSubscriptionActive('AC1', null, reverificationConfig));
+        expect(active).toBe(false);
+    });
+
+    it('is inactive once the license override has expired and no entitlement is presented', async () => {
+        await grantOverride('AC1');
         jest.setSystemTime(THIRTY_DAYS_MS + 1);
         const active = await lastValueFrom(isSubscriptionActive('AC1', null, reverificationConfig));
         expect(active).toBe(false);
     });
 
-    it('never re-verifies a store entitlement while the trial is still live (cheap path first)', async () => {
-        await lastValueFrom(ensureTrialStarted('AC1'));
+    it('never re-verifies a store entitlement while the license override is live (cheap path first)', async () => {
+        await grantOverride('AC1');
         const fetchMock = mockAppleFetch({});
         const entitlement: PresentedEntitlement = {
             store: 'app_store',
@@ -112,8 +116,8 @@ describe('isSubscriptionActive (the trial-OR-entitlement gate)', () => {
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it('falls back to a live Apple entitlement once the trial has expired', async () => {
-        await lastValueFrom(ensureTrialStarted('AC1'));
+    it('falls back to a live Apple entitlement once the license override has expired', async () => {
+        await grantOverride('AC1');
         jest.setSystemTime(THIRTY_DAYS_MS + 1);
         mockAppleFetch({
             production: {
@@ -134,7 +138,7 @@ describe('isSubscriptionActive (the trial-OR-entitlement gate)', () => {
     });
 
     it('is inactive when the presented Apple entitlement itself has already expired', async () => {
-        await lastValueFrom(ensureTrialStarted('AC1'));
+        await grantOverride('AC1');
         jest.setSystemTime(THIRTY_DAYS_MS + 1);
         mockAppleFetch({
             production: {
@@ -153,8 +157,8 @@ describe('isSubscriptionActive (the trial-OR-entitlement gate)', () => {
         expect(active).toBe(false);
     });
 
-    it('falls back to a live Google entitlement once the trial has expired', async () => {
-        await lastValueFrom(ensureTrialStarted('AC1'));
+    it('falls back to a live Google entitlement once the license override has expired', async () => {
+        await grantOverride('AC1');
         jest.setSystemTime(THIRTY_DAYS_MS + 1);
         googleMocks().subscriptionsV2Get.mockResolvedValueOnce(googleSubscriptionV2Response({
             expiryTime: new Date(THIRTY_DAYS_MS + 1 + 100000).toISOString(), autoRenewEnabled: true, basePlanId: 'yearly-dialcrest-license',
@@ -166,7 +170,7 @@ describe('isSubscriptionActive (the trial-OR-entitlement gate)', () => {
     });
 
     it('treats a store re-verification failure as inactive rather than throwing', async () => {
-        await lastValueFrom(ensureTrialStarted('AC1'));
+        await grantOverride('AC1');
         jest.setSystemTime(THIRTY_DAYS_MS + 1);
         (global as unknown as { fetch: typeof fetch }).fetch = jest.fn().mockRejectedValue(new Error('network down')) as unknown as typeof fetch;
         const entitlement: PresentedEntitlement = {
@@ -199,7 +203,7 @@ describe('verifyEntitlement', () => {
             { store: 'app_store', signedTransactionInfo: appleSignedTransaction({ originalTransactionId: 'orig1', productId: 'yearly-dialcrest-license' }) },
             reverificationConfig,
         ));
-        expect(status).toEqual({ plan: 'yearly', expiresAt: 100000, autoRenew: true, isActive: true });
+        expect(status).toEqual({ plan: 'yearly', expiresAt: 100000, autoRenew: true, freeTrial: false, isActive: true });
     });
 
     it('re-verifies a Google entitlement and acknowledges a pending purchase', async () => {
@@ -208,7 +212,7 @@ describe('verifyEntitlement', () => {
             acknowledgementState: 'ACKNOWLEDGEMENT_STATE_PENDING',
         }));
         const status = await lastValueFrom(verifyEntitlement('AC1', { store: 'play_store', purchaseToken: 'tokA' }, reverificationConfig));
-        expect(status).toEqual({ plan: 'monthly', expiresAt: 200000, autoRenew: false, isActive: true });
+        expect(status).toEqual({ plan: 'monthly', expiresAt: 200000, autoRenew: false, freeTrial: false, isActive: true });
         expect(googleMocks().acknowledge).toHaveBeenCalledTimes(1);
     });
 
@@ -218,6 +222,169 @@ describe('verifyEntitlement', () => {
         }));
         await lastValueFrom(verifyEntitlement('AC1', { store: 'play_store', purchaseToken: 'tokA' }, reverificationConfig));
         expect(googleMocks().acknowledge).not.toHaveBeenCalled();
+    });
+});
+
+describe('store free-trial detection', () => {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+
+    beforeEach(() => {
+        resetDb();
+        jest.useFakeTimers().setSystemTime(0);
+    });
+    afterEach(() => jest.useRealTimers());
+
+    function appleEntitlement(): PresentedEntitlement {
+        return {
+            store: 'app_store',
+            signedTransactionInfo: appleSignedTransaction({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }),
+        };
+    }
+
+    it('flags an Apple introductory free-trial transaction', async () => {
+        mockAppleFetch({
+            production: {
+                status: 200,
+                body: appleSubscriptionStatusesResponse([{
+                    transactionId: 't1', originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license',
+                    expiresDate: 30 * DAY_MS, autoRenewStatus: 1, offerType: 1, offerDiscountType: 'FREE_TRIAL',
+                }]),
+            },
+        });
+        const status = await lastValueFrom(verifyEntitlement('AC1', appleEntitlement(), reverificationConfig));
+        expect(status.freeTrial).toBe(true);
+        expect(dbTree().subscriptions.apple.orig1.freeTrial).toBe(true);
+    });
+
+    it('does not flag a regular Apple transaction', async () => {
+        mockAppleFetch({
+            production: {
+                status: 200,
+                body: appleSubscriptionStatusesResponse([{
+                    transactionId: 't2', originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license',
+                    expiresDate: 60 * DAY_MS, autoRenewStatus: 1,
+                }]),
+            },
+        });
+        const status = await lastValueFrom(verifyEntitlement('AC1', appleEntitlement(), reverificationConfig));
+        expect(status.freeTrial).toBe(false);
+    });
+
+    it('flags a Google free-trial offer while still in its first period', async () => {
+        googleMocks().subscriptionsV2Get.mockResolvedValueOnce(googleSubscriptionV2Response({
+            expiryTime: new Date(30 * DAY_MS).toISOString(), autoRenewEnabled: true, basePlanId: 'monthly-dialcrest-license',
+            offerId: 'free-trial-monthly', startTime: new Date(0).toISOString(),
+        }));
+        const status = await lastValueFrom(verifyEntitlement('AC1', { store: 'play_store', purchaseToken: 'tokT' }, reverificationConfig));
+        expect(status.freeTrial).toBe(true);
+        expect(dbTree().subscriptions.google.tokT.freeTrial).toBe(true);
+    });
+
+    it('stops flagging a Google free-trial offer once it has converted (first paid period)', async () => {
+        googleMocks().subscriptionsV2Get.mockResolvedValueOnce(googleSubscriptionV2Response({
+            expiryTime: new Date(60 * DAY_MS).toISOString(), autoRenewEnabled: true, basePlanId: 'monthly-dialcrest-license',
+            offerId: 'free-trial-monthly', startTime: new Date(0).toISOString(),
+        }));
+        const status = await lastValueFrom(verifyEntitlement('AC1', { store: 'play_store', purchaseToken: 'tokT' }, reverificationConfig));
+        expect(status.freeTrial).toBe(false);
+    });
+
+    it('does not flag a Google base-plan purchase (no offer)', async () => {
+        googleMocks().subscriptionsV2Get.mockResolvedValueOnce(googleSubscriptionV2Response({
+            expiryTime: new Date(30 * DAY_MS).toISOString(), autoRenewEnabled: true, basePlanId: 'monthly-dialcrest-license',
+            startTime: new Date(0).toISOString(),
+        }));
+        const status = await lastValueFrom(verifyEntitlement('AC1', { store: 'play_store', purchaseToken: 'tokT' }, reverificationConfig));
+        expect(status.freeTrial).toBe(false);
+    });
+});
+
+describe('refunds, revocations, holds and grace periods', () => {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const NOW = 10 * DAY_MS;
+
+    beforeEach(() => {
+        resetDb();
+        jest.useFakeTimers().setSystemTime(NOW);
+    });
+    afterEach(() => jest.useRealTimers());
+
+    function appleEntitlement(): PresentedEntitlement {
+        return {
+            store: 'app_store',
+            signedTransactionInfo: appleSignedTransaction({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }),
+        };
+    }
+
+    function mockAppleTx(tx: { expiresDate: number; revocationDate?: number; gracePeriodExpiresDate?: number }) {
+        mockAppleFetch({
+            production: {
+                status: 200,
+                body: appleSubscriptionStatusesResponse([{
+                    transactionId: 't1', originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license', autoRenewStatus: 0, ...tx,
+                }]),
+            },
+        });
+    }
+
+    it('ends a refunded Apple subscription at its revocation date, not its original expiry', async () => {
+        mockAppleTx({ expiresDate: 30 * DAY_MS, revocationDate: 5 * DAY_MS });
+        const status = await lastValueFrom(verifyEntitlement('AC1', appleEntitlement(), reverificationConfig));
+        expect(status.isActive).toBe(false);
+        expect(status.expiresAt).toBe(5 * DAY_MS);
+        expect(dbTree().subscriptions.apple.orig1.expiresAt).toBe(5 * DAY_MS);
+    });
+
+    it('keeps an Apple subscription in its billing grace period active until the grace period ends', async () => {
+        mockAppleTx({ expiresDate: 9 * DAY_MS, gracePeriodExpiresDate: 25 * DAY_MS });
+        const status = await lastValueFrom(verifyEntitlement('AC1', appleEntitlement(), reverificationConfig));
+        expect(status.isActive).toBe(true);
+        expect(status.expiresAt).toBe(25 * DAY_MS);
+    });
+
+    it('lets a revocation win over a grace period', async () => {
+        mockAppleTx({ expiresDate: 9 * DAY_MS, gracePeriodExpiresDate: 25 * DAY_MS, revocationDate: 8 * DAY_MS });
+        const status = await lastValueFrom(verifyEntitlement('AC1', appleEntitlement(), reverificationConfig));
+        expect(status.isActive).toBe(false);
+    });
+
+    it.each([
+        'SUBSCRIPTION_STATE_EXPIRED',
+        'SUBSCRIPTION_STATE_ON_HOLD',
+        'SUBSCRIPTION_STATE_PAUSED',
+        'SUBSCRIPTION_STATE_PENDING',
+        'SUBSCRIPTION_STATE_PENDING_PURCHASE_CANCELED',
+    ])('treats a Google subscription in %s as inactive even with a future expiryTime', async (subscriptionState) => {
+        googleMocks().subscriptionsV2Get.mockResolvedValueOnce(googleSubscriptionV2Response({
+            expiryTime: new Date(30 * DAY_MS).toISOString(), autoRenewEnabled: false, basePlanId: 'monthly-dialcrest-license',
+            subscriptionState,
+        }));
+        const status = await lastValueFrom(verifyEntitlement('AC1', { store: 'play_store', purchaseToken: 'tokR' }, reverificationConfig));
+        expect(status.isActive).toBe(false);
+        expect(dbTree().subscriptions.google.tokR.expiresAt).toBe(NOW);
+    });
+
+    it.each(['SUBSCRIPTION_STATE_ACTIVE', 'SUBSCRIPTION_STATE_IN_GRACE_PERIOD', 'SUBSCRIPTION_STATE_CANCELED'])(
+        'keeps a Google subscription in %s active until its expiryTime', async (subscriptionState) => {
+            googleMocks().subscriptionsV2Get.mockResolvedValueOnce(googleSubscriptionV2Response({
+                expiryTime: new Date(30 * DAY_MS).toISOString(), autoRenewEnabled: false, basePlanId: 'monthly-dialcrest-license',
+                subscriptionState,
+            }));
+            const status = await lastValueFrom(verifyEntitlement('AC1', { store: 'play_store', purchaseToken: 'tokA' }, reverificationConfig));
+            expect(status.isActive).toBe(true);
+            expect(status.expiresAt).toBe(30 * DAY_MS);
+        },
+    );
+
+    it('a Google revocation notification cuts access off immediately', async () => {
+        googleMocks().subscriptionsV2Get.mockResolvedValueOnce(googleSubscriptionV2Response({
+            expiryTime: new Date(30 * DAY_MS).toISOString(), autoRenewEnabled: false, basePlanId: 'monthly-dialcrest-license',
+            subscriptionState: 'SUBSCRIPTION_STATE_EXPIRED',
+        }));
+        await lastValueFrom(handleGoogleNotification(
+            { voidedPurchaseNotification: { purchaseToken: 'tokV', orderId: 'GPA.1' } }, 'be.peblet.twilio_phone', '{}',
+        ));
+        expect(dbTree().subscriptions.google.tokV.expiresAt).toBe(NOW);
     });
 });
 
@@ -496,7 +663,7 @@ describe('paid records stay store-keyed', () => {
 describe('resolveDeviceEntitlement (per-device gate + subscription pointer)', () => {
     beforeEach(() => {
         resetDb();
-        resetFailedTrialEntitlementsForTests();
+        resetFailedOverrideEntitlementsForTests();
     });
     afterEach(() => jest.useRealTimers());
 
@@ -515,27 +682,27 @@ describe('resolveDeviceEntitlement (per-device gate + subscription pointer)', ()
         });
     }
 
-    async function afterTrial() {
+    async function afterOverride() {
         jest.useFakeTimers().setSystemTime(0);
-        await lastValueFrom(ensureTrialStarted('AC1'));
+        await grantOverride('AC1');
         jest.setSystemTime(THIRTY_DAYS_MS + 1);
     }
 
-    it('trial, nothing presented: entitled, no pointer', async () => {
-        await lastValueFrom(ensureTrialStarted('AC1'));
+    it('override, nothing presented: entitled, no pointer', async () => {
+        await grantOverride('AC1');
         expect(await lastValueFrom(resolveDeviceEntitlement('AC1', null, null, reverificationConfig)))
             .toEqual({ entitled: true, subscription: null });
     });
 
-    it('trial, purchase presented, no pointer yet: verifies once and points at the record (keeps ringing after the trial)', async () => {
-        await lastValueFrom(ensureTrialStarted('AC1'));
+    it('override, purchase presented, no pointer yet: verifies once and points at the record (keeps ringing after the override)', async () => {
+        await grantOverride('AC1');
         mockApple(Date.now() + 1e9);
         expect(await lastValueFrom(resolveDeviceEntitlement('AC1', appleEntitlement, null, reverificationConfig)))
             .toEqual({ entitled: true, subscription: 'subscriptions/apple/orig1' });
     });
 
-    it('trial with a pointer already: keeps it without a store round-trip', async () => {
-        await lastValueFrom(ensureTrialStarted('AC1'));
+    it('override with a pointer already: keeps it without a store round-trip', async () => {
+        await grantOverride('AC1');
         await admin.database().ref('/subscriptions/apple/orig1').set({ expiresAt: Date.now() + 1e9 });
         const fetchMock = mockApple(Date.now() + 1e9);
         expect(await lastValueFrom(resolveDeviceEntitlement('AC1', appleEntitlement, 'subscriptions/apple/orig1', reverificationConfig)))
@@ -543,8 +710,8 @@ describe('resolveDeviceEntitlement (per-device gate + subscription pointer)', ()
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it('trial, stale pointer, presented purchase already has a record: repoints without a store round-trip', async () => {
-        await lastValueFrom(ensureTrialStarted('AC1'));
+    it('override, stale pointer, presented purchase already has a record: repoints without a store round-trip', async () => {
+        await grantOverride('AC1');
         await admin.database().ref('/subscriptions/apple/orig1').set({ expiresAt: Date.now() + 1e9 });
         const fetchMock = mockApple(Date.now() + 1e9);
         expect(await lastValueFrom(resolveDeviceEntitlement('AC1', appleEntitlement, 'subscriptions/google/lapsed', reverificationConfig)))
@@ -552,8 +719,8 @@ describe('resolveDeviceEntitlement (per-device gate + subscription pointer)', ()
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it('trial, stale pointer, a new Google purchase with no record yet: verifies it and repoints (keeps ringing after the trial)', async () => {
-        await lastValueFrom(ensureTrialStarted('AC1'));
+    it('override, stale pointer, a new Google purchase with no record yet: verifies it and repoints (keeps ringing after the override)', async () => {
+        await grantOverride('AC1');
         googleMocks().subscriptionsV2Get.mockResolvedValueOnce(googleSubscriptionV2Response({
             expiryTime: new Date(Date.now() + 1e9).toISOString(), autoRenewEnabled: true, basePlanId: 'monthly-dialcrest-license',
         }));
@@ -561,8 +728,8 @@ describe('resolveDeviceEntitlement (per-device gate + subscription pointer)', ()
             .toEqual({ entitled: true, subscription: 'subscriptions/google/tokNew' });
     });
 
-    it('trial, a Google token superseded by a rotation: points at the chain root without a store round-trip', async () => {
-        await lastValueFrom(ensureTrialStarted('AC1'));
+    it('override, a Google token superseded by a rotation: points at the chain root without a store round-trip', async () => {
+        await grantOverride('AC1');
         await admin.database().ref('/subscriptions/google/tokA').set({ expiresAt: Date.now() + 1e9 });
         await admin.database().ref('/subscriptions/google/tokB').set({ redirectTo: 'tokA' });
         googleMocks().subscriptionsV2Get.mockClear();
@@ -571,8 +738,8 @@ describe('resolveDeviceEntitlement (per-device gate + subscription pointer)', ()
         expect(googleMocks().subscriptionsV2Get).not.toHaveBeenCalled();
     });
 
-    it('trial, an entitlement the store rejects: keeps the pointer and does not ask the store again on the next mint', async () => {
-        await lastValueFrom(ensureTrialStarted('AC1'));
+    it('override, an entitlement the store rejects: keeps the pointer and does not ask the store again on the next mint', async () => {
+        await grantOverride('AC1');
         googleMocks().subscriptionsV2Get.mockClear();
         googleMocks().subscriptionsV2Get.mockRejectedValue(Object.assign(new Error('Gone'), { code: 410 }));
         const gone: PresentedEntitlement = { store: 'play_store', purchaseToken: 'tokGone' };
@@ -584,8 +751,8 @@ describe('resolveDeviceEntitlement (per-device gate + subscription pointer)', ()
         googleMocks().subscriptionsV2Get.mockReset();
     });
 
-    it('trial, an Apple transaction that fails signature verification: keeps the pointer, never asks the store', async () => {
-        await lastValueFrom(ensureTrialStarted('AC1'));
+    it('override, an Apple transaction that fails signature verification: keeps the pointer, never asks the store', async () => {
+        await grantOverride('AC1');
         const fetchMock = mockApple(Date.now() + 1e9);
         const forged: PresentedEntitlement = { store: 'app_store', signedTransactionInfo: signedPayload({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }) };
         expect(await lastValueFrom(resolveDeviceEntitlement('AC1', forged, 'subscriptions/apple/old', reverificationConfig)))
@@ -593,41 +760,94 @@ describe('resolveDeviceEntitlement (per-device gate + subscription pointer)', ()
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it('nothing presented (e.g. after an iOS reinstall): no token beyond the trial, but the pointer is kept', async () => {
-        await afterTrial();
+    it('nothing presented (e.g. after an iOS reinstall): no token beyond the override, but the pointer is kept', async () => {
+        await afterOverride();
         expect(await lastValueFrom(resolveDeviceEntitlement('AC1', null, 'subscriptions/apple/orig1', reverificationConfig)))
             .toEqual({ entitled: false, subscription: 'subscriptions/apple/orig1' });
     });
 
-    it('nothing presented during the trial keeps the pointer too (so it still rings once the trial ends)', async () => {
-        await lastValueFrom(ensureTrialStarted('AC1'));
+    it('nothing presented during the override keeps the pointer too (so it still rings once the override ends)', async () => {
+        await grantOverride('AC1');
         expect(await lastValueFrom(resolveDeviceEntitlement('AC1', null, 'subscriptions/apple/orig1', reverificationConfig)))
             .toEqual({ entitled: true, subscription: 'subscriptions/apple/orig1' });
     });
 
-    it('after the trial with an active purchase: entitled, pointer set', async () => {
-        await afterTrial();
+    it('without an override, an active purchase: entitled, pointer set', async () => {
+        await afterOverride();
         mockApple(THIRTY_DAYS_MS * 3);
         expect(await lastValueFrom(resolveDeviceEntitlement('AC1', appleEntitlement, null, reverificationConfig)))
             .toEqual({ entitled: true, subscription: 'subscriptions/apple/orig1' });
     });
 
-    it('after the trial with a lapsed purchase: not entitled, but the pointer is kept (a later renewal reaches the device again)', async () => {
-        await afterTrial();
+    it('without an override, a lapsed purchase: not entitled, but the pointer is kept (a later renewal reaches the device again)', async () => {
+        await afterOverride();
         mockApple(1);
         expect(await lastValueFrom(resolveDeviceEntitlement('AC1', appleEntitlement, null, reverificationConfig)))
             .toEqual({ entitled: false, subscription: 'subscriptions/apple/orig1' });
     });
 
+    it('no override and nothing presented: not entitled (a new user must start a store subscription)', async () => {
+        expect(await lastValueFrom(resolveDeviceEntitlement('AC1', null, null, reverificationConfig)))
+            .toEqual({ entitled: false, subscription: null });
+    });
+
     it('a store outage refuses a token but keeps the pointer (the record still governs ringing)', async () => {
-        await afterTrial();
+        await afterOverride();
         mockAppleFetch({ production: { status: 500 } });
         expect(await lastValueFrom(resolveDeviceEntitlement('AC1', appleEntitlement, 'subscriptions/apple/orig1', reverificationConfig)))
             .toEqual({ entitled: false, subscription: 'subscriptions/apple/orig1' });
     });
 
+    it('no override, an active record verified within the trust window: entitled without a store round-trip', async () => {
+        await admin.database().ref('/subscriptions/apple/orig1').set({ expiresAt: Date.now() + 1e9, lastVerifiedAt: Date.now() - 60_000 });
+        const fetchMock = mockApple(Date.now() + 1e9);
+        expect(await lastValueFrom(resolveDeviceEntitlement('AC1', appleEntitlement, null, reverificationConfig)))
+            .toEqual({ entitled: true, subscription: 'subscriptions/apple/orig1' });
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('no override, a Google record verified within the trust window: entitled without a store round-trip', async () => {
+        await admin.database().ref('/subscriptions/google/tokA').set({ expiresAt: Date.now() + 1e9, lastVerifiedAt: Date.now() - 60_000 });
+        expect(await lastValueFrom(resolveDeviceEntitlement(
+            'AC1', { store: 'play_store', purchaseToken: 'tokA' }, null, reverificationConfig,
+        ))).toEqual({ entitled: true, subscription: 'subscriptions/google/tokA' });
+        expect(googleMocks().subscriptionsV2Get).not.toHaveBeenCalled();
+    });
+
+    it('no override, a record last verified longer ago than the trust window: re-verifies with the store', async () => {
+        await admin.database().ref('/subscriptions/apple/orig1').set({ expiresAt: Date.now() + 1e9, lastVerifiedAt: Date.now() - 25 * 60 * 60 * 1000 });
+        const fetchMock = mockApple(Date.now() + 1e9);
+        expect(await lastValueFrom(resolveDeviceEntitlement('AC1', appleEntitlement, null, reverificationConfig)))
+            .toEqual({ entitled: true, subscription: 'subscriptions/apple/orig1' });
+        expect(fetchMock).toHaveBeenCalled();
+        expect(dbTree().subscriptions.apple.orig1.lastVerifiedAt).toBeGreaterThan(Date.now() - 60_000);
+    });
+
+    it('no override, a recently verified but expired record: asks the store (which may report a renewal)', async () => {
+        await admin.database().ref('/subscriptions/apple/orig1').set({ expiresAt: Date.now() - 1, lastVerifiedAt: Date.now() });
+        const fetchMock = mockApple(Date.now() + 1e9);
+        expect(await lastValueFrom(resolveDeviceEntitlement('AC1', appleEntitlement, null, reverificationConfig)))
+            .toEqual({ entitled: true, subscription: 'subscriptions/apple/orig1' });
+        expect(fetchMock).toHaveBeenCalled();
+    });
+
+    it('no override, no stored record: asks the store, and a store failure never grants', async () => {
+        const fetchMock = mockAppleFetch({ production: { status: 500 } });
+        expect(await lastValueFrom(resolveDeviceEntitlement('AC1', appleEntitlement, 'subscriptions/apple/orig1', reverificationConfig)))
+            .toEqual({ entitled: false, subscription: 'subscriptions/apple/orig1' });
+        expect(fetchMock).toHaveBeenCalled();
+    });
+
+    it('no override, a record without lastVerifiedAt is not trusted', async () => {
+        await admin.database().ref('/subscriptions/apple/orig1').set({ expiresAt: Date.now() + 1e9 });
+        const fetchMock = mockAppleFetch({ production: { status: 500 } });
+        expect(await lastValueFrom(resolveDeviceEntitlement('AC1', appleEntitlement, null, reverificationConfig)))
+            .toEqual({ entitled: false, subscription: null });
+        expect(fetchMock).toHaveBeenCalled();
+    });
+
     it('a Google pointer names the chain root, so it survives token rotation', async () => {
-        await afterTrial();
+        await afterOverride();
         googleMocks().subscriptionsV2Get.mockResolvedValueOnce(googleSubscriptionV2Response({
             expiryTime: new Date(THIRTY_DAYS_MS * 3).toISOString(), autoRenewEnabled: true, basePlanId: 'monthly-dialcrest-license',
         }));
@@ -672,9 +892,9 @@ describe('app-presented Apple transactions are signature-verified', () => {
         expect(dbTree().subscriptions).toBeUndefined();
     });
 
-    it('a forged transaction never entitles a token mint after the trial', async () => {
+    it('a forged transaction never entitles a token mint without an override', async () => {
         jest.useFakeTimers().setSystemTime(0);
-        await lastValueFrom(ensureTrialStarted('AC1'));
+        await grantOverride('AC1');
         jest.setSystemTime(THIRTY_DAYS_MS + 1);
         const fetchMock = someoneElsesActiveSubscription();
         const entitlement: PresentedEntitlement = { store: 'app_store', signedTransactionInfo: forged };

@@ -56,8 +56,8 @@ export function appleConfig(): AppleConfig {
 /**
  * Reads the optional store entitlement a device attaches to a gated request
  * (twilioAccessToken) or a status refresh. iOS sends `signedTransactionInfo`
- * (a StoreKit JWS), Android sends `purchaseToken`; a trialing device that has
- * never purchased sends neither, and gets null.
+ * (a StoreKit JWS), Android sends `purchaseToken`; a device that has never
+ * purchased sends neither, and gets null.
  */
 export function presentedEntitlement(data: Record<string, unknown>): PresentedEntitlement | null {
     if (typeof data['signedTransactionInfo'] === 'string' && data['signedTransactionInfo']) {

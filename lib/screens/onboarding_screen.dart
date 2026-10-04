@@ -2,27 +2,39 @@ import 'dart:io';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../dto/IncomingPhoneNumbers.dart';
 import '../l10n/generated/app_localizations.dart';
+import '../models/subscription_status.dart';
 import '../services/storage_service.dart';
+import '../services/subscription_service.dart';
 import '../services/twilio_service.dart';
+import '../widgets/license_purchase.dart';
 
 /// First-run setup wizard, shown once per account on this device to a brand-new
 /// user (see StorageService.getOnboardingCompleted / HomeScreen). It front-loads
 /// the OS permissions the app otherwise requests lazily — explaining why each is
-/// needed and, crucially, what the user must do — and then picks/wires the Twilio
-/// number so the user can actually receive calls when they finish.
+/// needed and, crucially, what the user must do — picks/wires the Twilio number
+/// so the user can actually receive calls when they finish, and offers a license
+/// (with the store's 30-day free trial). The license step is optional: the user
+/// can look around first and get one later in Settings.
 ///
 /// Skippable at any time via the top-right button; skipping is permanent (it
 /// marks onboarding complete) so the wizard never nags. Reuses the existing
-/// [TwilioService] instance owned by HomeScreen rather than creating its own.
+/// [TwilioService]/[SubscriptionService] instances owned by HomeScreen rather
+/// than creating its own.
 class OnboardingScreen extends StatefulWidget {
   final TwilioService twilioService;
+  final SubscriptionService subscriptionService;
 
-  const OnboardingScreen({super.key, required this.twilioService});
+  const OnboardingScreen({
+    super.key,
+    required this.twilioService,
+    required this.subscriptionService,
+  });
 
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
@@ -33,8 +45,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   static const int _stepWelcome = 0;
   static const int _stepPermissions = 1;
   static const int _stepNumber = 2;
-  static const int _stepDone = 3;
-  static const int _stepCount = 4;
+  static const int _stepLicense = 3;
+  static const int _stepDone = 4;
+  static const int _stepCount = 5;
 
   int _currentStep = _stepWelcome;
 
@@ -51,6 +64,14 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   List<IncomingPhoneNumbers>? _numbers;
   String? _selectedNumber;
   bool _configuring = false;
+
+  // License step state. Loaded when the step is first shown.
+  bool _licenseLoaded = false;
+  bool _licenseLoading = false;
+  SubscriptionStatus? _license;
+  List<ProductDetails> _products = [];
+
+  bool get _hasActiveLicense => _license?.isActive ?? false;
 
   bool get _isAndroid => Platform.isAndroid;
 
@@ -77,9 +98,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   /// Re-reads the permissions we can query without prompting, so the status
   /// chips reflect reality (including changes made in system settings).
   Future<void> _refreshStatuses() async {
-    // Any of these native permission queries can throw on a platform without
-    // the plugin (e.g. desktop); fall back to the previous value rather than
-    // letting an unhandled async error escape.
+    // Any of these native permission queries can throw (e.g. a platform
+    // channel error); fall back to the previous value rather than letting an
+    // unhandled async error escape.
     final mic = await _safe(widget.twilioService.hasMicrophonePermission, _micGranted);
     final notifications = await _readNotificationStatus();
     final callingAccount = _isAndroid
@@ -213,6 +234,26 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     }
   }
 
+  /// Loads the device's current license (an override or an earlier purchase
+  /// may already cover it) and the store's plans for the license step. A
+  /// failed license lookup just shows the purchase options.
+  Future<void> _loadLicense() async {
+    setState(() => _licenseLoading = true);
+    final licenseFuture = widget.subscriptionService
+        .fetchLicense()
+        .catchError((_) => null as SubscriptionStatus?);
+    final productsFuture = widget.subscriptionService.loadProducts();
+    final license = await licenseFuture;
+    final products = await productsFuture;
+    if (!mounted) return;
+    setState(() {
+      _license = license;
+      _products = products;
+      _licenseLoaded = true;
+      _licenseLoading = false;
+    });
+  }
+
   Future<void> _complete() async {
     final storage = context.read<StorageService>();
     await storage.setOnboardingCompleted(widget.twilioService.accountSid, true);
@@ -232,6 +273,10 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       case _stepNumber:
         final ok = await _applyNumberSelection();
         if (!ok || !mounted) break;
+        setState(() => _currentStep = _stepLicense);
+        if (!_licenseLoaded && !_licenseLoading) _loadLicense();
+        break;
+      case _stepLicense:
         // Refresh so the summary reflects what the user actually granted
         // (e.g. after returning from the calling-account settings screen).
         await _refreshStatuses();
@@ -287,6 +332,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         return _buildPermissions(l10n);
       case _stepNumber:
         return _buildNumber(l10n);
+      case _stepLicense:
+        return _buildLicense(l10n);
       case _stepDone:
         return _buildDone(l10n);
       default:
@@ -296,7 +343,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
   Widget _buildNavBar(AppLocalizations l10n) {
     final isLast = _currentStep == _stepDone;
-    final busy = _configuring || (_currentStep == _stepNumber && _numbersLoading);
+    final busy = _configuring ||
+        (_currentStep == _stepNumber && _numbersLoading) ||
+        (_currentStep == _stepLicense && _licenseLoading);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       child: Row(
@@ -601,6 +650,89 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     );
   }
 
+  Widget _buildLicense(AppLocalizations l10n) {
+    if (_licenseLoading) {
+      return const Padding(
+        padding: EdgeInsets.all(48),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          l10n.onboardingLicenseTitle,
+          style: Theme.of(context).textTheme.headlineSmall,
+        ),
+        const SizedBox(height: 12),
+        if (_hasActiveLicense)
+          Row(
+            children: [
+              const Icon(Icons.check_circle_outline, color: Colors.green),
+              const SizedBox(width: 8),
+              Expanded(child: Text(l10n.onboardingLicenseActive)),
+            ],
+          )
+        else ...[
+          Text(
+            l10n.onboardingLicenseBody,
+            style: Theme.of(context).textTheme.bodyLarge,
+          ),
+          const SizedBox(height: 16),
+          LicensePurchaseButtons(
+            subscriptionService: widget.subscriptionService,
+            products: _products,
+            onLicensed: (license) => setState(() => _license = license),
+          ),
+          const SizedBox(height: 16),
+          _buildLicenseSkipSummary(l10n),
+        ],
+      ],
+    );
+  }
+
+  /// What still works — and what doesn't — if the user skips the license.
+  /// Mirrors the server gating: calls need a minted Voice token and message
+  /// pushes go only to entitled devices, while texting and call history use
+  /// the Twilio REST API directly.
+  Widget _buildLicenseSkipSummary(AppLocalizations l10n) {
+    final scheme = Theme.of(context).colorScheme;
+    Widget item(bool available, String text) => Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                available ? Icons.check_circle_outline : Icons.cancel_outlined,
+                size: 20,
+                color: available ? Colors.green : scheme.error,
+              ),
+              const SizedBox(width: 8),
+              Expanded(child: Text(text)),
+            ],
+          ),
+        );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          l10n.onboardingLicenseSkipTitle,
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 8),
+        item(true, l10n.onboardingLicenseCanText),
+        item(true, l10n.onboardingLicenseCanHistory),
+        item(false, l10n.onboardingLicenseCannotCall),
+        item(false, l10n.onboardingLicenseCannotNotify),
+        const SizedBox(height: 4),
+        Text(
+          l10n.onboardingLicenseSkipHint,
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      ],
+    );
+  }
+
   Widget _buildDone(AppLocalizations l10n) {
     final hasNumber = (_numbers?.isNotEmpty ?? false) && _selectedNumber != null;
 
@@ -613,6 +745,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       if (_isAndroid && _callingAccountEnabled != true)
         l10n.onboardingCallingAccountTitle,
       if (!hasNumber) l10n.onboardingNumberTitle,
+      if (!_hasActiveLicense) l10n.onboardingLicenseTitle,
     ];
     final allSet = outstanding.isEmpty;
 
