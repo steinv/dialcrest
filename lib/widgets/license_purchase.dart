@@ -145,12 +145,63 @@ class _LicensePurchaseButtonsState extends State<LicensePurchaseButtons> {
   /// currency vary by region/store, so this never falls back to a hardcoded
   /// amount — only to a plan name.
   String _priceLabel(String productId, String fallback) {
-    final matches = widget.products.where((p) => p.id == productId);
-    if (matches.isEmpty) return fallback;
+    final price = _price(productId);
+    if (price == null) return fallback;
     final suffix = productId == SubscriptionService.yearlyProductId
         ? AppLocalizations.of(context)!.perYearSuffix
         : AppLocalizations.of(context)!.perMonthSuffix;
-    return '${matches.first.price}$suffix';
+    return '$price$suffix';
+  }
+
+  /// The store's localized price for [productId], or null while the store
+  /// hasn't returned it yet.
+  String? _price(String productId) {
+    final matches = widget.products.where((p) => p.id == productId);
+    return matches.isEmpty ? null : matches.first.price;
+  }
+
+  /// Highlighted "30 days free" notice spelling out what each plan costs once
+  /// the trial ends. Falls back to the price-less wording until the store has
+  /// returned both plans.
+  Widget _buildFreeTrialNotice(AppLocalizations l10n) {
+    final scheme = Theme.of(context).colorScheme;
+    final monthly = _price(SubscriptionService.monthlyProductId);
+    final yearly = _price(SubscriptionService.yearlyProductId);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: scheme.primaryContainer,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.card_giftcard, size: 24, color: scheme.onPrimaryContainer),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  l10n.licenseFreeTrialTitle,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: scheme.onPrimaryContainer,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  monthly != null && yearly != null
+                      ? l10n.licenseFreeTrialPrices(monthly, yearly)
+                      : l10n.licenseFreeTrialOffer,
+                  style: TextStyle(color: scheme.onPrimaryContainer),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -160,18 +211,7 @@ class _LicensePurchaseButtonsState extends State<LicensePurchaseButtons> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (widget.subscriptionService.freeTrialOffered) ...[
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                Icons.card_giftcard,
-                size: 20,
-                color: Theme.of(context).colorScheme.primary,
-              ),
-              const SizedBox(width: 8),
-              Expanded(child: Text(l10n.licenseFreeTrialOffer)),
-            ],
-          ),
+          _buildFreeTrialNotice(l10n),
           const SizedBox(height: 12),
         ],
         Row(

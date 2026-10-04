@@ -148,8 +148,10 @@ class SubscriptionService {
   Future<SubscriptionStatus?> fetchOverride() async {
     // The node is account-scoped in RTDB rules, so authorize this read with
     // the account claim first (see AccountAuthService).
-    await AccountAuthService.instance
-        .ensureLinked(accountSid, _storageService.authToken);
+    await AccountAuthService.instance.ensureLinked(
+      accountSid,
+      _storageService.authToken,
+    );
     final snapshot = await FirebaseDatabase.instanceFor(
       app: Firebase.app(),
       databaseURL:
@@ -245,14 +247,22 @@ class SubscriptionService {
       final match = byBasePlan[planId];
       if (match == null) continue;
       _storeProducts[planId] = match;
+      // match.price comes from the offer's first pricing phase, which for
+      // the free-trial offer is the free one — show the recurring
+      // (last-phase) price the user actually pays after the trial.
+      final recurring = match
+          .productDetails
+          .subscriptionOfferDetails![match.subscriptionIndex!]
+          .pricingPhases
+          .last;
       result.add(
         ProductDetails(
           id: planId,
           title: match.title,
           description: match.description,
-          price: match.price,
-          rawPrice: match.rawPrice,
-          currencyCode: match.currencyCode,
+          price: recurring.formattedPrice,
+          rawPrice: recurring.priceAmountMicros / 1000000.0,
+          currencyCode: recurring.priceCurrencyCode,
           currencySymbol: match.currencySymbol,
         ),
       );
@@ -340,8 +350,7 @@ class SubscriptionService {
   /// for either plan, so the server derives the actual plan itself from the
   /// Play API's base plan id.
   Future<SubscriptionStatus> _verifyPurchase(PurchaseDetails purchase) async {
-    final verificationData =
-        purchase.verificationData.serverVerificationData;
+    final verificationData = purchase.verificationData.serverVerificationData;
     // Persist first so the entitlement survives even if verification fails
     // transiently — later token requests re-present it and the backend
     // re-verifies against the store.

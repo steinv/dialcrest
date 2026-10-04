@@ -338,6 +338,14 @@ class AppLocalizationsDe extends AppLocalizations {
       'Neue Abonnenten erhalten die ersten 30 Tage gratis. Wenn Sie vor Ende der Testphase kündigen, wird nichts berechnet.';
 
   @override
+  String get licenseFreeTrialTitle => '30 Tage kostenlos testen';
+
+  @override
+  String licenseFreeTrialPrices(String monthly, String yearly) {
+    return 'Nach der kostenlosen Testphase zahlen Sie je nach gewähltem Abo $monthly pro Monat oder $yearly pro Jahr. Wenn Sie vor Ende der Testphase kündigen, wird nichts berechnet.';
+  }
+
+  @override
   String licenseOverrideUntil(Object date) {
     return 'Von Dialcrest bereitgestellte Lizenz bis $date';
   }
@@ -587,11 +595,35 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get onboardingLicenseBody =>
-      'Eine Lizenz schaltet auf diesem Gerät Anrufe und Benachrichtigungen für neue Nachrichten frei. Nachrichten senden und lesen sowie Ihre Anrufliste funktionieren auch ohne. Sehen Sie sich also gern zuerst um – eine Lizenz können Sie später in den Einstellungen erwerben.';
+      'Mit einer Lizenz können Sie auf diesem Gerät Anrufe tätigen und empfangen und werden über neue Nachrichten benachrichtigt.';
 
   @override
   String get onboardingLicenseActive =>
       'Dieses Gerät hat bereits eine aktive Lizenz. Alles ist bereit.';
+
+  @override
+  String get onboardingLicenseSkipTitle =>
+      'Wenn Sie diesen Schritt überspringen';
+
+  @override
+  String get onboardingLicenseCanText =>
+      'Können Sie Nachrichten senden und lesen';
+
+  @override
+  String get onboardingLicenseCanHistory =>
+      'Können Sie Ihre Anrufliste ansehen';
+
+  @override
+  String get onboardingLicenseCannotCall =>
+      'Können Sie keine Anrufe tätigen oder empfangen';
+
+  @override
+  String get onboardingLicenseCannotNotify =>
+      'Werden Sie nicht über neue Nachrichten benachrichtigt';
+
+  @override
+  String get onboardingLicenseSkipHint =>
+      'Sie können die kostenlose Testphase später starten oder eine Lizenz in den Einstellungen erwerben.';
 
   @override
   String get chooseChannelTitle => 'Senden mit';

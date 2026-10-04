@@ -336,6 +336,14 @@ class AppLocalizationsEn extends AppLocalizations {
       'New subscribers get the first 30 days free. Cancel before the trial ends and you won\'t be charged.';
 
   @override
+  String get licenseFreeTrialTitle => 'Try it free for 30 days';
+
+  @override
+  String licenseFreeTrialPrices(String monthly, String yearly) {
+    return 'After the free trial, you pay $monthly per month or $yearly per year, depending on the plan you choose. Cancel before the trial ends and you won\'t be charged.';
+  }
+
+  @override
   String licenseOverrideUntil(Object date) {
     return 'License provided by Dialcrest until $date';
   }
@@ -582,11 +590,31 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get onboardingLicenseBody =>
-      'A license unlocks calls and notifications for new messages on this device. Texting and your call history work without one, so feel free to look around first — you can get a license later in Settings.';
+      'A license lets you make and receive calls and get notified of new messages on this device.';
 
   @override
   String get onboardingLicenseActive =>
       'This device already has an active license. You\'re good to go.';
+
+  @override
+  String get onboardingLicenseSkipTitle => 'If you skip this step';
+
+  @override
+  String get onboardingLicenseCanText => 'You can send and read messages';
+
+  @override
+  String get onboardingLicenseCanHistory => 'You can view your call history';
+
+  @override
+  String get onboardingLicenseCannotCall => 'You can\'t make or receive calls';
+
+  @override
+  String get onboardingLicenseCannotNotify =>
+      'You won\'t be notified of new messages';
+
+  @override
+  String get onboardingLicenseSkipHint =>
+      'You can start your free trial or buy a license later in Settings.';
 
   @override
   String get chooseChannelTitle => 'Send with';

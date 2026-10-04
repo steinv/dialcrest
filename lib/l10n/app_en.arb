@@ -314,6 +314,14 @@
   "licenseFreeTrialOffer": "New subscribers get the first 30 days free. Cancel before the trial ends and you won't be charged.",
   "@licenseFreeTrialOffer": {},
 
+  "licenseFreeTrialTitle": "Try it free for 30 days",
+  "@licenseFreeTrialTitle": {},
+
+  "licenseFreeTrialPrices": "After the free trial, you pay {monthly} per month or {yearly} per year, depending on the plan you choose. Cancel before the trial ends and you won't be charged.",
+  "@licenseFreeTrialPrices": {
+    "placeholders": { "monthly": { "type": "String" }, "yearly": { "type": "String" } }
+  },
+
   "licenseOverrideUntil": "License provided by Dialcrest until {date}",
   "@licenseOverrideUntil": {
     "placeholders": { "date": {} }
@@ -537,11 +545,29 @@
   "onboardingLicenseTitle": "Your license",
   "@onboardingLicenseTitle": {},
 
-  "onboardingLicenseBody": "A license unlocks calls and notifications for new messages on this device. Texting and your call history work without one, so feel free to look around first — you can get a license later in Settings.",
+  "onboardingLicenseBody": "A license lets you make and receive calls and get notified of new messages on this device.",
   "@onboardingLicenseBody": {},
 
   "onboardingLicenseActive": "This device already has an active license. You're good to go.",
   "@onboardingLicenseActive": {},
+
+  "onboardingLicenseSkipTitle": "If you skip this step",
+  "@onboardingLicenseSkipTitle": {},
+
+  "onboardingLicenseCanText": "You can send and read messages",
+  "@onboardingLicenseCanText": {},
+
+  "onboardingLicenseCanHistory": "You can view your call history",
+  "@onboardingLicenseCanHistory": {},
+
+  "onboardingLicenseCannotCall": "You can't make or receive calls",
+  "@onboardingLicenseCannotCall": {},
+
+  "onboardingLicenseCannotNotify": "You won't be notified of new messages",
+  "@onboardingLicenseCannotNotify": {},
+
+  "onboardingLicenseSkipHint": "You can start your free trial or buy a license later in Settings.",
+  "@onboardingLicenseSkipHint": {},
 
   "chooseChannelTitle": "Send with",
   "@chooseChannelTitle": {},

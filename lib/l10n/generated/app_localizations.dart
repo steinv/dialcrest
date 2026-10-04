@@ -644,6 +644,18 @@ abstract class AppLocalizations {
   /// **'New subscribers get the first 30 days free. Cancel before the trial ends and you won\'t be charged.'**
   String get licenseFreeTrialOffer;
 
+  /// No description provided for @licenseFreeTrialTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Try it free for 30 days'**
+  String get licenseFreeTrialTitle;
+
+  /// No description provided for @licenseFreeTrialPrices.
+  ///
+  /// In en, this message translates to:
+  /// **'After the free trial, you pay {monthly} per month or {yearly} per year, depending on the plan you choose. Cancel before the trial ends and you won\'t be charged.'**
+  String licenseFreeTrialPrices(String monthly, String yearly);
+
   /// No description provided for @licenseOverrideUntil.
   ///
   /// In en, this message translates to:
@@ -1043,7 +1055,7 @@ abstract class AppLocalizations {
   /// No description provided for @onboardingLicenseBody.
   ///
   /// In en, this message translates to:
-  /// **'A license unlocks calls and notifications for new messages on this device. Texting and your call history work without one, so feel free to look around first — you can get a license later in Settings.'**
+  /// **'A license lets you make and receive calls and get notified of new messages on this device.'**
   String get onboardingLicenseBody;
 
   /// No description provided for @onboardingLicenseActive.
@@ -1051,6 +1063,42 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This device already has an active license. You\'re good to go.'**
   String get onboardingLicenseActive;
+
+  /// No description provided for @onboardingLicenseSkipTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'If you skip this step'**
+  String get onboardingLicenseSkipTitle;
+
+  /// No description provided for @onboardingLicenseCanText.
+  ///
+  /// In en, this message translates to:
+  /// **'You can send and read messages'**
+  String get onboardingLicenseCanText;
+
+  /// No description provided for @onboardingLicenseCanHistory.
+  ///
+  /// In en, this message translates to:
+  /// **'You can view your call history'**
+  String get onboardingLicenseCanHistory;
+
+  /// No description provided for @onboardingLicenseCannotCall.
+  ///
+  /// In en, this message translates to:
+  /// **'You can\'t make or receive calls'**
+  String get onboardingLicenseCannotCall;
+
+  /// No description provided for @onboardingLicenseCannotNotify.
+  ///
+  /// In en, this message translates to:
+  /// **'You won\'t be notified of new messages'**
+  String get onboardingLicenseCannotNotify;
+
+  /// No description provided for @onboardingLicenseSkipHint.
+  ///
+  /// In en, this message translates to:
+  /// **'You can start your free trial or buy a license later in Settings.'**
+  String get onboardingLicenseSkipHint;
 
   /// No description provided for @chooseChannelTitle.
   ///

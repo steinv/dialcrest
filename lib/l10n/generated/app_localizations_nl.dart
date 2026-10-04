@@ -338,6 +338,14 @@ class AppLocalizationsNl extends AppLocalizations {
       'Nieuwe abonnees krijgen de eerste 30 dagen gratis. Zeg op voor het einde van de proefperiode en je betaalt niets.';
 
   @override
+  String get licenseFreeTrialTitle => 'Probeer 30 dagen gratis';
+
+  @override
+  String licenseFreeTrialPrices(String monthly, String yearly) {
+    return 'Na de gratis proefperiode betaal je $monthly per maand of $yearly per jaar, afhankelijk van het abonnement dat je kiest. Zeg op voor het einde van de proefperiode en je betaalt niets.';
+  }
+
+  @override
   String licenseOverrideUntil(Object date) {
     return 'Licentie verstrekt door Dialcrest tot $date';
   }
@@ -587,11 +595,33 @@ class AppLocalizationsNl extends AppLocalizations {
 
   @override
   String get onboardingLicenseBody =>
-      'Een licentie zet bellen en meldingen voor nieuwe berichten aan op dit toestel. Berichten sturen en je gespreksgeschiedenis werken ook zonder, dus kijk gerust eerst rond: je kunt later een licentie nemen bij Instellingen.';
+      'Met een licentie kun je op dit toestel bellen en gebeld worden, en krijg je meldingen van nieuwe berichten.';
 
   @override
   String get onboardingLicenseActive =>
       'Dit toestel heeft al een actieve licentie. Je kunt aan de slag.';
+
+  @override
+  String get onboardingLicenseSkipTitle => 'Als je deze stap overslaat';
+
+  @override
+  String get onboardingLicenseCanText => 'Kun je berichten sturen en lezen';
+
+  @override
+  String get onboardingLicenseCanHistory =>
+      'Kun je je gespreksgeschiedenis bekijken';
+
+  @override
+  String get onboardingLicenseCannotCall =>
+      'Kun je niet bellen of gebeld worden';
+
+  @override
+  String get onboardingLicenseCannotNotify =>
+      'Krijg je geen meldingen van nieuwe berichten';
+
+  @override
+  String get onboardingLicenseSkipHint =>
+      'Je kunt je gratis proefperiode later starten of een licentie nemen bij Instellingen.';
 
   @override
   String get chooseChannelTitle => 'Verstuur met';

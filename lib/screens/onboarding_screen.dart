@@ -684,7 +684,51 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             products: _products,
             onLicensed: (license) => setState(() => _license = license),
           ),
+          const SizedBox(height: 16),
+          _buildLicenseSkipSummary(l10n),
         ],
+      ],
+    );
+  }
+
+  /// What still works — and what doesn't — if the user skips the license.
+  /// Mirrors the server gating: calls need a minted Voice token and message
+  /// pushes go only to entitled devices, while texting and call history use
+  /// the Twilio REST API directly.
+  Widget _buildLicenseSkipSummary(AppLocalizations l10n) {
+    final scheme = Theme.of(context).colorScheme;
+    Widget item(bool available, String text) => Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                available ? Icons.check_circle_outline : Icons.cancel_outlined,
+                size: 20,
+                color: available ? Colors.green : scheme.error,
+              ),
+              const SizedBox(width: 8),
+              Expanded(child: Text(text)),
+            ],
+          ),
+        );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          l10n.onboardingLicenseSkipTitle,
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 8),
+        item(true, l10n.onboardingLicenseCanText),
+        item(true, l10n.onboardingLicenseCanHistory),
+        item(false, l10n.onboardingLicenseCannotCall),
+        item(false, l10n.onboardingLicenseCannotNotify),
+        const SizedBox(height: 4),
+        Text(
+          l10n.onboardingLicenseSkipHint,
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
       ],
     );
   }
