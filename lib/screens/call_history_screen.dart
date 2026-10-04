@@ -247,8 +247,11 @@ class CallHistoryScreenState extends State<CallHistoryScreen> {
         ),
       ),
       title: Text(contactName ?? call.phoneNumber),
-      subtitle: Text(subtitle),
-      isThreeLine: durationText.isNotEmpty,
+      // Always reserve the duration line (blank when there's no duration) so
+      // every row has the same height.
+      subtitle: Text(durationText.isNotEmpty ? subtitle : '$subtitle\n '),
+      isThreeLine: true,
+      titleAlignment: ListTileTitleAlignment.center,
       trailing: IconButton(
         icon: Icon(Icons.call, color: Theme.of(context).colorScheme.secondary),
         onPressed: () => widget.onCall(call.phoneNumber),
