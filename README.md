@@ -102,28 +102,28 @@ project `twilio-phone-peblet`), with business logic split out into
 
 ### Callable (invoked from the app via `FirebaseFunctions`/`httpsCallable`)
 
-| Function | What it does | Called from |
-| --- | --- | --- |
-| `twilioRegister` | Creates/updates the device's Twilio Voice push credential; also runs the "account onboarded" hook that records account creation. | `lib/services/twilio_service.dart` (`_register()`) |
-| `twilioAccessToken` | Verifies the caller's Auth Token, records this device in `/twilio/{sid}/devices` (with a pointer to its user's subscription, if any), then mints a Voice access token with the device's own identity if the line has a live license override or the device presents an active subscription; otherwise refuses (`subscription-expired`). | `lib/services/twilio_service.dart` (`_mintAccessToken()`) |
-| `twilioVerifyApplePurchase` | Verifies an App Store transaction and persists the resulting entitlement/expiry. | `lib/services/subscription_service.dart` (`_verifyPurchase()`, iOS) |
-| `twilioVerifyGooglePurchase` | Verifies a Play purchase token and persists the resulting entitlement/expiry. | `lib/services/subscription_service.dart` (`_verifyPurchase()`, Android) |
-| `twilioRefreshSubscription` | Re-checks the stored entitlement and returns current subscription status (keeps Settings accurate). | `lib/services/subscription_service.dart` (`refreshPaidStatus()`) |
-| `twilioGetIncomingAppSid` | Resolves (creating if needed) the tenant's incoming TwiML App SID. | `lib/services/twilio_service.dart` (`getIncomingAppSid()`) |
-| `twilioConfigureNumbers` | Wires the given number SIDs to ring this app, restoring any deselected number's original webhook config. | `lib/services/twilio_service.dart` (`configureNumbers()`) |
-| `twilioRegisterMessagingDevice` | Verifies the caller's Auth Token, then stores the device's FCM token on its device record so incoming SMS can be pushed to it (while its user is entitled). | `lib/services/twilio_service.dart` (`_registerMessagingDevice()`) |
-| `twilioLinkAccount` | Verifies the caller's Twilio credentials and stamps their anonymous Firebase identity with an `accountSid` custom claim, which the RTDB rules use to authorize account-scoped reads/writes (see [Security](#security)). | `lib/services/account_auth_service.dart` (`link()` / `ensureLinked()`) |
+| Function                        | What it does                                                                                                                                                                                                                                                                                                                            | Called from                                                             |
+|---------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|
+| `twilioRegister`                | Creates/updates the device's Twilio Voice push credential; also runs the "account onboarded" hook that records account creation.                                                                                                                                                                                                        | `lib/services/twilio_service.dart` (`_register()`)                      |
+| `twilioAccessToken`             | Verifies the caller's Auth Token, records this device in `/twilio/{sid}/devices` (with a pointer to its user's subscription, if any), then mints a Voice access token with the device's own identity if the line has a live license override or the device presents an active subscription; otherwise refuses (`subscription-expired`). | `lib/services/twilio_service.dart` (`_mintAccessToken()`)               |
+| `twilioVerifyApplePurchase`     | Verifies an App Store transaction and persists the resulting entitlement/expiry.                                                                                                                                                                                                                                                        | `lib/services/subscription_service.dart` (`_verifyPurchase()`, iOS)     |
+| `twilioVerifyGooglePurchase`    | Verifies a Play purchase token and persists the resulting entitlement/expiry.                                                                                                                                                                                                                                                           | `lib/services/subscription_service.dart` (`_verifyPurchase()`, Android) |
+| `twilioRefreshSubscription`     | Re-checks the stored entitlement and returns current subscription status (keeps Settings accurate).                                                                                                                                                                                                                                     | `lib/services/subscription_service.dart` (`refreshPaidStatus()`)        |
+| `twilioGetIncomingAppSid`       | Resolves (creating if needed) the tenant's incoming TwiML App SID.                                                                                                                                                                                                                                                                      | `lib/services/twilio_service.dart` (`getIncomingAppSid()`)              |
+| `twilioConfigureNumbers`        | Wires the given number SIDs to ring this app, restoring any deselected number's original webhook config.                                                                                                                                                                                                                                | `lib/services/twilio_service.dart` (`configureNumbers()`)               |
+| `twilioRegisterMessagingDevice` | Verifies the caller's Auth Token, then stores the device's FCM token on its device record so incoming SMS can be pushed to it (while its user is entitled).                                                                                                                                                                             | `lib/services/twilio_service.dart` (`_registerMessagingDevice()`)       |
+| `twilioLinkAccount`             | Verifies the caller's Twilio credentials and stamps their anonymous Firebase identity with an `accountSid` custom claim, which the RTDB rules use to authorize account-scoped reads/writes (see [Security](#security)).                                                                                                                 | `lib/services/account_auth_service.dart` (`link()` / `ensureLinked()`)  |
 
 ### Webhook/trigger (invoked by Twilio, Apple, or Google — never called from the app)
 
-| Function | What it does | Invoked by |
-| --- | --- | --- |
-| `twilioIncomingCall` | TwiML for an inbound PSTN call; rings the devices whose own user is entitled — the line's license override, or that device's subscription (see [`SUBSCRIPTION_NOTIFICATIONS.md`](SUBSCRIPTION_NOTIFICATIONS.md)). | Twilio, as the number's voice URL |
-| `twilioOutgoingCall` | TwiML for an outgoing call placed from the SDK; dials the destination using the account number as caller ID. | Twilio, as the TwiML App's outgoing voice URL |
-| `twilioCallStatusChanges` | Status-callback webhook that logs call lifecycle events. | Twilio, as a status callback |
-| `twilioIncomingMessage` | TwiML for inbound SMS/MMS; pushes an FCM notification to the devices whose own user is entitled. | Twilio, as the number's SMS URL |
-| `twilioAppleNotifications` | App Store Server Notifications V2 webhook; verifies the notification's JWS signature, then re-verifies subscription state from Apple on any lifecycle event. | Apple (see [Subscription renewal notifications](#subscription-renewal-notifications-app-store--play)) |
-| `onPlaySubscriptionNotification` | Pub/Sub-triggered; consumes Google Play Real-time Developer Notifications and re-verifies purchase-token state. | Google Play RTDN, via Pub/Sub (see below) |
+| Function                         | What it does                                                                                                                                                 | Invoked by                                                                                            |
+|----------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------|
+| `twilioIncomingCall`             | TwiML for an inbound PSTN call; rings the devices whose own user is entitled — the line's license override, or that device's subscription.                   | Twilio, as the number's voice URL                                                                     |
+| `twilioOutgoingCall`             | TwiML for an outgoing call placed from the SDK; dials the destination using the account number as caller ID.                                                 | Twilio, as the TwiML App's outgoing voice URL                                                         |
+| `twilioCallStatusChanges`        | Status-callback webhook that logs call lifecycle events.                                                                                                     | Twilio, as a status callback                                                                          |
+| `twilioIncomingMessage`          | TwiML for inbound SMS/MMS; pushes an FCM notification to the devices whose own user is entitled.                                                             | Twilio, as the number's SMS URL                                                                       |
+| `twilioAppleNotifications`       | App Store Server Notifications V2 webhook; verifies the notification's JWS signature, then re-verifies subscription state from Apple on any lifecycle event. | Apple (see [Subscription renewal notifications](#subscription-renewal-notifications-app-store--play)) |
+| `onPlaySubscriptionNotification` | Pub/Sub-triggered; consumes Google Play Real-time Developer Notifications and re-verifies purchase-token state.                                              | Google Play RTDN, via Pub/Sub (see below)                                                             |
 
 The four Twilio webhooks verify `X-Twilio-Signature` with the tenant's Auth Token
 (stored server-side for exactly that purpose, see [Security](#security)). They are
@@ -131,7 +131,8 @@ being migrated to the Cloudflare Worker in `worker/`: the
 `WEBHOOK_PUBLIC_BASE_URL` param in `functions/.env.twilio-phone-peblet` decides
 which host gets written into newly configured Twilio resources, and
 `npm run backfill:webhooks` (in `functions/`, see
-`functions/src/scripts/backfillWebhooks.ts`) moves existing tenants. `TWILIO_SIGNATURE_FAIL_CLOSED` in the same
+`functions/src/scripts/backfillWebhooks.ts`) moves existing tenants. `TWILIO_SIGNATURE_FAIL_CLOSED`
+in the same
 file rejects webhooks for accounts with no stored token once the rollout is done.
 Every function is capped at 10 instances (`setGlobalOptions` in `index.ts`).
 
@@ -205,7 +206,9 @@ function a single, consistent place to read credentials from.
 
 ```json
 {
-  "android_fcm": { "<FCM v1 service-account JSON>": "..." },
+  "android_fcm": {
+    "<FCM v1 service-account JSON>": "..."
+  },
   "ios_apn_pk": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----",
   "apple_iap_key": {
     "issuerId": "...",
@@ -217,10 +220,10 @@ function a single, consistent place to read credentials from.
 }
 ```
 
-| Property | What it is | Where it comes from |
-| --- | --- | --- |
-| `android_fcm` | Firebase FCM v1 service-account JSON (shared across all tenants). Also doubles as the Google Play service account — see below | Firebase Console → Project settings → Service accounts → Generate new private key. |
-| `ios_apn_pk` | APN VoIP private key (PEM), paired with `IOS_APN_CERTIFICATE` | `apn_key.pem` — see "Enabling iOS push" below. |
+| Property        | What it is                                                                                                                     | Where it comes from                                                                                                                                                                                                                                                                              |
+|-----------------|--------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `android_fcm`   | Firebase FCM v1 service-account JSON (shared across all tenants). Also doubles as the Google Play service account — see below  | Firebase Console → Project settings → Service accounts → Generate new private key.                                                                                                                                                                                                               |
+| `ios_apn_pk`    | APN VoIP private key (PEM), paired with `IOS_APN_CERTIFICATE`                                                                  | `apn_key.pem` — see "Enabling iOS push" below.                                                                                                                                                                                                                                                   |
 | `apple_iap_key` | App Store Connect "In-App Purchase" API key — used to call the App Store Server API to verify/re-verify subscription purchases | App Store Connect → Users and Access → Integrations → In-App Purchase → generate a key; `bundleId` is this app's iOS bundle ID (`be.peblet.twilioPhone`); `appAppleId` is the app's numeric Apple ID (App Store Connect → App Information), needed to verify Production App Store notifications. |
 
 There's no separate Google Play service-account secret: the `android_fcm`
@@ -297,10 +300,10 @@ when you renew.
 
 ### 3. Configure the two values
 
-| Value             | What it is                  | Where it goes                                    | Why there                                             |
-| ----------------- | --------------------------- | ------------------------------------------------ | ----------------------------------------------------- |
-| `apn_cert.pem`    | Public VoIP certificate     | `IOS_APN_CERTIFICATE` string param (`functions/.env.twilio-phone-peblet`) | Public, not secret — declared via `defineString`. |
-| `apn_key.pem`     | Private key (sensitive)     | `ios_apn_pk` field inside `TWILIO_PEBLET_SECRET` | Secret — kept in Secret Manager via `defineSecret`.   |
+| Value          | What it is              | Where it goes                                                             | Why there                                           |
+|----------------|-------------------------|---------------------------------------------------------------------------|-----------------------------------------------------|
+| `apn_cert.pem` | Public VoIP certificate | `IOS_APN_CERTIFICATE` string param (`functions/.env.twilio-phone-peblet`) | Public, not secret — declared via `defineString`.   |
+| `apn_key.pem`  | Private key (sensitive) | `ios_apn_pk` field inside `TWILIO_PEBLET_SECRET`                          | Secret — kept in Secret Manager via `defineSecret`. |
 
 **Certificate** — set it in `functions/.env.twilio-phone-peblet`, replacing the
 existing empty `IOS_APN_CERTIFICATE=` line. (Don't put it in `functions/.env`:
@@ -377,10 +380,6 @@ Apple's/Google's side, so the stores need to *tell* the backend when a
 subscription renews, lapses, or is refunded — otherwise the cached expiry goes
 stale and Settings shows "expired" for a subscription that actually renewed. Set
 up both stores' notifications so those events reach the Cloud Functions.
-
-The full design and code plan lives in
-[`SUBSCRIPTION_NOTIFICATIONS.md`](SUBSCRIPTION_NOTIFICATIONS.md); this section is
-just the console setup for the two notification channels.
 
 ### Apple — App Store Server Notifications V2
 

@@ -54,3 +54,6 @@ build/
 .firebase
 node_modules
 dist/
+
+# Local build-time secrets (e.g. App Check debug token), passed via --dart-define-from-file
+dart_defines.local.json

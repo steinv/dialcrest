@@ -2,9 +2,7 @@
 
 Tracks the Apple-specific work that's outstanding for the subscription rework
 (branch `rework-license`). Parked because there's no Apple Developer account
-available right now. The general design and the Android/Google side are in
-[`SUBSCRIPTION_NOTIFICATIONS.md`](SUBSCRIPTION_NOTIFICATIONS.md); this file is
-just the Apple to-do list so it isn't lost.
+available right now.
 
 The **backend code for Apple already exists and compiles** — the items below are
 console setup, a secret, and two hardening/UX follow-ups. Nothing here blocks
