@@ -73,6 +73,10 @@ class _LicensePurchaseButtonsState extends State<LicensePurchaseButtons> {
       if (!mounted) return;
       setState(() => _isPurchasing = false);
       if (recovered != null && recovered.plan == expectedPlan) {
+        // No purchase update arrives on this path, so re-register here as a
+        // verified purchase would — else this device stays unreachable for
+        // incoming calls/SMS until its next token mint.
+        widget.subscriptionService.onEntitlementVerified?.call();
         widget.onLicensed(recovered);
         return;
       }
