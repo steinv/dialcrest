@@ -225,12 +225,26 @@ describe('isValidTwilioSignature — host binding and fail-closed', () => {
     });
 });
 
-interface FakeNumber { sid: string; voiceApplicationSid: string; smsUrl: string; statusCallback: string }
+interface FakeNumber { sid: string; phoneNumber?: string; voiceApplicationSid: string; smsUrl: string; statusCallback: string }
+interface FakeSender { sid: string; sender_id: string; webhook?: { callback_url?: string; callback_method?: string } }
 
 /** The slice of the Twilio REST client twilio.ts uses, recording every update. */
-function fakeTwilioClient(opts: { apps?: Array<{ sid: string; friendlyName: string; voiceUrl: string }>; numbers?: FakeNumber[] } = {}) {
+function fakeTwilioClient(opts: {
+    apps?: Array<{ sid: string; friendlyName: string; voiceUrl: string }>;
+    numbers?: FakeNumber[];
+    senders?: FakeSender[];
+    sendersStatus?: number;
+} = {}) {
     const appUpdates: Array<{ sid: string; params: Record<string, unknown> }> = [];
     const numberUpdates: Array<{ sid: string; params: Record<string, unknown> }> = [];
+    const senderUpdates: Array<{ sid: string; data: unknown }> = [];
+    // The Senders API (v2) has no SDK helper, so twilio.ts goes through client.request.
+    const request = jest.fn(async ({ method, uri, data }: { method: string; uri: string; data?: unknown }) => {
+        if (method === 'get') return { statusCode: opts.sendersStatus ?? 200, body: { senders: opts.senders ?? [] } };
+        const sid = uri.split('/').pop() as string;
+        senderUpdates.push({ sid, data });
+        return { statusCode: 200, body: { sid } };
+    });
     const accountFetch = jest.fn().mockResolvedValue({});
     const appUpdate = jest.fn(async (sid: string, params: Record<string, unknown>) => {
         appUpdates.push({ sid, params });
@@ -257,7 +271,8 @@ function fakeTwilioClient(opts: { apps?: Array<{ sid: string; friendlyName: stri
         api: { v2010: { accounts: () => ({ fetch: accountFetch }) } },
         applications,
         incomingPhoneNumbers,
-        accountFetch, appUpdate, numbersList, appUpdates, numberUpdates,
+        request,
+        accountFetch, appUpdate, numbersList, appUpdates, numberUpdates, senderUpdates,
     };
 }
 
@@ -301,6 +316,81 @@ describe('configureSelectedNumbers across a webhook host change', () => {
             smsUrl: `${EDGE_BASE}/twilioIncomingMessage`, statusCallback: `${EDGE_BASE}/twilioCallStatusChanges`,
         });
         expect(dbTree().twilio[SID].numbers.PN1.original).toEqual(original);
+    });
+});
+
+describe('configureSelectedNumbers with a WhatsApp sender', () => {
+    beforeEach(() => {
+        process.env.WEBHOOK_PUBLIC_BASE_URL = EDGE_BASE;
+    });
+
+    const ours = `${EDGE_BASE}/twilioIncomingMessage`;
+    const configured: FakeNumber = {
+        sid: 'PN1', phoneNumber: '+32470000001', voiceApplicationSid: 'AP-in',
+        smsUrl: ours, statusCallback: `${EDGE_BASE}/twilioCallStatusChanges`,
+    };
+    const sender = (callbackUrl?: string): FakeSender => ({
+        sid: 'XE1', sender_id: 'whatsapp:+32470000001',
+        webhook: callbackUrl === undefined ? undefined : { callback_url: callbackUrl, callback_method: 'POST' },
+    });
+
+    it('points the sender of a number that became a WhatsApp sender after configuring at us, snapshotting its webhook', async () => {
+        await seedTwimlApps(SID, { incoming: 'AP-in' });
+        const original = { voiceUrl: 'https://tenant.example/voice' };
+        await admin.database().ref(`/twilio/${SID}/numbers/PN1/original`).set(original);
+        const client = fakeTwilioClient({ numbers: [configured], senders: [sender('https://bot.example/wa')] });
+        twilioFactory().mockReturnValue(client);
+
+        const result = await lastValueFrom(configureSelectedNumbers(SID, 'tok', ['PN1']));
+
+        expect(result.configured).toEqual(['PN1']);
+        expect(client.senderUpdates).toEqual([{ sid: 'XE1', data: { webhook: { callback_url: ours, callback_method: 'POST' } } }]);
+        expect(dbTree().twilio[SID].numbers.PN1.original).toEqual(original);
+        expect(dbTree().twilio[SID].numbers.PN1.originalWhatsappWebhook)
+            .toEqual({ callbackUrl: 'https://bot.example/wa', callbackMethod: 'POST' });
+    });
+
+    it('leaves a number alone once its sender already points at us', async () => {
+        await seedTwimlApps(SID, { incoming: 'AP-in' });
+        const client = fakeTwilioClient({ numbers: [configured], senders: [sender(ours)] });
+        twilioFactory().mockReturnValue(client);
+
+        const result = await lastValueFrom(configureSelectedNumbers(SID, 'tok', ['PN1']));
+
+        expect(result.configured).toEqual([]);
+        expect(client.numberUpdates).toEqual([]);
+        expect(client.senderUpdates).toEqual([]);
+    });
+
+    it('restores the sender webhook from its snapshot when the number is deselected', async () => {
+        await seedTwimlApps(SID, { incoming: 'AP-in' });
+        await admin.database().ref(`/twilio/${SID}/numbers/PN1`).set({
+            original: { voiceUrl: 'https://tenant.example/voice' },
+            originalWhatsappWebhook: { callbackUrl: 'https://bot.example/wa', callbackMethod: 'POST' },
+        });
+        const client = fakeTwilioClient({ numbers: [configured], senders: [sender(ours)] });
+        twilioFactory().mockReturnValue(client);
+
+        const result = await lastValueFrom(configureSelectedNumbers(SID, 'tok', []));
+
+        expect(result.restored).toEqual(['PN1']);
+        expect(client.senderUpdates).toEqual([
+            { sid: 'XE1', data: { webhook: { callback_url: 'https://bot.example/wa', callback_method: 'POST' } } },
+        ]);
+        expect(dbTree().twilio[SID].numbers.PN1.original).toBeUndefined();
+        expect(dbTree().twilio[SID].numbers.PN1.originalWhatsappWebhook).toBeUndefined();
+    });
+
+    it('still configures calls and SMS when the Senders API fails', async () => {
+        await seedTwimlApps(SID, { incoming: 'AP-in' });
+        const client = fakeTwilioClient({ numbers: [{ ...configured, smsUrl: '' }], sendersStatus: 403 });
+        twilioFactory().mockReturnValue(client);
+
+        const result = await lastValueFrom(configureSelectedNumbers(SID, 'tok', ['PN1']));
+
+        expect(result.configured).toEqual(['PN1']);
+        expect(client.numberUpdates[0].params).toMatchObject({ smsUrl: ours });
+        expect(client.senderUpdates).toEqual([]);
     });
 });
 

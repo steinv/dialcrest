@@ -17,6 +17,7 @@ import 'screens/auth_screen.dart';
 import 'services/account_auth_service.dart';
 import 'services/storage_service.dart';
 import 'services/twilio_service.dart';
+import 'models/channel.dart';
 import 'services/contacts_service.dart';
 
 /// Handles an incoming-message push while the app is backgrounded or fully
@@ -56,7 +57,9 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   );
   await localNotifications.show(
     id: (message.data['messageSid'] ?? from).hashCode,
-    title: from,
+    // Title only: the payload keeps the raw `whatsapp:` address, which the
+    // app reads the conversation's channel from.
+    title: ChannelAddress.stripPrefix(from),
     body: body,
     notificationDetails: const NotificationDetails(
       iOS: DarwinNotificationDetails(presentAlert: true, presentBadge: true, presentSound: true),

@@ -388,9 +388,124 @@ function originalConfigRef(db: Database, accountSid: string, numberSid: string) 
 }
 
 /**
+ * The incoming-message webhook of the WhatsApp sender on a number, as it was
+ * before we pointed it at twilioIncomingMessage. Kept apart from the number's
+ * own `original` snapshot: a number configured before WhatsApp support (or
+ * before it became a sender) already has that snapshot, and it must not be
+ * re-written with our own values.
+ */
+function originalWhatsappWebhookRef(db: Database, accountSid: string, numberSid: string) {
+    return db.ref(`/twilio/${accountSid}/numbers/${numberSid}/originalWhatsappWebhook`);
+}
+
+const SENDERS_API_URL = 'https://messaging.twilio.com/v2/Channels/Senders';
+
+/** The slice of a WhatsApp sender (Senders API v2) we read and update. */
+interface WhatsappSender {
+    sid: string;
+    sender_id: string;
+    webhook?: { callback_url?: string | null; callback_method?: string | null } | null;
+}
+
+const digitsOnly = (value: string) => value.replace(/\D/g, '');
+
+/**
+ * The account's WhatsApp senders keyed by the digits of their number, so they
+ * match an IncomingPhoneNumber regardless of the `whatsapp:` prefix. The pinned
+ * twilio SDK has no Senders API helpers, hence the raw request.
+ *
+ * Best-effort: an account without WhatsApp (or a failing Senders API) yields an
+ * empty map, so it never blocks configuring numbers for calls and SMS.
+ */
+function listWhatsappSenders(client: Twilio): Observable<Map<string, WhatsappSender>> {
+    return from(client.request({
+        method: 'get', uri: SENDERS_API_URL, params: { Channel: 'whatsapp', PageSize: 100 },
+    })).pipe(
+        map(({ statusCode, body }) => {
+            if (statusCode >= 400) throw new Error(`HTTP ${statusCode}: ${JSON.stringify(body)}`);
+            const senders = ((body as { senders?: WhatsappSender[] })?.senders ?? []);
+            return new Map(senders.map((sender) => [digitsOnly(sender.sender_id ?? ''), sender]));
+        }),
+        catchError((e) => {
+            console.warn('Could not list WhatsApp senders; skipping their webhooks', e);
+            return of(new Map<string, WhatsappSender>());
+        }),
+    );
+}
+
+function updateWhatsappWebhook(client: Twilio, senderSid: string, callbackUrl: string, callbackMethod: string): Observable<void> {
+    return from(client.request({
+        method: 'post',
+        uri: `${SENDERS_API_URL}/${senderSid}`,
+        headers: { 'Content-Type': 'application/json' },
+        data: { webhook: { callback_url: callbackUrl, callback_method: callbackMethod } },
+    })).pipe(
+        map(({ statusCode, body }) => {
+            if (statusCode >= 400) throw new Error(`HTTP ${statusCode}: ${JSON.stringify(body)}`);
+        }),
+    );
+}
+
+/**
+ * Point the WhatsApp sender on `numberSid` at twilioIncomingMessage, so inbound
+ * WhatsApp messages get the same pushes as SMS. A sender carries its own inbound
+ * webhook — the number's smsUrl doesn't cover it. Its previous webhook is
+ * snapshotted first (once) for restoreWhatsappWebhook.
+ *
+ * Best-effort: a failure is logged, not thrown, so calls and SMS are still
+ * configured. The number then stays "not current" in configureSelectedNumbers,
+ * so the next run (e.g. the app's launch-time repair) retries it.
+ */
+function configureWhatsappWebhook(
+    client: Twilio, db: Database, accountSid: string, numberSid: string, sender: WhatsappSender,
+): Observable<void> {
+    const ref = originalWhatsappWebhookRef(db, accountSid, numberSid);
+    return from(ref.once('value')).pipe(
+        switchMap((snapshot) => snapshot.exists() ? of(undefined) : from(ref.set({
+            callbackUrl: sender.webhook?.callback_url ?? '',
+            callbackMethod: sender.webhook?.callback_method ?? 'POST',
+        }))),
+        switchMap(() => updateWhatsappWebhook(client, sender.sid, webhookUrl(INCOMING_MESSAGE_PATH), 'POST')),
+        catchError((e) => {
+            console.error(`Could not configure the WhatsApp webhook of sender ${sender.sid} (${numberSid})`, e);
+            return of(undefined);
+        }),
+    );
+}
+
+/**
+ * Restore the WhatsApp sender's webhook from the snapshot configureWhatsappWebhook
+ * took, then clear the snapshot. Without a sender or a snapshot there's nothing of
+ * ours to undo. Best-effort like its counterpart: a deselected number must still
+ * be restored for calls and SMS.
+ */
+function restoreWhatsappWebhook(
+    client: Twilio, db: Database, accountSid: string, numberSid: string, sender: WhatsappSender | undefined,
+): Observable<void> {
+    if (!sender) return of(undefined);
+    const ref = originalWhatsappWebhookRef(db, accountSid, numberSid);
+    return from(ref.once('value')).pipe(
+        switchMap((snapshot) => {
+            const original = snapshot.val() as { callbackUrl: string; callbackMethod: string } | null;
+            if (!original) return of(undefined);
+            return updateWhatsappWebhook(client, sender.sid, original.callbackUrl, original.callbackMethod).pipe(
+                switchMap(() => from(ref.remove())),
+            );
+        }),
+        map(() => undefined),
+        catchError((e) => {
+            console.error(`Could not restore the WhatsApp webhook of sender ${sender.sid} (${numberSid})`, e);
+            return of(undefined);
+        }),
+    );
+}
+
+/**
  * Snapshot `number`'s current webhook config to RTDB (so it can be restored
  * later) then point it at the incoming TwiML App (and the shared status
- * callback) so PSTN calls ring the app.
+ * callback) so PSTN calls ring the app. When the number is also a WhatsApp
+ * sender, that sender's inbound webhook is pointed at twilioIncomingMessage too
+ * (configureWhatsappWebhook), so WhatsApp messages push like SMS.
  *
  * Uses voiceApplicationSid rather than voiceUrl: a TwiML App always wins over
  * a directly-configured voiceUrl, so a number left over from prior manual
@@ -406,6 +521,7 @@ function originalConfigRef(db: Database, accountSid: string, numberSid: string) 
  */
 function configureNumber(
     client: Twilio, db: Database, accountSid: string, number: IncomingPhoneNumberInstance, incomingAppSid: string,
+    whatsappSender: WhatsappSender | undefined,
 ): Observable<void> {
     const ref = originalConfigRef(db, accountSid, number.sid);
     const snapshot$ = from(ref.once('value')).pipe(
@@ -434,6 +550,9 @@ function configureNumber(
             smsUrl: webhookUrl(INCOMING_MESSAGE_PATH),
             smsMethod: 'POST',
         }))),
+        switchMap(() => whatsappSender ?
+            configureWhatsappWebhook(client, db, accountSid, number.sid, whatsappSender) :
+            of(undefined)),
         map(() => undefined),
     );
 }
@@ -444,7 +563,9 @@ function configureNumber(
  * number was never configured by us), this just clears our own fields
  * instead of guessing at a prior third-party config.
  */
-function restoreNumber(client: Twilio, db: Database, accountSid: string, numberSid: string): Observable<void> {
+function restoreNumber(
+    client: Twilio, db: Database, accountSid: string, numberSid: string, whatsappSender: WhatsappSender | undefined,
+): Observable<void> {
     const ref = originalConfigRef(db, accountSid, numberSid);
     return from(ref.once('value')).pipe(
         switchMap((snapshot) => {
@@ -458,6 +579,7 @@ function restoreNumber(client: Twilio, db: Database, accountSid: string, numberS
             return from(client.incomingPhoneNumbers(numberSid).update(restoreFields));
         }),
         switchMap(() => from(ref.remove())),
+        switchMap(() => restoreWhatsappWebhook(client, db, accountSid, numberSid, whatsappSender)),
         map(() => undefined),
     );
 }
@@ -477,9 +599,13 @@ export function configureSelectedNumbers(
 
     const attempt = (): Observable<{ configured: string[]; restored: string[] }> =>
         getOrCreateTwimlApp(client, accountSid, 'incoming', TWIML_APP_FRIENDLY_NAME_INCOMING, webhookUrl(INCOMING_CALL_PATH)).pipe(
-            switchMap((incomingAppSid) => from(client.incomingPhoneNumbers.list({ limit: 1000 })).pipe(
-                switchMap((numbers) => {
+            switchMap((incomingAppSid) => forkJoin([
+                from(client.incomingPhoneNumbers.list({ limit: 1000 })),
+                listWhatsappSenders(client),
+            ]).pipe(
+                switchMap(([numbers, whatsappSenders]) => {
                     const changes = numbers.map((number) => {
+                        const whatsappSender = whatsappSenders.get(digitsOnly(number.phoneNumber ?? ''));
                         // Both webhooks must match: a number voice-configured by an older build
                         // that predates SMS support has the right voiceApplicationSid but no
                         // smsUrl, and must be re-run through configureNumber to gain it.
@@ -489,15 +615,19 @@ export function configureSelectedNumbers(
                         // still restores it.
                         const isOurs = number.voiceApplicationSid === incomingAppSid &&
                             isKnownWebhookUrl(number.smsUrl, INCOMING_MESSAGE_PATH);
+                        // A number that became a WhatsApp sender after it was configured
+                        // (or whose sender webhook update failed) isn't current until its
+                        // sender's inbound webhook points at us too.
                         const isCurrent = number.voiceApplicationSid === incomingAppSid &&
-                            number.smsUrl === webhookUrl(INCOMING_MESSAGE_PATH);
+                            number.smsUrl === webhookUrl(INCOMING_MESSAGE_PATH) &&
+                            (!whatsappSender || whatsappSender.webhook?.callback_url === webhookUrl(INCOMING_MESSAGE_PATH));
                         const shouldBeConfigured = selected.has(number.sid);
                         if (shouldBeConfigured && !isCurrent) {
-                            return configureNumber(client, db, accountSid, number, incomingAppSid)
+                            return configureNumber(client, db, accountSid, number, incomingAppSid, whatsappSender)
                                 .pipe(map(() => ({ sid: number.sid, action: 'configured' as const })));
                         }
                         if (!shouldBeConfigured && isOurs) {
-                            return restoreNumber(client, db, accountSid, number.sid)
+                            return restoreNumber(client, db, accountSid, number.sid, whatsappSender)
                                 .pipe(map(() => ({ sid: number.sid, action: 'restored' as const })));
                         }
                         return of({ sid: number.sid, action: 'unchanged' as const });

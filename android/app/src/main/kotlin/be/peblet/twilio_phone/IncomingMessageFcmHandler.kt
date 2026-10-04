@@ -102,7 +102,9 @@ object IncomingMessageFcmHandler {
         // color launcher icon is a stopgap so notifications work today.
         val notification = NotificationCompat.Builder(appContext, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(from)
+            // Title only: the intent extras keep the raw `whatsapp:` address, which
+            // the app reads the conversation's channel from.
+            .setContentTitle(from.removePrefix("whatsapp:"))
             .setContentText(body)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)

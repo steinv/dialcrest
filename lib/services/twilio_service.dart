@@ -1021,6 +1021,7 @@ class TwilioService {
         whatsappCapability = const WhatsappCapability.none();
         return;
       }
+      unawaited(_repairWhatsappWebhook(match));
       final status = (match['status'] as String?) ?? '';
       final online = status == 'ONLINE' || status == 'ONLINE:UPDATING';
       whatsappCapability = WhatsappCapability(
@@ -1031,6 +1032,44 @@ class TwilioService {
     } catch (e) {
       debugPrint('Could not refresh WhatsApp capability: $e');
       whatsappCapability = const WhatsappCapability.none();
+    }
+  }
+
+  /// WhatsApp senders whose webhook repair already ran this session, so a
+  /// repair the server can't complete isn't retried on every number switch.
+  final Set<String> _whatsappWebhookRepairsAttempted = {};
+
+  /// Points the WhatsApp [sender] on the current number at the backend's
+  /// incoming-message webhook when it isn't yet — the case of a number that
+  /// became a WhatsApp sender after it was configured for incoming, which
+  /// otherwise never gets WhatsApp notifications. A sender has its own inbound
+  /// webhook, separate from the number's smsUrl.
+  ///
+  /// Only for a number this app already rings: re-runs [configureNumbers] with
+  /// every currently-configured number (it restores any it isn't given), and
+  /// the server then updates the sender (configureSelectedNumbers). Best-effort.
+  Future<void> _repairWhatsappWebhook(Map<String, dynamic> sender) async {
+    final webhook = sender['webhook'] as Map<String, dynamic>?;
+    final callbackUrl = (webhook?['callback_url'] as String?) ?? '';
+    if (callbackUrl.endsWith('/twilioIncomingMessage')) return;
+    final senderSid = (sender['sid'] as String?) ?? '';
+    if (!_whatsappWebhookRepairsAttempted.add(senderSid)) return;
+    try {
+      final appSid = await getCachedIncomingAppSid();
+      final numbers = await _fetchIncomingPhoneNumbers();
+      final configuredSids = numbers
+          .where((n) => n.voice_application_sid == appSid)
+          .map((n) => n.sid)
+          .toList();
+      final wanted = _digitsOnly(ChannelAddress.stripPrefix(
+          (sender['sender_id'] as String?) ?? ''));
+      final isOurs = numbers.any((n) =>
+          configuredSids.contains(n.sid) &&
+          _digitsOnly(n.phone_number) == wanted);
+      if (!isOurs) return;
+      await configureNumbers(configuredSids);
+    } catch (e) {
+      debugPrint('Could not repair the WhatsApp webhook: $e');
     }
   }
 
