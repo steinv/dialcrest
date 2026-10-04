@@ -1,5 +1,5 @@
-"language","full_description"
-"en-US","Dialcrest turns your own Twilio phone number into a full calling and texting app. No carrier lock-in and no middleman: your calls and messages run through the Twilio account you already control.
+"language","app_name","short_description","full_description"
+"en-US","Dialcrest","Call and text from your own Twilio number — native dialer, SMS & MMS.","Dialcrest turns your own Twilio phone number into a full calling and texting app. No carrier lock-in and no middleman: your calls and messages run through the Twilio account you already control.
 
 WHAT YOU GET
 • Dialer with contact matching: type or paste a number and call with one tap
@@ -26,7 +26,7 @@ PRICING
 Dialcrest starts with a free trial. After that, a monthly or yearly subscription keeps the app running. Subscriptions renew automatically until you cancel them in Google Play. Calls, texts and phone numbers are billed separately by Twilio at Twilio's own rates.
 
 Dialcrest is an independent app built on Twilio's APIs. It is not operated or endorsed by Twilio."
-"de-DE","Dialcrest macht deine eigene Twilio-Telefonnummer zu einer vollwertigen App zum Telefonieren und Schreiben. Keine Bindung an einen Mobilfunkanbieter und kein Mittelsmann: Deine Anrufe und Nachrichten laufen über das Twilio-Konto, das du bereits selbst verwaltest.
+"de-DE","Dialcrest","Telefonieren und texten mit deiner Twilio-Nummer — nativer Dialer, SMS & MMS.","Dialcrest macht deine eigene Twilio-Telefonnummer zu einer vollwertigen App zum Telefonieren und Schreiben. Keine Bindung an einen Mobilfunkanbieter und kein Mittelsmann: Deine Anrufe und Nachrichten laufen über das Twilio-Konto, das du bereits selbst verwaltest.
 
 DAS BEKOMMST DU
 • Wähltastatur mit Kontaktvorschlägen: Nummer eintippen oder einfügen und mit einem Tipp anrufen
@@ -53,7 +53,7 @@ PREISE
 Dialcrest startet mit einer kostenlosen Testphase. Danach hält ein Monats- oder Jahresabo die App am Laufen. Abos verlängern sich automatisch, bis du sie in Google Play kündigst. Anrufe, Nachrichten und Telefonnummern rechnet Twilio separat zu den eigenen Tarifen ab.
 
 Dialcrest ist eine unabhängige App, die auf den APIs von Twilio aufbaut. Sie wird nicht von Twilio betrieben oder unterstützt."
-"fr-FR","Dialcrest transforme votre propre numéro Twilio en une application complète pour appeler et envoyer des messages. Aucun engagement opérateur, aucun intermédiaire : vos appels et messages passent par le compte Twilio que vous contrôlez déjà.
+"fr-FR","Dialcrest","Appelez et écrivez depuis votre numéro Twilio — clavier natif, SMS et MMS.","Dialcrest transforme votre propre numéro Twilio en une application complète pour appeler et envoyer des messages. Aucun engagement opérateur, aucun intermédiaire : vos appels et messages passent par le compte Twilio que vous contrôlez déjà.
 
 CE QUE VOUS OBTENEZ
 • Clavier avec suggestion de contacts : tapez ou collez un numéro et appelez d'un simple geste
@@ -80,7 +80,7 @@ TARIFS
 Dialcrest commence par un essai gratuit. Ensuite, un abonnement mensuel ou annuel permet de continuer à utiliser l'application. Les abonnements se renouvellent automatiquement jusqu'à leur résiliation dans Google Play. Les appels, messages et numéros de téléphone sont facturés séparément par Twilio, à ses propres tarifs.
 
 Dialcrest est une application indépendante qui s'appuie sur les API de Twilio. Elle n'est ni exploitée ni approuvée par Twilio."
-"es-ES","Dialcrest convierte tu propio número de Twilio en una aplicación completa para llamar y enviar mensajes. Sin ataduras a un operador y sin intermediarios: tus llamadas y mensajes pasan por la cuenta de Twilio que ya controlas.
+"es-ES","Dialcrest","Llama y escribe desde tu propio número de Twilio — marcador nativo, SMS y MMS.","Dialcrest convierte tu propio número de Twilio en una aplicación completa para llamar y enviar mensajes. Sin ataduras a un operador y sin intermediarios: tus llamadas y mensajes pasan por la cuenta de Twilio que ya controlas.
 
 LO QUE OBTIENES
 • Teclado con sugerencia de contactos: escribe o pega un número y llama con un toque
@@ -107,7 +107,7 @@ PRECIOS
 Dialcrest empieza con una prueba gratuita. Después, una suscripción mensual o anual mantiene la aplicación en marcha. Las suscripciones se renuevan automáticamente hasta que las canceles en Google Play. Twilio factura por separado las llamadas, los mensajes y los números de teléfono según sus propias tarifas.
 
 Dialcrest es una aplicación independiente creada sobre las API de Twilio. No está gestionada ni respaldada por Twilio."
-"nl-NL","Dialcrest maakt van je eigen Twilio-telefoonnummer een volwaardige app om te bellen en te berichten. Geen binding aan een provider en geen tussenpartij: je gesprekken en berichten lopen via het Twilio-account dat je zelf al beheert.
+"nl-NL","Dialcrest","Bellen en berichten via je eigen Twilio-nummer — native kiezer, sms en mms.","Dialcrest maakt van je eigen Twilio-telefoonnummer een volwaardige app om te bellen en te berichten. Geen binding aan een provider en geen tussenpartij: je gesprekken en berichten lopen via het Twilio-account dat je zelf al beheert.
 
 WAT JE KRIJGT
 • Kiezer met contactsuggesties: typ of plak een nummer en bel met één tik
