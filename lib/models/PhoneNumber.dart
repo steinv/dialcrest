@@ -18,7 +18,10 @@ class PhoneNumber {
   }
 
   static List<String?> seperatePhoneAndDialCode(String phoneNumber) {
-    var phoneWithDialCode = phoneNumber;
+    // Drop display formatting (spaces, dashes, dots, parentheses) from numbers
+    // stored like "+32478 39 43 17": SMS tolerates it, but WhatsApp requires a
+    // strict `whatsapp:+E164` address and rejects anything else (HTTP 400).
+    var phoneWithDialCode = phoneNumber.replaceAll(RegExp(r'[^0-9+*#]'), '');
     if (phoneWithDialCode.startsWith("00")) {
       phoneWithDialCode = "+${phoneWithDialCode.substring(2)}";
     }
@@ -99,7 +102,7 @@ class PhoneNumber {
     {"name": "Cameroon", "dial_code": "+237", "code": "CM"},
     {"name": "Canada", "dial_code": "+1", "code": "CA"},
     {"name": "Cape Verde", "dial_code": "+238", "code": "CV"},
-    {"name": "Cayman Islands", "dial_code": "+ 345", "code": "KY"},
+    {"name": "Cayman Islands", "dial_code": "+1345", "code": "KY"},
     {"name": "Central African Republic", "dial_code": "+236", "code": "CF"},
     {"name": "Chad", "dial_code": "+235", "code": "TD"},
     {"name": "Chile", "dial_code": "+56", "code": "CL"},
