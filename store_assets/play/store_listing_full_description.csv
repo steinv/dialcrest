@@ -1,0 +1,136 @@
+"language","full_description"
+"en-US","Dialcrest turns your own Twilio phone number into a full calling and texting app. No carrier lock-in and no middleman: your calls and messages run through the Twilio account you already control.
+
+WHAT YOU GET
+• Dialer with contact matching: type or paste a number and call with one tap
+• Incoming calls on a native call screen, even when the app is closed
+• SMS and MMS conversations
+• WhatsApp messaging (text, photos and voice notes) when your Twilio number is an approved WhatsApp sender
+• Call history with incoming, outgoing and missed calls
+• Multiple numbers: choose which Twilio numbers ring this device and which one is your caller ID
+• Vacation mode: silence calls and message notifications on this device while other lines on the same account keep ringing
+• Available in English, German, French, Spanish and Dutch
+
+PRIVACY FIRST
+Dialcrest never records your calls and doesn't keep your message history. That stays with Twilio, in your own account. Your Twilio credentials are kept in your device's encrypted storage. The only message content our servers hold is the WhatsApp photos and voice notes you send, kept for 7 days so Twilio can deliver them.
+
+HOW IT WORKS
+1. Get a Twilio account with at least one voice-capable phone number.
+2. Sign in with your Account SID and Auth Token from the Twilio Console.
+3. Start calling and texting. Dialcrest sets up the rest.
+
+OPEN SOURCE
+The full app and backend source code is public under the GPLv3 license. Read it, host it yourself or contribute on GitHub.
+
+PRICING
+Dialcrest starts with a free trial. After that, a monthly or yearly subscription keeps the app running. Subscriptions renew automatically until you cancel them in Google Play. Calls, texts and phone numbers are billed separately by Twilio at Twilio's own rates.
+
+Dialcrest is an independent app built on Twilio's APIs. It is not operated or endorsed by Twilio."
+"de-DE","Dialcrest macht deine eigene Twilio-Telefonnummer zu einer vollwertigen App zum Telefonieren und Schreiben. Keine Bindung an einen Mobilfunkanbieter und kein Mittelsmann: Deine Anrufe und Nachrichten laufen über das Twilio-Konto, das du bereits selbst verwaltest.
+
+DAS BEKOMMST DU
+• Wähltastatur mit Kontaktvorschlägen: Nummer eintippen oder einfügen und mit einem Tipp anrufen
+• Eingehende Anrufe auf einem nativen Anrufbildschirm, auch wenn die App geschlossen ist
+• SMS- und MMS-Unterhaltungen
+• WhatsApp-Nachrichten (Text, Fotos und Sprachnachrichten), wenn deine Twilio-Nummer als WhatsApp-Absender freigegeben ist
+• Anrufliste mit eingehenden, ausgehenden und verpassten Anrufen
+• Mehrere Nummern: Lege fest, welche Twilio-Nummern auf diesem Gerät klingeln und welche als Anrufer-ID angezeigt wird
+• Urlaubsmodus: Anrufe und Nachrichtenbenachrichtigungen auf diesem Gerät stummschalten, während andere Geräte am selben Konto weiter klingeln
+• Verfügbar auf Deutsch, Englisch, Französisch, Spanisch und Niederländisch
+
+DATENSCHUTZ ZUERST
+Dialcrest zeichnet deine Anrufe niemals auf und speichert keinen Nachrichtenverlauf. Der bleibt bei Twilio, in deinem eigenen Konto. Deine Twilio-Zugangsdaten liegen im verschlüsselten Speicher deines Geräts. Die einzigen Nachrichteninhalte auf unseren Servern sind WhatsApp-Fotos und -Sprachnachrichten, die du sendest. Sie werden 7 Tage aufbewahrt, damit Twilio sie zustellen kann.
+
+SO FUNKTIONIERT ES
+1. Lege ein Twilio-Konto mit mindestens einer sprachfähigen Telefonnummer an.
+2. Melde dich mit deiner Account SID und deinem Auth Token aus der Twilio Console an.
+3. Leg los mit Anrufen und Nachrichten. Den Rest richtet Dialcrest ein.
+
+OPEN SOURCE
+Der komplette Quellcode von App und Backend ist unter der GPLv3-Lizenz öffentlich. Sieh ihn dir an, betreibe ihn selbst oder trage auf GitHub bei.
+
+PREISE
+Dialcrest startet mit einer kostenlosen Testphase. Danach hält ein Monats- oder Jahresabo die App am Laufen. Abos verlängern sich automatisch, bis du sie in Google Play kündigst. Anrufe, Nachrichten und Telefonnummern rechnet Twilio separat zu den eigenen Tarifen ab.
+
+Dialcrest ist eine unabhängige App, die auf den APIs von Twilio aufbaut. Sie wird nicht von Twilio betrieben oder unterstützt."
+"fr-FR","Dialcrest transforme votre propre numéro Twilio en une application complète pour appeler et envoyer des messages. Aucun engagement opérateur, aucun intermédiaire : vos appels et messages passent par le compte Twilio que vous contrôlez déjà.
+
+CE QUE VOUS OBTENEZ
+• Clavier avec suggestion de contacts : tapez ou collez un numéro et appelez d'un simple geste
+• Appels entrants sur un écran d'appel natif, même lorsque l'application est fermée
+• Conversations SMS et MMS
+• Messagerie WhatsApp (texte, photos et messages vocaux) si votre numéro Twilio est un expéditeur WhatsApp approuvé
+• Historique des appels entrants, sortants et manqués
+• Plusieurs numéros : choisissez quels numéros Twilio font sonner cet appareil et lequel s'affiche comme identifiant d'appelant
+• Mode vacances : coupez les appels et les notifications de messages sur cet appareil pendant que les autres lignes du même compte continuent de sonner
+• Disponible en français, anglais, allemand, espagnol et néerlandais
+
+LA CONFIDENTIALITÉ D'ABORD
+Dialcrest n'enregistre jamais vos appels et ne conserve pas votre historique de messages : il reste chez Twilio, dans votre propre compte. Vos identifiants Twilio sont conservés dans le stockage chiffré de votre appareil. Les seuls contenus de messages présents sur nos serveurs sont les photos et messages vocaux WhatsApp que vous envoyez, conservés 7 jours pour que Twilio puisse les distribuer.
+
+COMMENT ÇA MARCHE
+1. Créez un compte Twilio avec au moins un numéro de téléphone compatible voix.
+2. Connectez-vous avec l'Account SID et l'Auth Token de votre Twilio Console.
+3. Commencez à appeler et à écrire. Dialcrest s'occupe du reste.
+
+OPEN SOURCE
+L'intégralité du code source de l'application et du backend est publique sous licence GPLv3. Consultez-le, hébergez-le vous-même ou contribuez sur GitHub.
+
+TARIFS
+Dialcrest commence par un essai gratuit. Ensuite, un abonnement mensuel ou annuel permet de continuer à utiliser l'application. Les abonnements se renouvellent automatiquement jusqu'à leur résiliation dans Google Play. Les appels, messages et numéros de téléphone sont facturés séparément par Twilio, à ses propres tarifs.
+
+Dialcrest est une application indépendante qui s'appuie sur les API de Twilio. Elle n'est ni exploitée ni approuvée par Twilio."
+"es-ES","Dialcrest convierte tu propio número de Twilio en una aplicación completa para llamar y enviar mensajes. Sin ataduras a un operador y sin intermediarios: tus llamadas y mensajes pasan por la cuenta de Twilio que ya controlas.
+
+LO QUE OBTIENES
+• Teclado con sugerencia de contactos: escribe o pega un número y llama con un toque
+• Llamadas entrantes en una pantalla de llamada nativa, incluso con la aplicación cerrada
+• Conversaciones por SMS y MMS
+• Mensajería de WhatsApp (texto, fotos y notas de voz) si tu número de Twilio es un remitente de WhatsApp aprobado
+• Historial de llamadas entrantes, salientes y perdidas
+• Varios números: elige qué números de Twilio suenan en este dispositivo y cuál se muestra como identificador de llamada
+• Modo vacaciones: silencia las llamadas y las notificaciones de mensajes en este dispositivo mientras las demás líneas de la misma cuenta siguen sonando
+• Disponible en español, inglés, alemán, francés y neerlandés
+
+PRIVACIDAD ANTE TODO
+Dialcrest nunca graba tus llamadas ni guarda tu historial de mensajes, que permanece en Twilio, en tu propia cuenta. Tus credenciales de Twilio se guardan en el almacenamiento cifrado de tu dispositivo. El único contenido de mensajes que guardan nuestros servidores son las fotos y notas de voz de WhatsApp que envías, durante 7 días para que Twilio pueda entregarlas.
+
+CÓMO FUNCIONA
+1. Crea una cuenta de Twilio con al menos un número de teléfono con capacidad de voz.
+2. Inicia sesión con el Account SID y el Auth Token de tu Twilio Console.
+3. Empieza a llamar y a escribir. Dialcrest se encarga del resto.
+
+CÓDIGO ABIERTO
+Todo el código fuente de la aplicación y del backend es público bajo la licencia GPLv3. Consúltalo, alójalo tú mismo o contribuye en GitHub.
+
+PRECIOS
+Dialcrest empieza con una prueba gratuita. Después, una suscripción mensual o anual mantiene la aplicación en marcha. Las suscripciones se renuevan automáticamente hasta que las canceles en Google Play. Twilio factura por separado las llamadas, los mensajes y los números de teléfono según sus propias tarifas.
+
+Dialcrest es una aplicación independiente creada sobre las API de Twilio. No está gestionada ni respaldada por Twilio."
+"nl-NL","Dialcrest maakt van je eigen Twilio-telefoonnummer een volwaardige app om te bellen en te berichten. Geen binding aan een provider en geen tussenpartij: je gesprekken en berichten lopen via het Twilio-account dat je zelf al beheert.
+
+WAT JE KRIJGT
+• Kiezer met contactsuggesties: typ of plak een nummer en bel met één tik
+• Inkomende oproepen op een native belscherm, ook als de app gesloten is
+• Sms- en mms-gesprekken
+• WhatsApp-berichten (tekst, foto's en spraakberichten) als je Twilio-nummer een goedgekeurde WhatsApp-afzender is
+• Gespreksgeschiedenis met inkomende, uitgaande en gemiste oproepen
+• Meerdere nummers: kies welke Twilio-nummers op dit toestel overgaan en welk nummer als beller-ID wordt getoond
+• Vakantiemodus: zet oproepen en berichtmeldingen op dit toestel stil terwijl andere lijnen op hetzelfde account blijven overgaan
+• Beschikbaar in het Nederlands, Engels, Duits, Frans en Spaans
+
+PRIVACY VOOROP
+Dialcrest neemt je gesprekken nooit op en bewaart je berichtgeschiedenis niet. Die blijft bij Twilio, in je eigen account. Je Twilio-inloggegevens worden bewaard in de versleutelde opslag van je toestel. De enige berichtinhoud op onze servers zijn de WhatsApp-foto's en -spraakberichten die je verstuurt, 7 dagen bewaard zodat Twilio ze kan afleveren.
+
+ZO WERKT HET
+1. Maak een Twilio-account aan met minstens één telefoonnummer dat spraak ondersteunt.
+2. Log in met je Account SID en Auth Token uit de Twilio Console.
+3. Begin met bellen en berichten. Dialcrest regelt de rest.
+
+OPEN SOURCE
+De volledige broncode van de app en de backend is openbaar onder de GPLv3-licentie. Bekijk hem, host hem zelf of draag bij op GitHub.
+
+PRIJZEN
+Dialcrest begint met een gratis proefperiode. Daarna houdt een maand- of jaarabonnement de app draaiende. Abonnementen worden automatisch verlengd tot je ze opzegt in Google Play. Gesprekken, berichten en telefoonnummers worden apart door Twilio gefactureerd, tegen de eigen tarieven van Twilio.
+
+Dialcrest is een onafhankelijke app die gebouwd is op de API's van Twilio. Ze wordt niet door Twilio beheerd of onderschreven."
