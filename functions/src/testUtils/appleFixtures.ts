@@ -36,7 +36,7 @@ export const testAppleConfig: AppleConfig = {
 export function appleSubscriptionStatusesResponse(
     transactions: Array<{
         transactionId: string; originalTransactionId: string; productId: string; expiresDate: number; autoRenewStatus: 0 | 1;
-        offerType?: number; offerDiscountType?: string;
+        offerType?: number; offerDiscountType?: string; revocationDate?: number; gracePeriodExpiresDate?: number;
     }>,
 ) {
     return {
@@ -50,8 +50,12 @@ export function appleSubscriptionStatusesResponse(
                         expiresDate: tx.expiresDate,
                         offerType: tx.offerType,
                         offerDiscountType: tx.offerDiscountType,
+                        revocationDate: tx.revocationDate,
                     }),
-                    signedRenewalInfo: signedPayload({ autoRenewStatus: tx.autoRenewStatus }),
+                    signedRenewalInfo: signedPayload({
+                        autoRenewStatus: tx.autoRenewStatus,
+                        gracePeriodExpiresDate: tx.gracePeriodExpiresDate,
+                    }),
                 })),
             },
         ],

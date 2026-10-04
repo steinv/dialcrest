@@ -118,6 +118,15 @@ const ANDROID_PRODUCT_ID = 'dialcrest';
  */
 const GOOGLE_FREE_TRIAL_OFFER_PREFIX = 'free-trial';
 
+/** Google subscription states that grant no access, regardless of the line item's expiryTime. */
+const GOOGLE_INACTIVE_STATES = new Set([
+    'SUBSCRIPTION_STATE_EXPIRED',
+    'SUBSCRIPTION_STATE_ON_HOLD',
+    'SUBSCRIPTION_STATE_PAUSED',
+    'SUBSCRIPTION_STATE_PENDING',
+    'SUBSCRIPTION_STATE_PENDING_PURCHASE_CANCELED',
+]);
+
 /** Upper bound on a store free trial (30 days, plus slack for the store's own rounding). */
 const MAX_FREE_TRIAL_MS = 32 * 24 * 60 * 60 * 1000;
 
@@ -556,6 +565,8 @@ interface AppleTransactionInfo {
     /** 1 = introductory offer (our free trial is the only one). */
     offerType?: number;
     offerDiscountType?: string;
+    /** Set when Apple refunded the transaction or revoked it; `expiresDate` is left unchanged. */
+    revocationDate?: number;
 }
 
 /** True if this transaction is the introductory free-trial period. */
@@ -565,6 +576,19 @@ function isAppleFreeTrial(tx: AppleTransactionInfo): boolean {
 
 interface AppleRenewalInfo {
     autoRenewStatus: 0 | 1;
+    /** Present while a failed renewal is in the billing grace period; access lasts until then. */
+    gracePeriodExpiresDate?: number;
+}
+
+/**
+ * When access to an Apple subscription ends: the refund/revocation date if it was
+ * revoked (Apple keeps the original `expiresDate`), else the end of a billing grace
+ * period if one is running (Apple doesn't move `expiresDate` for it), else `expiresDate`.
+ */
+function appleAccessEnds(tx: AppleTransactionInfo, renewal: AppleRenewalInfo): number {
+    if (typeof tx.revocationDate === 'number') return Math.min(tx.expiresDate, tx.revocationDate);
+    if (typeof renewal.gracePeriodExpiresDate === 'number') return Math.max(tx.expiresDate, renewal.gracePeriodExpiresDate);
+    return tx.expiresDate;
 }
 
 interface AppleSubscriptionStatusesResponse {
@@ -599,16 +623,17 @@ async function fetchAppleSubscriptionStatuses(originalTransactionId: string, con
  */
 function extractAppleSubscriptionState(body: AppleSubscriptionStatusesResponse, productIdHint: string) {
     const entries = (body.data ?? []).flatMap((group) => group.lastTransactions ?? []);
-    const decoded = entries.map((entry) => ({
-        tx: decodeAppleSignedPayload<AppleTransactionInfo>(entry.signedTransactionInfo),
-        renewal: decodeAppleSignedPayload<AppleRenewalInfo>(entry.signedRenewalInfo),
-    }));
+    const decoded = entries.map((entry) => {
+        const tx = decodeAppleSignedPayload<AppleTransactionInfo>(entry.signedTransactionInfo);
+        const renewal = decodeAppleSignedPayload<AppleRenewalInfo>(entry.signedRenewalInfo);
+        return { tx, renewal, accessEnds: appleAccessEnds(tx, renewal) };
+    });
     const match = decoded.find((d) => d.tx.productId === productIdHint) ??
-        decoded.sort((a, b) => b.tx.expiresDate - a.tx.expiresDate)[0];
+        decoded.sort((a, b) => b.accessEnds - a.accessEnds)[0];
     if (!match) throw new Error(`No subscription transactions found for product ${productIdHint}`);
     return {
         productId: match.tx.productId,
-        expiresAt: match.tx.expiresDate,
+        expiresAt: match.accessEnds,
         autoRenew: match.renewal.autoRenewStatus === 1,
         freeTrial: isAppleFreeTrial(match.tx),
     };
@@ -900,7 +925,12 @@ function refreshGoogleSubscription(
             // Only one product ('dialcrest') is ever purchased, so there's exactly one line item.
             const lineItem = purchase.lineItems?.[0];
             if (!lineItem?.expiryTime) throw new Error(`Google subscription lookup returned no line items for token ${purchaseToken}`);
-            const expiresAt = new Date(lineItem.expiryTime).getTime();
+            // A revoked/expired, on-hold, paused or pending subscription grants no access
+            // whatever expiryTime says; capping it at now records it as already over. (In a
+            // grace period Google itself extends expiryTime, so that needs no special case.)
+            const expiryTime = new Date(lineItem.expiryTime).getTime();
+            const expiresAt = GOOGLE_INACTIVE_STATES.has(purchase.subscriptionState ?? '') ?
+                Math.min(expiryTime, Date.now()) : expiryTime;
             const state = {
                 expiresAt,
                 autoRenew: Boolean(lineItem.autoRenewingPlan?.autoRenewEnabled),

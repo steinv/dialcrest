@@ -299,6 +299,95 @@ describe('store free-trial detection', () => {
     });
 });
 
+describe('refunds, revocations, holds and grace periods', () => {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const NOW = 10 * DAY_MS;
+
+    beforeEach(() => {
+        resetDb();
+        jest.useFakeTimers().setSystemTime(NOW);
+    });
+    afterEach(() => jest.useRealTimers());
+
+    function appleEntitlement(): PresentedEntitlement {
+        return {
+            store: 'app_store',
+            signedTransactionInfo: appleSignedTransaction({ originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license' }),
+        };
+    }
+
+    function mockAppleTx(tx: { expiresDate: number; revocationDate?: number; gracePeriodExpiresDate?: number }) {
+        mockAppleFetch({
+            production: {
+                status: 200,
+                body: appleSubscriptionStatusesResponse([{
+                    transactionId: 't1', originalTransactionId: 'orig1', productId: 'monthly-dialcrest-license', autoRenewStatus: 0, ...tx,
+                }]),
+            },
+        });
+    }
+
+    it('ends a refunded Apple subscription at its revocation date, not its original expiry', async () => {
+        mockAppleTx({ expiresDate: 30 * DAY_MS, revocationDate: 5 * DAY_MS });
+        const status = await lastValueFrom(verifyEntitlement('AC1', appleEntitlement(), reverificationConfig));
+        expect(status.isActive).toBe(false);
+        expect(status.expiresAt).toBe(5 * DAY_MS);
+        expect(dbTree().subscriptions.apple.orig1.expiresAt).toBe(5 * DAY_MS);
+    });
+
+    it('keeps an Apple subscription in its billing grace period active until the grace period ends', async () => {
+        mockAppleTx({ expiresDate: 9 * DAY_MS, gracePeriodExpiresDate: 25 * DAY_MS });
+        const status = await lastValueFrom(verifyEntitlement('AC1', appleEntitlement(), reverificationConfig));
+        expect(status.isActive).toBe(true);
+        expect(status.expiresAt).toBe(25 * DAY_MS);
+    });
+
+    it('lets a revocation win over a grace period', async () => {
+        mockAppleTx({ expiresDate: 9 * DAY_MS, gracePeriodExpiresDate: 25 * DAY_MS, revocationDate: 8 * DAY_MS });
+        const status = await lastValueFrom(verifyEntitlement('AC1', appleEntitlement(), reverificationConfig));
+        expect(status.isActive).toBe(false);
+    });
+
+    it.each([
+        'SUBSCRIPTION_STATE_EXPIRED',
+        'SUBSCRIPTION_STATE_ON_HOLD',
+        'SUBSCRIPTION_STATE_PAUSED',
+        'SUBSCRIPTION_STATE_PENDING',
+        'SUBSCRIPTION_STATE_PENDING_PURCHASE_CANCELED',
+    ])('treats a Google subscription in %s as inactive even with a future expiryTime', async (subscriptionState) => {
+        googleMocks().subscriptionsV2Get.mockResolvedValueOnce(googleSubscriptionV2Response({
+            expiryTime: new Date(30 * DAY_MS).toISOString(), autoRenewEnabled: false, basePlanId: 'monthly-dialcrest-license',
+            subscriptionState,
+        }));
+        const status = await lastValueFrom(verifyEntitlement('AC1', { store: 'play_store', purchaseToken: 'tokR' }, reverificationConfig));
+        expect(status.isActive).toBe(false);
+        expect(dbTree().subscriptions.google.tokR.expiresAt).toBe(NOW);
+    });
+
+    it.each(['SUBSCRIPTION_STATE_ACTIVE', 'SUBSCRIPTION_STATE_IN_GRACE_PERIOD', 'SUBSCRIPTION_STATE_CANCELED'])(
+        'keeps a Google subscription in %s active until its expiryTime', async (subscriptionState) => {
+            googleMocks().subscriptionsV2Get.mockResolvedValueOnce(googleSubscriptionV2Response({
+                expiryTime: new Date(30 * DAY_MS).toISOString(), autoRenewEnabled: false, basePlanId: 'monthly-dialcrest-license',
+                subscriptionState,
+            }));
+            const status = await lastValueFrom(verifyEntitlement('AC1', { store: 'play_store', purchaseToken: 'tokA' }, reverificationConfig));
+            expect(status.isActive).toBe(true);
+            expect(status.expiresAt).toBe(30 * DAY_MS);
+        },
+    );
+
+    it('a Google revocation notification cuts access off immediately', async () => {
+        googleMocks().subscriptionsV2Get.mockResolvedValueOnce(googleSubscriptionV2Response({
+            expiryTime: new Date(30 * DAY_MS).toISOString(), autoRenewEnabled: false, basePlanId: 'monthly-dialcrest-license',
+            subscriptionState: 'SUBSCRIPTION_STATE_EXPIRED',
+        }));
+        await lastValueFrom(handleGoogleNotification(
+            { voidedPurchaseNotification: { purchaseToken: 'tokV', orderId: 'GPA.1' } }, 'be.peblet.twilio_phone', '{}',
+        ));
+        expect(dbTree().subscriptions.google.tokV.expiresAt).toBe(NOW);
+    });
+});
+
 describe('Apple purchase verification', () => {
     beforeEach(resetDb);
 

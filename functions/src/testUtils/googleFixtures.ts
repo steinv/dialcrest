@@ -40,6 +40,7 @@ export function googleSubscriptionV2Response(opts: {
     linkedPurchaseToken?: string;
     offerId?: string;
     startTime?: string;
+    subscriptionState?: string;
 }) {
     return {
         data: {
@@ -54,6 +55,7 @@ export function googleSubscriptionV2Response(opts: {
             acknowledgementState: opts.acknowledgementState ?? 'ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED',
             linkedPurchaseToken: opts.linkedPurchaseToken,
             startTime: opts.startTime,
+            subscriptionState: opts.subscriptionState ?? 'SUBSCRIPTION_STATE_ACTIVE',
         },
     };
 }
