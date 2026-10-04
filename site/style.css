@@ -160,6 +160,12 @@ main.narrow {
   justify-content: center;
 }
 
+.trial-note {
+  color: var(--muted);
+  max-width: 560px;
+  margin: 24px auto 0;
+}
+
 .store-card {
   display: flex;
   flex-direction: column;

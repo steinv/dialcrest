@@ -84,8 +84,10 @@
   <p><strong>Subscription status.</strong> The App offers a paid subscription, with a free trial
   for new subscribers, purchased through the Apple App Store or Google Play. When you subscribe, your
   purchase receipt/token is sent to our backend to verify the purchase with Apple or Google. We
-  store your subscription status (plan, expiration date, auto-renew flag) associated with your
-  Twilio Account SID in our database, so the App can check your access level. We do not receive
+  store your subscription status (plan, expiration date, auto-renew flag, whether you are in
+  the free trial) in our database, keyed by the purchase identifier Apple or Google assigns,
+  together with the Twilio Account SID it was last used with, so the App can check your access
+  level. We do not receive
   or store your payment card details — those are handled entirely by Apple or Google.</p>
 
   <p><strong>Diagnostic data.</strong> We use Firebase App Check to verify that requests to our
