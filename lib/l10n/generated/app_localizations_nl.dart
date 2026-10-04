@@ -331,11 +331,16 @@ class AppLocalizationsNl extends AppLocalizations {
   String get licensePlanYearly => 'Dialcrest-licentie — Jaarlijks abonnement';
 
   @override
-  String get purchasingUnavailable =>
-      'Aankopen zijn niet beschikbaar op dit platform.';
+  String get licenseNone => 'Nog geen licentie';
 
   @override
-  String get trialExpired => 'Proefperiode verlopen';
+  String get licenseFreeTrialOffer =>
+      'Nieuwe abonnees krijgen de eerste 30 dagen gratis. Zeg op voor het einde van de proefperiode en je betaalt niets.';
+
+  @override
+  String licenseOverrideUntil(Object date) {
+    return 'Licentie verstrekt door Dialcrest tot $date';
+  }
 
   @override
   String get subscriptionExpired => 'Abonnement verlopen';
@@ -348,7 +353,7 @@ class AppLocalizationsNl extends AppLocalizations {
       other: 'dagen',
       one: 'dag',
     );
-    return 'Proefperiode — nog $days $_temp0';
+    return 'Gratis proefperiode — nog $days $_temp0';
   }
 
   @override
@@ -576,6 +581,17 @@ class AppLocalizationsNl extends AppLocalizations {
   @override
   String get onboardingDoneIncompleteHint =>
       'Ga terug om dit nu in te stellen, of doe het later bij Instellingen.';
+
+  @override
+  String get onboardingLicenseTitle => 'Je licentie';
+
+  @override
+  String get onboardingLicenseBody =>
+      'Een licentie zet bellen en meldingen voor nieuwe berichten aan op dit toestel. Berichten sturen en je gespreksgeschiedenis werken ook zonder, dus kijk gerust eerst rond: je kunt later een licentie nemen bij Instellingen.';
+
+  @override
+  String get onboardingLicenseActive =>
+      'Dit toestel heeft al een actieve licentie. Je kunt aan de slag.';
 
   @override
   String get chooseChannelTitle => 'Verstuur met';

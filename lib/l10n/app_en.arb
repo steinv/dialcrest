@@ -308,16 +308,21 @@
   "licensePlanYearly": "Dialcrest license — Yearly subscription",
   "@licensePlanYearly": {},
 
-  "purchasingUnavailable": "Purchasing isn't available on this platform.",
-  "@purchasingUnavailable": {},
+  "licenseNone": "No license yet",
+  "@licenseNone": {},
 
-  "trialExpired": "Trial expired",
-  "@trialExpired": {},
+  "licenseFreeTrialOffer": "New subscribers get the first 30 days free. Cancel before the trial ends and you won't be charged.",
+  "@licenseFreeTrialOffer": {},
+
+  "licenseOverrideUntil": "License provided by Dialcrest until {date}",
+  "@licenseOverrideUntil": {
+    "placeholders": { "date": {} }
+  },
 
   "subscriptionExpired": "Subscription expired",
   "@subscriptionExpired": {},
 
-  "trialDaysLeft": "Trial — {days} {days, plural, one{day} other{days}} left",
+  "trialDaysLeft": "Free trial — {days} {days, plural, one{day} other{days}} left",
   "@trialDaysLeft": {
     "placeholders": { "days": {} }
   },
@@ -528,6 +533,15 @@
 
   "onboardingDoneIncompleteHint": "Go Back to set them up now, or do it later in Settings.",
   "@onboardingDoneIncompleteHint": {},
+
+  "onboardingLicenseTitle": "Your license",
+  "@onboardingLicenseTitle": {},
+
+  "onboardingLicenseBody": "A license unlocks calls and notifications for new messages on this device. Texting and your call history work without one, so feel free to look around first — you can get a license later in Settings.",
+  "@onboardingLicenseBody": {},
+
+  "onboardingLicenseActive": "This device already has an active license. You're good to go.",
+  "@onboardingLicenseActive": {},
 
   "chooseChannelTitle": "Send with",
   "@chooseChannelTitle": {},

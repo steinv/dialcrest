@@ -121,15 +121,16 @@ class BulkDeleteResult {
   bool get hadError => error != null;
 }
 
-/// Thrown when twilioAccessToken refuses to mint a token because this
-/// account's trial/subscription has expired (functions/src/index.ts,
+/// Thrown when twilioAccessToken refuses to mint a token because this device
+/// has no active license — no store subscription and no license override on
+/// the line (functions/src/index.ts,
 /// 'failed-precondition' / 'subscription-expired'). Kept unwrapped by
 /// makeCall's catch-all so this friendly message reaches the UI as-is instead
 /// of being buried in a generic "Failed to make call: ..." string.
 class SubscriptionExpiredException implements Exception {
   @override
   String toString() =>
-      'Your Dialcrest subscription has expired. Open Settings to renew.';
+      'Calling needs a Dialcrest license. Open Settings to get one.';
 }
 
 /// Thrown by [TwilioService.validateCredentials] when the entered credentials
@@ -328,7 +329,7 @@ class TwilioService {
   StreamSubscription<String>? _tokenRefreshSubscription;
 
   /// Returns the store entitlement fields to attach to twilioAccessToken (empty
-  /// for a trial-only device). Injected rather than reaching into
+  /// for a device that never purchased). Injected rather than reaching into
   /// SubscriptionService directly, to keep the two services decoupled. See
   /// SubscriptionService.currentEntitlement.
   final Map<String, String> Function()? entitlementProvider;
@@ -529,12 +530,9 @@ class TwilioService {
     _ensurePhoneAccount();
 
     // Register this device with Twilio Voice independently of caller-id
-    // resolution below: this is what runs twilioRegister server-side, which
-    // starts the account's 30-day trial (see ensureTrialStarted) on first
-    // launch — that must happen even if the phone-number fetch below fails,
-    // otherwise a new account looks like its trial already expired (Settings
-    // reads no subscription record and reports "expired" rather than "never
-    // registered" — see SubscriptionService.fetchStatus).
+    // resolution below: this is what runs twilioRegister server-side (push
+    // credentials, account onboarding), which must happen even if the
+    // phone-number fetch below fails.
     _registerVoice();
 
     // Resolve the caller-id number used for outgoing calls/access-token minting
@@ -841,8 +839,8 @@ class TwilioService {
   /// away — called when a purchase has just been verified (see
   /// SubscriptionService.onEntitlementVerified). The backend only rings / notifies
   /// devices whose own user is entitled, recorded per device when it mints a
-  /// token; without this a user who subscribes after the trial would stay
-  /// unreachable until the next launch. Drops the cached access token so the
+  /// token; without this a user who just subscribed would stay unreachable
+  /// until the next launch. Drops the cached access token so the
   /// new entitlement is presented, and coalesces concurrent calls.
   Future<void> refreshRegistrations() {
     return _refreshRegistrations ??= () async {
@@ -896,7 +894,7 @@ class TwilioService {
     try {
       return await _mintAccessToken();
     } on SubscriptionExpiredException {
-      // The trial has lapsed and we presented no active entitlement. On a device
+      // No license override and we presented no active entitlement. On a device
       // that owns a subscription but hasn't cached it yet (fresh install / new
       // device, dialing before the startup restore finished), try to recover it
       // silently once, then retry before surfacing the expiry to the user.
@@ -940,8 +938,8 @@ class TwilioService {
         'callerId': currentPhoneNumber ?? '',
         'fcmToken': ?fcmToken,
         // Attach the device's paid store entitlement, if any, so the backend's
-        // OR gate can grant access on an active subscription once the trial has
-        // lapsed. Empty for trial-only devices.
+        // OR gate can grant access on an active subscription. Empty for a
+        // device that never purchased.
         ...?entitlementProvider?.call(),
       });
       final token = response.data as String;

@@ -9,6 +9,7 @@ import '../services/account_auth_service.dart';
 import '../services/storage_service.dart';
 import '../services/subscription_service.dart';
 import '../services/twilio_service.dart';
+import '../widgets/license_purchase.dart';
 import 'auth_screen.dart';
 
 /// Lets the user pick which of their Twilio account's phone numbers is used
@@ -53,7 +54,6 @@ class SettingsScreenState extends State<SettingsScreen> {
   List<ProductDetails> _products = [];
   bool _isLoadingSubscription = true;
   String? _subscriptionError;
-  bool _isPurchasing = false;
 
   List<String> get _phoneNumbers =>
       _numbers.map((number) => number.phone_number).toList();
@@ -95,22 +95,14 @@ class SettingsScreenState extends State<SettingsScreen> {
       _subscriptionError = null;
     });
     try {
-      // Kick all off before awaiting so they run concurrently. The trial side
-      // is read from RTDB (fetchStatus); the paid side is re-verified against
-      // the store (refreshPaidStatus) so it self-heals after a renewal. A paid
-      // refresh failure (offline, no entitlement) must not fail the whole
-      // screen, so it degrades to null and we fall back to the trial record.
-      final trialFuture = widget.subscriptionService.fetchStatus();
-      final paidFuture = widget.subscriptionService
-          .refreshPaidStatus()
-          .catchError((_) => null as SubscriptionStatus?);
+      // Kick both off before awaiting so they run concurrently.
+      final licenseFuture = widget.subscriptionService.fetchLicense();
       final productsFuture = widget.subscriptionService.loadProducts();
-      final trial = await trialFuture;
-      final paid = await paidFuture;
+      final license = await licenseFuture;
       final products = await productsFuture;
       if (!mounted) return;
       setState(() {
-        _subscriptionStatus = _effectiveStatus(trial, paid);
+        _subscriptionStatus = license;
         _products = products;
         _isLoadingSubscription = false;
       });
@@ -122,106 +114,6 @@ class SettingsScreenState extends State<SettingsScreen> {
         _isLoadingSubscription = false;
       });
     }
-  }
-
-  /// Combines the two subscription axes for display: a live paid subscription
-  /// wins (show the plan + renewal date); otherwise a still-live trial covers
-  /// the user; otherwise show whichever lapsed record they actually have (a
-  /// paid record → "subscription expired", else the trial → "trial expired").
-  SubscriptionStatus _effectiveStatus(
-    SubscriptionStatus trial,
-    SubscriptionStatus? paid,
-  ) {
-    if (paid != null && paid.isActive) return paid;
-    if (trial.isActive) return trial;
-    return paid ?? trial;
-  }
-
-  /// Looks up [productId] among the store-loaded products and starts a
-  /// purchase for it. Shows an error instead of purchasing if the store
-  /// hasn't returned that product yet (e.g. still loading, or misconfigured).
-  Future<void> _purchase(String productId, String fallbackLabel) async {
-    if (_isPurchasing) return;
-    final available = _products.any((p) => p.id == productId);
-    if (!available) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            AppLocalizations.of(context)!.planUnavailableError(fallbackLabel),
-          ),
-        ),
-      );
-      return;
-    }
-    setState(() => _isPurchasing = true);
-    try {
-      final status = await widget.subscriptionService.purchase(productId);
-      if (!mounted) return;
-      setState(() {
-        _subscriptionStatus = status;
-        _isPurchasing = false;
-      });
-    } on PurchaseCanceledException {
-      if (!mounted) return;
-      setState(() => _isPurchasing = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(AppLocalizations.of(context)!.purchaseCanceled),
-        ),
-      );
-    } catch (e) {
-      // A purchase can fail because the store considers the user already
-      // subscribed to the SAME plan (e.g. it auto-renewed but the app hadn't
-      // noticed). Rather than surface that as an error, re-verify the existing
-      // entitlement — if it's active for the plan just attempted, this is
-      // really a success. Only checking the plan match keeps an unrelated
-      // failure (e.g. a failed upgrade from monthly to yearly) from being
-      // masked by the still-active old plan.
-      final recovered = await _recoverExistingSubscription();
-      final expectedPlan =
-          productId == SubscriptionService.yearlyProductId ? 'yearly' : 'monthly';
-      if (!mounted) return;
-      if (recovered != null && recovered.plan == expectedPlan) {
-        setState(() {
-          _subscriptionStatus = recovered;
-          _isPurchasing = false;
-        });
-        return;
-      }
-      setState(() => _isPurchasing = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            AppLocalizations.of(context)!.purchaseFailed(e.toString()),
-          ),
-        ),
-      );
-    }
-  }
-
-  /// Re-verifies this device's stored paid entitlement and returns it if
-  /// active, else null. Used to turn an "already subscribed" purchase failure
-  /// into a success and to back the "Restore purchases" action.
-  Future<SubscriptionStatus?> _recoverExistingSubscription() async {
-    try {
-      final status = await widget.subscriptionService.refreshPaidStatus();
-      return (status != null && status.isActive) ? status : null;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// The store's localized price for [productId] with a "/month" or "/year"
-  /// suffix, or [fallback] while the store hasn't returned it yet. Price and
-  /// currency vary by region/store, so this never falls back to a hardcoded
-  /// amount — only to a plan name.
-  String _priceLabel(String productId, String fallback) {
-    final matches = _products.where((p) => p.id == productId);
-    if (matches.isEmpty) return fallback;
-    final suffix = productId == SubscriptionService.yearlyProductId
-        ? AppLocalizations.of(context)!.perYearSuffix
-        : AppLocalizations.of(context)!.perMonthSuffix;
-    return '${matches.first.price}$suffix';
   }
 
   /// Flips this device's vacation mode. Purely local/per-device — see
@@ -531,18 +423,25 @@ class SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  /// The "License" section: trial countdown / renewal date / expired notice,
-  /// plus purchase buttons on platforms that support in-app purchase.
+  /// The "License" section: free-trial countdown / renewal date / override /
+  /// expired notice, plus purchase buttons.
   List<Widget> _buildLicenseSection() {
     final l10n = AppLocalizations.of(context)!;
     final status = _subscriptionStatus;
-    // Name the active paid plan in the header subtitle; a trial or lapsed
+    // Name the active paid plan in the header subtitle; an override or lapsed
     // subscription has no plan to show, so the header stays title-only.
-    final planSubtitle = (status != null && status.isActive && !status.isTrial)
+    final planSubtitle =
+        (status != null && status.isActive && !status.isOverride)
         ? (status.plan == 'yearly'
               ? l10n.licensePlanYearly
               : l10n.licensePlanMonthly)
         : null;
+    // Offer a purchase unless a subscription is active and renewing, or the
+    // line's override covers this device.
+    final showPurchase =
+        status == null ||
+        !status.isActive ||
+        (!status.isOverride && !status.autoRenew);
     return [
       _buildSectionHeader(
         icon: Icons.workspace_premium,
@@ -570,18 +469,15 @@ class SettingsScreenState extends State<SettingsScreen> {
             : Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildSubscriptionStatusText(_subscriptionStatus!),
-                  if (!_subscriptionStatus!.isActive ||
-                      _subscriptionStatus!.isTrial ||
-                      !_subscriptionStatus!.autoRenew) ...[
+                  _buildSubscriptionStatusText(status),
+                  if (showPurchase) ...[
                     const SizedBox(height: 12),
-                    if (widget.subscriptionService.isSupported)
-                      _buildPurchaseButtons()
-                    else
-                      Text(
-                        l10n.purchasingUnavailable,
-                        style: const TextStyle(color: Colors.grey),
-                      ),
+                    LicensePurchaseButtons(
+                      subscriptionService: widget.subscriptionService,
+                      products: _products,
+                      onLicensed: (license) =>
+                          setState(() => _subscriptionStatus = license),
+                    ),
                   ],
                 ],
               ),
@@ -589,125 +485,42 @@ class SettingsScreenState extends State<SettingsScreen> {
     ];
   }
 
-  Widget _buildSubscriptionStatusText(SubscriptionStatus status) {
+  Widget _buildSubscriptionStatusText(SubscriptionStatus? status) {
     final l10n = AppLocalizations.of(context)!;
+    if (status == null) {
+      return Text(
+        l10n.licenseNone,
+        style: const TextStyle(fontWeight: FontWeight.bold),
+      );
+    }
+    final formattedDate = DateFormat.yMMMd().format(status.expiresAt);
     if (!status.isActive) {
       return Text(
-        status.isTrial ? l10n.trialExpired : l10n.subscriptionExpired,
+        l10n.subscriptionExpired,
         style: TextStyle(
           color: Theme.of(context).colorScheme.error,
           fontWeight: FontWeight.bold,
         ),
       );
     }
-    if (status.isTrial) {
-      return Text(l10n.trialDaysLeft(status.daysRemaining));
-    }
-    final formattedDate = DateFormat.yMMMd().format(status.expiresAt);
-    return Text(
+    if (status.isOverride) return Text(l10n.licenseOverrideUntil(formattedDate));
+    final renewal = Text(
       status.autoRenew
           ? l10n.renewsOn(formattedDate)
           : l10n.expiresOnAutoRenewOff(formattedDate),
     );
-  }
-
-  Widget _buildPurchaseButtons() {
-    final l10n = AppLocalizations.of(context)!;
+    if (!status.freeTrial) return renewal;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                onPressed: _isPurchasing
-                    ? null
-                    : () => _purchase(
-                        SubscriptionService.monthlyProductId,
-                        l10n.monthly,
-                      ),
-                child: Text(
-                  _priceLabel(SubscriptionService.monthlyProductId, l10n.monthly),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: FilledButton(
-                onPressed: _isPurchasing
-                    ? null
-                    : () => _purchase(
-                        SubscriptionService.yearlyProductId,
-                        l10n.yearly,
-                      ),
-                child: Text(
-                  _priceLabel(SubscriptionService.yearlyProductId, l10n.yearly),
-                ),
-              ),
-            ),
-          ],
+        Text(
+          l10n.trialDaysLeft(status.daysRemaining),
+          style: const TextStyle(fontWeight: FontWeight.bold),
         ),
-        if (_isPurchasing) ...[
-          const SizedBox(height: 8),
-          const Center(
-            child: SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-          ),
-        ],
-        // Lets a subscriber who reinstalled (and so lost the locally stored
-        // entitlement) recover their paid subscription from the store.
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton(
-            onPressed: _isPurchasing ? null : _restorePurchases,
-            child: Text(l10n.restorePurchases),
-          ),
-        ),
+        const SizedBox(height: 2),
+        renewal,
       ],
     );
-  }
-
-  /// Asks the store to re-deliver past purchases, then re-verifies the
-  /// recovered entitlement. Shows the recovered subscription on success, or a
-  /// "nothing to restore" notice if the store had no active purchase.
-  Future<void> _restorePurchases() async {
-    if (_isPurchasing) return;
-    setState(() => _isPurchasing = true);
-    final l10n = AppLocalizations.of(context)!;
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      await widget.subscriptionService.restorePurchases();
-      // restorePurchases replays purchases through the stream asynchronously;
-      // poll the cheap local cache until it lands rather than guessing a fixed
-      // delay (~3s max — mirrors SubscriptionService.recoverEntitlement).
-      for (
-        var i = 0;
-        i < 10 && widget.subscriptionService.currentEntitlement.isEmpty;
-        i++
-      ) {
-        await Future.delayed(const Duration(milliseconds: 300));
-      }
-      final recovered = await _recoverExistingSubscription();
-      if (!mounted) return;
-      setState(() {
-        if (recovered != null) _subscriptionStatus = recovered;
-        _isPurchasing = false;
-      });
-      messenger.showSnackBar(SnackBar(
-        content: Text(
-          recovered != null ? l10n.purchasesRestored : l10n.noPurchasesToRestore,
-        ),
-      ));
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _isPurchasing = false);
-      messenger.showSnackBar(
-        SnackBar(content: Text(l10n.purchaseFailed(e.toString()))),
-      );
-    }
   }
 
   /// Simplified number config: one dropdown that sets a single number for both

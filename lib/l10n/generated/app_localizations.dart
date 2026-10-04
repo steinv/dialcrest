@@ -632,17 +632,23 @@ abstract class AppLocalizations {
   /// **'Dialcrest license — Yearly subscription'**
   String get licensePlanYearly;
 
-  /// No description provided for @purchasingUnavailable.
+  /// No description provided for @licenseNone.
   ///
   /// In en, this message translates to:
-  /// **'Purchasing isn\'t available on this platform.'**
-  String get purchasingUnavailable;
+  /// **'No license yet'**
+  String get licenseNone;
 
-  /// No description provided for @trialExpired.
+  /// No description provided for @licenseFreeTrialOffer.
   ///
   /// In en, this message translates to:
-  /// **'Trial expired'**
-  String get trialExpired;
+  /// **'New subscribers get the first 30 days free. Cancel before the trial ends and you won\'t be charged.'**
+  String get licenseFreeTrialOffer;
+
+  /// No description provided for @licenseOverrideUntil.
+  ///
+  /// In en, this message translates to:
+  /// **'License provided by Dialcrest until {date}'**
+  String licenseOverrideUntil(Object date);
 
   /// No description provided for @subscriptionExpired.
   ///
@@ -653,7 +659,7 @@ abstract class AppLocalizations {
   /// No description provided for @trialDaysLeft.
   ///
   /// In en, this message translates to:
-  /// **'Trial — {days} {days, plural, one{day} other{days}} left'**
+  /// **'Free trial — {days} {days, plural, one{day} other{days}} left'**
   String trialDaysLeft(num days);
 
   /// No description provided for @renewsOn.
@@ -1027,6 +1033,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Go Back to set them up now, or do it later in Settings.'**
   String get onboardingDoneIncompleteHint;
+
+  /// No description provided for @onboardingLicenseTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Your license'**
+  String get onboardingLicenseTitle;
+
+  /// No description provided for @onboardingLicenseBody.
+  ///
+  /// In en, this message translates to:
+  /// **'A license unlocks calls and notifications for new messages on this device. Texting and your call history work without one, so feel free to look around first — you can get a license later in Settings.'**
+  String get onboardingLicenseBody;
+
+  /// No description provided for @onboardingLicenseActive.
+  ///
+  /// In en, this message translates to:
+  /// **'This device already has an active license. You\'re good to go.'**
+  String get onboardingLicenseActive;
 
   /// No description provided for @chooseChannelTitle.
   ///

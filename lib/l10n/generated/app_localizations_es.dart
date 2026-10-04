@@ -333,11 +333,16 @@ class AppLocalizationsEs extends AppLocalizations {
   String get licensePlanYearly => 'Licencia de Dialcrest — Suscripción anual';
 
   @override
-  String get purchasingUnavailable =>
-      'Las compras no están disponibles en esta plataforma.';
+  String get licenseNone => 'Aún no tienes licencia';
 
   @override
-  String get trialExpired => 'Prueba caducada';
+  String get licenseFreeTrialOffer =>
+      'Los nuevos suscriptores disfrutan de los primeros 30 días gratis. Cancela antes de que termine la prueba y no se te cobrará nada.';
+
+  @override
+  String licenseOverrideUntil(Object date) {
+    return 'Licencia proporcionada por Dialcrest hasta el $date';
+  }
 
   @override
   String get subscriptionExpired => 'Suscripción caducada';
@@ -350,7 +355,7 @@ class AppLocalizationsEs extends AppLocalizations {
       other: 'días',
       one: 'día',
     );
-    return 'Prueba: quedan $days $_temp0';
+    return 'Prueba gratuita: quedan $days $_temp0';
   }
 
   @override
@@ -577,6 +582,17 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get onboardingDoneIncompleteHint =>
       'Vuelve atrás para configurarlo ahora, o hazlo más tarde en Ajustes.';
+
+  @override
+  String get onboardingLicenseTitle => 'Tu licencia';
+
+  @override
+  String get onboardingLicenseBody =>
+      'Una licencia activa las llamadas y las notificaciones de mensajes nuevos en este dispositivo. Los mensajes y tu historial de llamadas funcionan sin ella, así que echa un vistazo primero: puedes conseguir una licencia más tarde en Ajustes.';
+
+  @override
+  String get onboardingLicenseActive =>
+      'Este dispositivo ya tiene una licencia activa. Todo listo.';
 
   @override
   String get chooseChannelTitle => 'Enviar con';

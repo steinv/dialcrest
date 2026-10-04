@@ -42,6 +42,11 @@ const functions = require('./index');
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
+/** Sets the line's license override (an epoch-ms timestamp), as an admin would in the Firebase console. */
+async function grantOverride(accountSid: string, until: number = Date.now() + THIRTY_DAYS_MS) {
+    await admin.database().ref(`/twilio/${accountSid}/licenseOverride`).set(until);
+}
+
 /** The calling device's (anonymous) Firebase identity — its uid keys its device record and Voice identity. */
 const DEVICE = { uid: 'device1' };
 
@@ -95,36 +100,43 @@ beforeEach(() => {
 afterAll(() => setAppleVerificationForTests(null));
 
 describe('twilioRegister', () => {
-    it('creates the account, starts its trial, and provisions push credentials', async () => {
+    it('creates the account and provisions push credentials, granting no license', async () => {
         await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
         expect(dbTree().twilio.AC1.createdAt).toEqual(expect.any(Number));
-        expect(dbTree().twilio.AC1.trial.plan).toBe('trial');
+        expect(dbTree().twilio.AC1.trial).toBeUndefined();
+        expect(dbTree().twilio.AC1.licenseOverride).toBeUndefined();
         expect(twilioMocks().createOrUpdatePushCredentials).toHaveBeenCalledWith(
             'AC1', 'tok', expect.any(String), expect.any(String), expect.any(String),
         );
     });
 
-    it('never resets an existing trial on re-registration', async () => {
-        jest.useFakeTimers().setSystemTime(0);
+    it('never touches an existing license override on re-registration', async () => {
+        await grantOverride('AC1', 123456789);
         await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
-        jest.setSystemTime(1000);
-        await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
-        expect(dbTree().twilio.AC1.trial.trialStartedAt).toBe(0);
-        jest.useRealTimers();
+        expect(dbTree().twilio.AC1.licenseOverride).toBe(123456789);
     });
 });
 
 describe('twilioAccessToken (subscription gating)', () => {
-    it('mints a token while the trial is active', async () => {
+    it('mints a token while the line\'s license override is live', async () => {
         await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
+        await grantOverride('AC1');
         const jwt = await functions.twilioAccessToken.run({ auth: DEVICE, data: { accountSid: 'AC1', authToken: 'tok', callerId: '+3200000000' } });
         expect(jwt).toBe('fake-jwt-token');
         expect(twilioMocks().accessToken).toHaveBeenCalledWith('AC1', 'tok', '+3200000000', 'device1');
     });
 
-    it('refuses to mint a token once the trial has expired with no entitlement presented', async () => {
+    it('refuses to mint a token for a new account with no override and no entitlement', async () => {
+        await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
+        await expect(functions.twilioAccessToken.run({ auth: DEVICE, data: { accountSid: 'AC1', authToken: 'tok', callerId: 'x' } }))
+            .rejects.toMatchObject({ code: 'failed-precondition', message: 'subscription-expired' });
+        expect(twilioMocks().accessToken).not.toHaveBeenCalled();
+    });
+
+    it('refuses to mint a token once the license override has expired with no entitlement presented', async () => {
         jest.useFakeTimers().setSystemTime(0);
         await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
+        await grantOverride('AC1');
         jest.setSystemTime(THIRTY_DAYS_MS + 1);
         await expect(functions.twilioAccessToken.run({ auth: DEVICE, data: { accountSid: 'AC1', authToken: 'tok', callerId: 'x' } }))
             .rejects.toMatchObject({ code: 'failed-precondition', message: 'subscription-expired' });
@@ -132,7 +144,7 @@ describe('twilioAccessToken (subscription gating)', () => {
         jest.useRealTimers();
     });
 
-    it('mints a token once the trial expires if a live Apple entitlement is presented', async () => {
+    it('mints a token without an override if a live Apple entitlement is presented', async () => {
         jest.useFakeTimers().setSystemTime(0);
         await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
         jest.setSystemTime(THIRTY_DAYS_MS + 1);
@@ -157,7 +169,7 @@ describe('twilioAccessToken (subscription gating)', () => {
         jest.useRealTimers();
     });
 
-    it('refuses to mint a token once the trial expires if the presented entitlement fails to verify', async () => {
+    it('refuses to mint a token without an override if the presented entitlement fails to verify', async () => {
         jest.useFakeTimers().setSystemTime(0);
         await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
         jest.setSystemTime(THIRTY_DAYS_MS + 1);
@@ -186,6 +198,7 @@ describe('twilioAccessToken (credentials + per-device registry)', () => {
 
     it('verifies the credentials before checking the subscription', async () => {
         await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
+        await grantOverride('AC1');
         await functions.twilioAccessToken.run({ auth: DEVICE, data: { accountSid: 'AC1', authToken: 'tok', callerId: 'x' } });
         expect(twilioMocks().verifyTwilioCredentials).toHaveBeenCalledWith('AC1', 'tok');
     });
@@ -198,21 +211,23 @@ describe('twilioAccessToken (credentials + per-device registry)', () => {
         expect(twilioMocks().accessToken).not.toHaveBeenCalled();
     });
 
-    it('records the device check-in (no subscription pointer during a plain trial)', async () => {
+    it('records the device check-in (no subscription pointer under a plain license override)', async () => {
         await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
+        await grantOverride('AC1');
         await functions.twilioAccessToken.run({ auth: DEVICE, data: { accountSid: 'AC1', authToken: 'tok', callerId: 'x' } });
         expect(twilioMocks().recordDeviceCheckIn).toHaveBeenCalledWith('AC1', 'device1', null, undefined);
     });
 
     it('passes the install\'s FCM token to the check-in, ignoring a malformed one', async () => {
         await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
+        await grantOverride('AC1');
         await functions.twilioAccessToken.run({ auth: DEVICE, data: { accountSid: 'AC1', authToken: 'tok', callerId: 'x', fcmToken: 'dAbC-123_x:APA91b' } });
         expect(twilioMocks().recordDeviceCheckIn).toHaveBeenLastCalledWith('AC1', 'device1', null, 'dAbC-123_x:APA91b');
         await functions.twilioAccessToken.run({ auth: DEVICE, data: { accountSid: 'AC1', authToken: 'tok', callerId: 'x', fcmToken: 'bad/token' } });
         expect(twilioMocks().recordDeviceCheckIn).toHaveBeenLastCalledWith('AC1', 'device1', null, undefined);
     });
 
-    it('points a paying device at its store record, so inbound calls/SMS keep reaching it after the trial', async () => {
+    it('points a paying device at its store record, so inbound calls/SMS keep reaching it', async () => {
         jest.useFakeTimers().setSystemTime(0);
         await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
         jest.setSystemTime(THIRTY_DAYS_MS + 1);
@@ -236,7 +251,7 @@ describe('twilioAccessToken (credentials + per-device registry)', () => {
         jest.useRealTimers();
     });
 
-    it('refuses an unentitled device after the trial, recording it without a pointer (so it is not rung/notified)', async () => {
+    it('refuses an unentitled device, recording it without a pointer (so it is not rung/notified)', async () => {
         jest.useFakeTimers().setSystemTime(0);
         await functions.twilioRegister.run({ data: { accountSid: 'AC1', authToken: 'tok' } });
         jest.setSystemTime(THIRTY_DAYS_MS + 1);
@@ -324,7 +339,7 @@ describe('twilioVerifyApplePurchase / twilioVerifyGooglePurchase', () => {
         const result = await functions.twilioVerifyApplePurchase.run({
             data: { accountSid: 'AC1', signedTransactionInfo: appleSignedTransaction({ originalTransactionId: 'orig1', productId: 'yearly-dialcrest-license' }) },
         });
-        expect(result).toEqual({ plan: 'yearly', expiresAt: farFuture, autoRenew: true, isActive: true });
+        expect(result).toEqual({ plan: 'yearly', expiresAt: farFuture, autoRenew: true, freeTrial: false, isActive: true });
         expect(dbTree().subscriptions.apple.orig1.lastAccountSid).toBe('AC1');
     });
 
@@ -334,7 +349,7 @@ describe('twilioVerifyApplePurchase / twilioVerifyGooglePurchase', () => {
             expiryTime: new Date(farFuture).toISOString(), autoRenewEnabled: true, basePlanId: 'monthly-dialcrest-license',
         }));
         const result = await functions.twilioVerifyGooglePurchase.run({ data: { accountSid: 'AC1', purchaseToken: 'tokA' } });
-        expect(result).toEqual({ plan: 'monthly', expiresAt: farFuture, autoRenew: true, isActive: true });
+        expect(result).toEqual({ plan: 'monthly', expiresAt: farFuture, autoRenew: true, freeTrial: false, isActive: true });
         expect(dbTree().subscriptions.google.tokA.lastAccountSid).toBe('AC1');
     });
 });
@@ -453,6 +468,6 @@ describe('twilioRefreshSubscription', () => {
             expiryTime: new Date(farFuture).toISOString(), autoRenewEnabled: true, basePlanId: 'monthly-dialcrest-license',
         }));
         const result = await functions.twilioRefreshSubscription.run({ data: { accountSid: 'AC1', purchaseToken: 'tokA' } });
-        expect(result).toEqual({ plan: 'monthly', expiresAt: farFuture, autoRenew: true, isActive: true });
+        expect(result).toEqual({ plan: 'monthly', expiresAt: farFuture, autoRenew: true, freeTrial: false, isActive: true });
     });
 });

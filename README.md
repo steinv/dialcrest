@@ -104,8 +104,8 @@ project `twilio-phone-peblet`), with business logic split out into
 
 | Function | What it does | Called from |
 | --- | --- | --- |
-| `twilioRegister` | Creates/updates the device's Twilio Voice push credential; also runs the "account onboarded" hook that records account creation and starts the 30-day trial. | `lib/services/twilio_service.dart` (`_register()`) |
-| `twilioAccessToken` | Verifies the caller's Auth Token, records this device in `/twilio/{sid}/devices` (with a pointer to its user's subscription, if any), then mints a Voice access token with the device's own identity if the line's trial is live or the device presents an active subscription; otherwise refuses (`subscription-expired`). | `lib/services/twilio_service.dart` (`_mintAccessToken()`) |
+| `twilioRegister` | Creates/updates the device's Twilio Voice push credential; also runs the "account onboarded" hook that records account creation. | `lib/services/twilio_service.dart` (`_register()`) |
+| `twilioAccessToken` | Verifies the caller's Auth Token, records this device in `/twilio/{sid}/devices` (with a pointer to its user's subscription, if any), then mints a Voice access token with the device's own identity if the line has a live license override or the device presents an active subscription; otherwise refuses (`subscription-expired`). | `lib/services/twilio_service.dart` (`_mintAccessToken()`) |
 | `twilioVerifyApplePurchase` | Verifies an App Store transaction and persists the resulting entitlement/expiry. | `lib/services/subscription_service.dart` (`_verifyPurchase()`, iOS) |
 | `twilioVerifyGooglePurchase` | Verifies a Play purchase token and persists the resulting entitlement/expiry. | `lib/services/subscription_service.dart` (`_verifyPurchase()`, Android) |
 | `twilioRefreshSubscription` | Re-checks the stored entitlement and returns current subscription status (keeps Settings accurate). | `lib/services/subscription_service.dart` (`refreshPaidStatus()`) |
@@ -118,7 +118,7 @@ project `twilio-phone-peblet`), with business logic split out into
 
 | Function | What it does | Invoked by |
 | --- | --- | --- |
-| `twilioIncomingCall` | TwiML for an inbound PSTN call; rings the devices whose own user is entitled — the line's trial, or that device's subscription (see [`SUBSCRIPTION_NOTIFICATIONS.md`](SUBSCRIPTION_NOTIFICATIONS.md)). | Twilio, as the number's voice URL |
+| `twilioIncomingCall` | TwiML for an inbound PSTN call; rings the devices whose own user is entitled — the line's license override, or that device's subscription (see [`SUBSCRIPTION_NOTIFICATIONS.md`](SUBSCRIPTION_NOTIFICATIONS.md)). | Twilio, as the number's voice URL |
 | `twilioOutgoingCall` | TwiML for an outgoing call placed from the SDK; dials the destination using the account number as caller ID. | Twilio, as the TwiML App's outgoing voice URL |
 | `twilioCallStatusChanges` | Status-callback webhook that logs call lifecycle events. | Twilio, as a status callback |
 | `twilioIncomingMessage` | TwiML for inbound SMS/MMS; pushes an FCM notification to the devices whose own user is entitled. | Twilio, as the number's SMS URL |
@@ -162,7 +162,7 @@ custom claim**:
 3. The app force-refreshes its ID token so the claim is live, then reads/writes RTDB
    **directly** (no function on the hot path).
 4. **`database.rules.json`** authorizes every client-readable account-scoped node
-   (`trial`, `twiml-app-sid`, `configuration`) with
+   (`licenseOverride`, `twiml-app-sid`, `configuration`) with
    `auth.token.accountSid === $accountSid` — so possession of the verified claim,
    and nothing else, grants access. Everything else (including `secret`, which
    holds the tenant's Auth Token for webhook signature validation) is
@@ -326,6 +326,48 @@ firebase deploy --only functions
 On the next app launch, `twilioRegister` will detect both values, create the APN
 push credential in the tenant's Twilio account, and attach its SID to the Voice
 access token — incoming calls will then ring on a physical iOS device.
+
+## Licenses: subscriptions, free trial, license override
+
+A license unlocks calls (incoming and outgoing) and push notifications for new
+messages on a device. Texting, WhatsApp and call history work without one. A
+device is licensed if **either**:
+
+- it presents an active store subscription (monthly or yearly), or
+- its Twilio account has a live **license override**.
+
+To keep token requests from calling Apple/Google every time, a subscription's
+stored record is trusted for **24 hours** after its last store check
+(`STORED_EXPIRY_TRUST_MS` in `functions/src/subscription.ts`) while it hasn't
+expired; after that the next token request checks with the store again.
+Renewals and refunds still arrive through the store notifications, which rewrite
+the record, so the window only bounds how long a missed notification can matter.
+Settings' status refresh always asks the store.
+
+**Free trial.** New subscribers get 30 days free, configured in the stores (the
+backend has no trial of its own; the store reports a trialing subscription as
+active, and Settings shows the days left):
+
+- **Google Play:** Monetize → Products → Subscriptions → `dialcrest` → on each
+  base plan, add an offer with id **`free-trial-monthly`** /
+  **`free-trial-yearly`** (the app and backend recognize the `free-trial`
+  prefix), eligibility *New customer acquisition → Never had any subscription*,
+  one *Free trial* phase of 30 days. Activate both.
+- **App Store Connect:** on both subscriptions (same subscription group), add an
+  introductory offer: *Free*, duration *1 month*.
+
+**License override.** To license yourself, a trusted partner or a store review
+account without a purchase, set an epoch-ms expiry timestamp in the Realtime
+Database (Firebase console) at:
+
+```
+/twilio/<AccountSid>/licenseOverride = 4102444800000   // e.g. 2100-01-01
+```
+
+It licenses **every device** signed into that Twilio account until then
+(`functions/src/subscription.ts`, `functions/src/shared/webhooks.ts`). Delete
+the node, or set a past timestamp, to revoke it. Clients can read it (Settings
+shows it) but never write it.
 
 ## Subscription renewal notifications (App Store / Play)
 

@@ -20,8 +20,8 @@ export const WEBHOOK_PATHS = {
 /**
  * LEGACY Voice SDK client identity: the bare AccountSid, shared by every device
  * on the line. Tokens minted before per-device identities were registered under
- * it; the incoming-call TwiML still dials it while the line's trial is live, so
- * not-yet-updated apps keep ringing during the trial (see incomingCallIdentities).
+ * it; the incoming-call TwiML still dials it while the line's license override is
+ * live (see incomingCallIdentities).
  */
 export function clientIdentity(accountSid: string): string {
     return accountSid;
@@ -60,7 +60,12 @@ export const dbPaths = {
      */
     secret: (accountSid: string) => `/twilio/${accountSid}/secret`,
     createdAt: (accountSid: string) => `/twilio/${accountSid}/createdAt`,
-    trialExpiresAt: (accountSid: string) => `/twilio/${accountSid}/trial/expiresAt`,
+    /**
+     * The line's license override: an epoch-ms timestamp, set by hand (Firebase
+     * console) to license every device on the account until then — for ourselves,
+     * trusted partners and the store review accounts. Absent for everyone else.
+     */
+    licenseOverride: (accountSid: string) => `/twilio/${accountSid}/licenseOverride`,
     /** Per-device registry (DeviceRecord), keyed by the device's Firebase uid. Server-only. */
     devices: (accountSid: string) => `/twilio/${accountSid}/devices`,
     device: (accountSid: string, uid: string) => `/twilio/${accountSid}/devices/${uid}`,
@@ -111,8 +116,8 @@ export const DEVICE_STALE_MS = 365 * 24 * 60 * 60 * 1000;
 /** Twilio rings at most 10 <Client>s per <Dial>. */
 export const MAX_DIAL_CLIENTS = 10;
 
-export function trialLive(trialExpiresAt: number | null, now: number): boolean {
-    return typeof trialExpiresAt === 'number' && trialExpiresAt > now;
+export function overrideLive(licenseOverride: number | null, now: number): boolean {
+    return typeof licenseOverride === 'number' && licenseOverride > now;
 }
 
 function freshDevices(devices: Record<string, DeviceRecord> | null, now: number): Array<[string, DeviceRecord]> {
@@ -122,13 +127,13 @@ function freshDevices(devices: Record<string, DeviceRecord> | null, now: number)
 
 /**
  * The subscription records whose expiry must be read before deciding: none while
- * the line's trial is live (every device is entitled then), otherwise each
+ * the line's license override is live (every device is entitled then), otherwise each
  * distinct record a fresh device points at.
  */
 export function subscriptionsToCheck(
-    devices: Record<string, DeviceRecord> | null, trialExpiresAt: number | null, now: number,
+    devices: Record<string, DeviceRecord> | null, licenseOverride: number | null, now: number,
 ): string[] {
-    if (trialLive(trialExpiresAt, now)) return [];
+    if (overrideLive(licenseOverride, now)) return [];
     const paths = freshDevices(devices, now)
         .map(([, record]) => record.subscription)
         .filter((path): path is string => typeof path === 'string' && path !== '');
@@ -137,19 +142,19 @@ export function subscriptionsToCheck(
 
 /**
  * The devices whose user is entitled — the same OR gate twilioAccessToken applies
- * per person: the line's shared trial is live, or the device's own subscription
+ * per person: the line's license override is live, or the device's own subscription
  * record (`subscriptionExpiries[path]`) hasn't expired. Most recently seen first.
  */
 export function entitledDevices(
     devices: Record<string, DeviceRecord> | null,
-    trialExpiresAt: number | null,
+    licenseOverride: number | null,
     subscriptionExpiries: Record<string, number | null>,
     now: number,
 ): Array<{ uid: string; record: DeviceRecord }> {
-    const trial = trialLive(trialExpiresAt, now);
+    const override = overrideLive(licenseOverride, now);
     return freshDevices(devices, now)
         .filter(([, record]) => {
-            if (trial) return true;
+            if (override) return true;
             const expiresAt = record.subscription ? subscriptionExpiries[record.subscription] : null;
             return typeof expiresAt === 'number' && expiresAt > now;
         })
@@ -159,14 +164,14 @@ export function entitledDevices(
 
 /**
  * The <Client> identities an inbound call rings: each entitled device's own
- * identity, plus — only while the line's trial is live, when everyone is
+ * identity, plus — only while the line's license override is live, when everyone is
  * entitled anyway — the legacy shared identity, so devices that haven't updated
  * yet still ring. Capped at MAX_DIAL_CLIENTS (legacy first, then most recent).
  */
 export function incomingCallIdentities(
-    accountSid: string, entitled: Array<{ uid: string }>, trialExpiresAt: number | null, now: number,
+    accountSid: string, entitled: Array<{ uid: string }>, licenseOverride: number | null, now: number,
 ): string[] {
-    const legacy = trialLive(trialExpiresAt, now) ? [clientIdentity(accountSid)] : [];
+    const legacy = overrideLive(licenseOverride, now) ? [clientIdentity(accountSid)] : [];
     return [...legacy, ...entitled.map(({ uid }) => deviceIdentity(accountSid, uid))].slice(0, MAX_DIAL_CLIENTS);
 }
 
@@ -183,7 +188,7 @@ export interface MessagingTarget {
 
 /**
  * The FCM tokens an inbound SMS is pushed to: each entitled device's token, plus
- * — only while the line's trial is live — the legacy messaging-tokens entries of
+ * — only while the line's license override is live — the legacy messaging-tokens entries of
  * not-yet-updated apps. Deduplicated by token (a reinstall can leave the same
  * token under an old and a new uid).
  */
@@ -191,14 +196,14 @@ export function incomingMessageTargets(
     accountSid: string,
     entitled: Array<{ uid: string; record: DeviceRecord }>,
     legacyTokens: Record<string, unknown> | null,
-    trialExpiresAt: number | null,
+    licenseOverride: number | null,
     now: number,
 ): MessagingTarget[] {
     const targets = new Map<string, MessagingTarget>();
     for (const { uid, record } of entitled) {
         if (record.fcmToken) targets.set(record.fcmToken, { fcmToken: record.fcmToken, removePath: dbPaths.device(accountSid, uid) });
     }
-    if (trialLive(trialExpiresAt, now)) {
+    if (overrideLive(licenseOverride, now)) {
         for (const fcmToken of Object.keys(legacyTokens ?? {})) {
             if (!targets.has(fcmToken)) targets.set(fcmToken, { fcmToken, removePath: dbPaths.messagingToken(accountSid, fcmToken) });
         }
