@@ -184,5 +184,8 @@
   "chooseFromGallery": "Elegir de la galería",
   "microphonePermissionDenied": "Se requiere permiso de micrófono para grabar un mensaje de voz.",
   "mediaTooLarge": "Ese archivo adjunto es demasiado grande para enviarlo (máx. 16 MB).",
-  "recordingLimitReached": "Se alcanzó la duración máxima de grabación."
+  "recordingLimitReached": "Se alcanzó la duración máxima de grabación.",
+  "messageNotDelivered": "No entregado",
+  "messageDeliveryFailedReason": "No se pudo entregar este mensaje.",
+  "ok": "Aceptar"
 }

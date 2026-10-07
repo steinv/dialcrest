@@ -37,6 +37,73 @@ class MessageMedia {
       );
 }
 
+/// The delivery state of a message, mirroring Twilio's Message `status` field
+/// (https://www.twilio.com/docs/sms/api/message-resource#message-status-values).
+/// Only the distinctions the UI cares about are modelled; every other Twilio
+/// status (and any value from a message cached before this field existed) maps
+/// to [unknown], which renders no indicator.
+enum MessageStatus {
+  /// Accepted/queued/scheduled by Twilio but not yet handed to the carrier.
+  queued('queued'),
+
+  /// Twilio is actively sending it to the carrier.
+  sending('sending'),
+
+  /// Handed to the carrier; no delivery confirmation (yet).
+  sent('sent'),
+
+  /// The carrier confirmed delivery to the handset.
+  delivered('delivered'),
+
+  /// WhatsApp only: the recipient opened the message.
+  read('read'),
+
+  /// The carrier reported it could not be delivered (e.g. unreachable handset).
+  undelivered('undelivered'),
+
+  /// Sending failed outright (e.g. invalid number, account/config error).
+  failed('failed'),
+
+  /// Any other / absent status — no delivery indicator is shown.
+  unknown('unknown');
+
+  const MessageStatus(this.wire);
+
+  /// The value persisted in the offline cache (see [Message.toJson]).
+  final String wire;
+
+  /// Whether this message failed to reach the recipient and should carry a
+  /// "not delivered" indicator in the chat. Both of Twilio's terminal error
+  /// states qualify.
+  bool get isFailed =>
+      this == MessageStatus.undelivered || this == MessageStatus.failed;
+
+  /// Maps a Twilio `status` string (or a cached [wire] value) to a status,
+  /// defaulting to [unknown] for anything unrecognized or null.
+  static MessageStatus fromWire(String? value) {
+    switch (value) {
+      case 'accepted':
+      case 'scheduled':
+      case 'queued':
+        return MessageStatus.queued;
+      case 'sending':
+        return MessageStatus.sending;
+      case 'sent':
+        return MessageStatus.sent;
+      case 'delivered':
+        return MessageStatus.delivered;
+      case 'read':
+        return MessageStatus.read;
+      case 'undelivered':
+        return MessageStatus.undelivered;
+      case 'failed':
+        return MessageStatus.failed;
+      default:
+        return MessageStatus.unknown;
+    }
+  }
+}
+
 class Message {
   final String id;
   final String phoneNumber;
@@ -45,6 +112,16 @@ class Message {
   final bool isIncoming;
   final String? contactName;
   final List<MessageMedia> media;
+
+  /// Delivery state of this (outgoing) message. Drives the "not delivered"
+  /// indicator in the chat; see [MessageStatus]. Always [MessageStatus.unknown]
+  /// for incoming messages and for entries cached before this field existed.
+  final MessageStatus status;
+
+  /// Twilio's human-readable reason a message failed, when one is available
+  /// (e.g. "Message blocked", an invalid-number description). Null unless
+  /// [status] is a failure; shown when the user taps the indicator.
+  final String? errorMessage;
 
   /// The transport this message used. Derived from the `whatsapp:` prefix on
   /// the Twilio address (see [ChannelAddress]); defaults to [Channel.sms] for
@@ -68,6 +145,8 @@ class Message {
     this.media = const [],
     this.localNumber = '',
     this.channel = Channel.sms,
+    this.status = MessageStatus.unknown,
+    this.errorMessage,
   });
 
   Map<String, dynamic> toJson() {
@@ -81,6 +160,8 @@ class Message {
       'media': media.map((m) => m.toJson()).toList(),
       'localNumber': localNumber,
       'channel': channel.wire,
+      'status': status.wire,
+      'errorMessage': errorMessage,
     };
   }
 
@@ -99,6 +180,8 @@ class Message {
           .toList(),
       localNumber: json['localNumber'] ?? '',
       channel: Channel.fromWire(json['channel']),
+      status: MessageStatus.fromWire(json['status'] as String?),
+      errorMessage: json['errorMessage'] as String?,
     );
   }
 }

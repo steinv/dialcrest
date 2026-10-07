@@ -1549,6 +1549,16 @@ class TwilioService {
       // keeps its own copy thereafter (see docs/whatsapp-integration-plan.md §6).
       final mediaUrl =
           media == null ? null : await _uploadOutgoingMedia(localId, media);
+      // TODO(delivery-status): add a `StatusCallback` pointing at a Twilio
+      // message-status webhook so delivery failures surface live, instead of
+      // only on the next history re-fetch (initState / pull-to-refresh), which
+      // is all the "not delivered" indicator relies on today. The webhook
+      // should be a Cloudflare Worker endpoint (NOT a new Cloud Function) —
+      // added to the Worker end-state in docs/edge-hardening-plan.md §14 — that
+      // validates the Twilio signature, then fans out a data-only FCM to the
+      // account's `messaging-tokens` (mirroring twilioIncomingMessage) carrying
+      // MessageSid/MessageStatus/ErrorCode; the client patches the matching
+      // message's `status`/`errorMessage` in the list + offline cache by SID.
       final response = await _dio.post(
         '/Messages.json',
         data: {
@@ -1563,6 +1573,12 @@ class TwilioService {
       // Use Twilio's own SID so this message de-dupes against the copy that
       // comes back on the next history fetch.
       final sid = response.data is Map ? response.data['sid'] as String? : null;
+      // The create response carries an initial status (typically `queued`); a
+      // delivery failure only surfaces later on a history refresh, so this is
+      // never a failed state here — it just seeds the field until then.
+      final status = response.data is Map
+          ? MessageStatus.fromWire(response.data['status'] as String?)
+          : MessageStatus.unknown;
       return Message(
         id: sid ?? localId,
         phoneNumber: to,
@@ -1571,6 +1587,7 @@ class TwilioService {
         isIncoming: false,
         localNumber: from,
         channel: channel,
+        status: status,
         // Render the just-sent attachment from the on-device file so it shows
         // instantly; the next history fetch replaces this with Twilio's copy.
         media: media == null
@@ -1735,6 +1752,11 @@ class TwilioService {
     // Properly supporting this would mean fetching it out-of-band — e.g.
     // a device on that carrier's SIM/APN relaying the download to a
     // backend — rather than anything reachable from this REST client.
+    // Delivery state (and, on failure, Twilio's reason) — only meaningful for
+    // outgoing messages; inbound ones carry a `received` status we don't model.
+    final status = isIncoming
+        ? MessageStatus.unknown
+        : MessageStatus.fromWire(json['status'] as String?);
     return Message(
       id: sid,
       phoneNumber: remote,
@@ -1747,7 +1769,23 @@ class TwilioService {
       media: media,
       localNumber: local,
       channel: channel,
+      status: status,
+      errorMessage: status.isFailed ? _twilioDeliveryError(json) : null,
     );
+  }
+
+  /// Builds a human-readable failure reason for a message Twilio reports as
+  /// undelivered/failed, from its `error_message` (and `error_code`) fields.
+  /// Returns null when Twilio gave no error detail, so the UI falls back to a
+  /// generic "could not be delivered" message.
+  static String? _twilioDeliveryError(Map<String, dynamic> json) {
+    final message = (json['error_message'] as String?)?.trim();
+    final code = json['error_code'];
+    if (message != null && message.isNotEmpty) {
+      return code != null ? '$message (Twilio $code)' : message;
+    }
+    if (code != null) return 'Twilio error $code';
+    return null;
   }
 
   /// Some carriers deliver an MMS "notification indication" (a binary WAP

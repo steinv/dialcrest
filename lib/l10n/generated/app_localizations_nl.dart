@@ -1,5 +1,6 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
+
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -657,4 +658,14 @@ class AppLocalizationsNl extends AppLocalizations {
 
   @override
   String get recordingLimitReached => 'Maximale opnameduur bereikt.';
+
+  @override
+  String get messageNotDelivered => 'Niet afgeleverd';
+
+  @override
+  String get messageDeliveryFailedReason =>
+      'Dit bericht kon niet worden afgeleverd.';
+
+  @override
+  String get ok => 'OK';
 }

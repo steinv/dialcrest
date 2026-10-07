@@ -843,12 +843,17 @@ class MessagesScreenState extends State<MessagesScreen> {
     final textColor = isMe ? colorScheme.onSecondary : colorScheme.onSurface;
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      // Long-press a bubble for Share / Copy / Delete. Wrapped in a Builder so
-      // the callback gets a context whose RenderBox is this bubble — used as
-      // the iPad share-sheet anchor (sharePositionOrigin).
-      child: Builder(
-        builder: (bubbleContext) => GestureDetector(
-          onLongPress: () => _showMessageActions(message, bubbleContext),
+      child: Column(
+        crossAxisAlignment:
+            isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Long-press a bubble for Share / Copy / Delete. Wrapped in a Builder
+          // so the callback gets a context whose RenderBox is this bubble — used
+          // as the iPad share-sheet anchor (sharePositionOrigin).
+          Builder(
+            builder: (bubbleContext) => GestureDetector(
+              onLongPress: () => _showMessageActions(message, bubbleContext),
         child: Container(
           margin: EdgeInsets.only(
             top: 8,
@@ -888,7 +893,64 @@ class MessagesScreenState extends State<MessagesScreen> {
             ],
           ),
           ),
+            ),
+          ),
+          if (isMe && message.status.isFailed)
+            _buildDeliveryFailureIndicator(message),
+        ],
+      ),
+    );
+  }
+
+  /// The "Not delivered" affordance shown under an outgoing message Twilio
+  /// reports as undelivered/failed. Rendered outside the colored bubble so the
+  /// error color reads against the screen background; tap it to see Twilio's
+  /// reason (or a generic fallback when none was provided).
+  Widget _buildDeliveryFailureIndicator(Message message) {
+    final l10n = AppLocalizations.of(context)!;
+    final errorColor = Theme.of(context).colorScheme.error;
+    return Padding(
+      padding: const EdgeInsets.only(right: 4, bottom: 4),
+      child: InkWell(
+        onTap: () => _showDeliveryError(message),
+        borderRadius: BorderRadius.circular(4),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.error_outline, size: 14, color: errorColor),
+              const SizedBox(width: 4),
+              Text(
+                l10n.messageNotDelivered,
+                style: TextStyle(
+                  color: errorColor,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
         ),
+      ),
+    );
+  }
+
+  /// Shows why an outgoing message failed: Twilio's own error reason when it
+  /// provided one, otherwise a generic explanation.
+  Future<void> _showDeliveryError(Message message) {
+    final l10n = AppLocalizations.of(context)!;
+    return showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(l10n.messageNotDelivered),
+        content: Text(message.errorMessage ?? l10n.messageDeliveryFailedReason),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(l10n.ok),
+          ),
+        ],
       ),
     );
   }

@@ -600,5 +600,14 @@
   "@mediaTooLarge": {},
 
   "recordingLimitReached": "Maximum recording length reached.",
-  "@recordingLimitReached": {}
+  "@recordingLimitReached": {},
+
+  "messageNotDelivered": "Not delivered",
+  "@messageNotDelivered": {},
+
+  "messageDeliveryFailedReason": "This message could not be delivered.",
+  "@messageDeliveryFailedReason": {},
+
+  "ok": "OK",
+  "@ok": {}
 }

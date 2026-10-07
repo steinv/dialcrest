@@ -184,5 +184,8 @@
   "chooseFromGallery": "Aus Galerie wählen",
   "microphonePermissionDenied": "Für die Aufnahme einer Sprachnachricht ist die Mikrofonberechtigung erforderlich.",
   "mediaTooLarge": "Dieser Anhang ist zu groß zum Senden (max. 16 MB).",
-  "recordingLimitReached": "Maximale Aufnahmedauer erreicht."
+  "recordingLimitReached": "Maximale Aufnahmedauer erreicht.",
+  "messageNotDelivered": "Nicht zugestellt",
+  "messageDeliveryFailedReason": "Diese Nachricht konnte nicht zugestellt werden.",
+  "ok": "OK"
 }
