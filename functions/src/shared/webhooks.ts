@@ -256,10 +256,11 @@ export function emptyMessagingTwiml(): string {
 /**
  * Data payload of the silent push sent to each of a tenant's devices for an
  * inbound SMS/MMS. accountSid rides along so a device in vacation mode can
- * recognize its own tenant and skip displaying the notification.
+ * recognize its own tenant and skip displaying the notification. The sender
+ * travels as `sender`: FCM rejects `from` as a reserved data key.
  */
-export function incomingMessagePushData(fields: {
+export function incomingMessagePushData({ from, ...fields }: {
     accountSid: string; from: string; to: string; body: string; messageSid: string;
 }): Record<string, string> {
-    return { dialcrest_type: 'incoming_message', ...fields };
+    return { dialcrest_type: 'incoming_message', ...fields, sender: from };
 }

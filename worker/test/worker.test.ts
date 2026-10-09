@@ -203,7 +203,7 @@ describe('twilioIncomingMessage (notifies entitled devices only)', () => {
         expect(await res.text()).toBe('<?xml version="1.0" encoding="UTF-8"?><Response/>');
         expect(google.fcmSent.map((m) => m.token).sort()).toEqual(['tok:A', 'tok:B']);
         expect(google.fcmSent[0].data).toEqual({
-            dialcrest_type: 'incoming_message', accountSid: SID, from: '+321', to: '+322', body: 'hi & bye', messageSid: 'SM1',
+            dialcrest_type: 'incoming_message', accountSid: SID, sender: '+321', to: '+322', body: 'hi & bye', messageSid: 'SM1',
         });
         expect(google.fcmSent[0].message).toMatchObject({
             android: { priority: 'HIGH' },

@@ -65,3 +65,14 @@ rules must not be broken:
   WAF-protected Custom Domain must be the only way in.
 - **Cost ceiling**: `setGlobalOptions({ maxInstances })` in index.ts covers every
   function — don't override it upward on a public endpoint without reason.
+
+## FCM data payloads
+
+- **No reserved keys in a push's `data`.** When adding or renaming a key in an
+  FCM data payload (e.g. `incomingMessagePushData`), check it against FCM's
+  reserved words: `from`, `message_type`, `notification`, and anything starting
+  with `google` or `gcm`. FCM rejects the whole message (`Invalid data payload
+  key`), and since sends run under `Promise.allSettled` the failure is silent —
+  a `from` key once meant no inbound-message push was ever delivered. Rename
+  the key on the wire (the sender travels as `sender`) and update every reader:
+  `IncomingMessageFcmHandler.kt`, `lib/main.dart`, `lib/services/twilio_service.dart`.

@@ -45,7 +45,7 @@ object IncomingMessageFcmHandler {
 
     fun handle(context: Context, data: Map<String, String>) {
         if (data[DATA_TYPE_KEY] != DATA_TYPE_INCOMING_MESSAGE) return
-        val from = data["from"] ?: return
+        val from = data["sender"] ?: return
         val body = data["body"] ?: ""
         val messageSid = data["messageSid"] ?: ""
         val to = data["to"] ?: ""

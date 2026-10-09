@@ -48,7 +48,7 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     if (prefs.getBool('vacation_mode_$accountSid') ?? false) return;
   }
 
-  final from = message.data['from'] ?? '';
+  final from = message.data['sender'] ?? '';
   final body = message.data['body'] ?? '';
 
   final localNotifications = FlutterLocalNotificationsPlugin();
