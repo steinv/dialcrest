@@ -1,0 +1,3 @@
+# Dialcrest shows no ads. This line declares that no seller is authorized
+# to sell ad inventory for our apps (IAB ads.txt 1.1, "no authorized sellers").
+placeholder.example.com, placeholder, DIRECT, placeholder
