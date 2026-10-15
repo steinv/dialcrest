@@ -290,6 +290,11 @@ class TwilioService {
   /// just be opened directly — no banner moment, unlike [onIncomingMessage].
   Function(String from, String body)? onOpenConversation;
 
+  /// Fires when the user taps a missed-call notification. iOS only: those are
+  /// twilio_voice's local notifications, routed here by AppDelegate.swift. On
+  /// Android the missed-call notification belongs to the system dialer.
+  void Function()? onOpenCallHistory;
+
   /// Android equivalent of `FirebaseMessaging.onMessage` (`onForegroundMessage`)
   /// and `getInitialMessage()`/`onMessageOpenedApp` — see
   /// IncomingMessageFcmHandler.kt/MainActivity.kt.
@@ -366,27 +371,27 @@ class TwilioService {
   /// twilioIncomingMessage webhook can reach it, and wires up both the
   /// foreground live-update/banner path (onIncomingMessage) and the
   /// "tap a notification to open the conversation" path (onOpenConversation,
-  /// covering a cold start and an already-running tap on both platforms).
+  /// covering a cold start and an already-running tap on both platforms), plus
+  /// the missed-call tap (onOpenCallHistory).
+  ///
+  /// The tap handling comes first: the permission request and device
+  /// registration below involve network round-trips, and a cold start from a
+  /// tapped notification shouldn't sit on the dialer while they run.
   Future<void> _initializeIncomingMessageHandling() async {
     try {
-      // For a brand-new user the onboarding wizard owns the notification-permission
-      // prompt (see requestNotificationPermission), so don't fire one at launch
-      // before it's been explained. Everything else here still runs — device-token
-      // registration and the listeners — so once the wizard (or a later launch)
-      // grants permission, incoming pushes are delivered without further setup.
-      if (_storageService.getOnboardingCompleted(accountSid)) {
-        await FirebaseMessaging.instance.requestPermission();
-      }
-      await _registerMessagingDevice();
-
-      await _localNotifications.initialize(
-        settings: const InitializationSettings(iOS: DarwinInitializationSettings()),
-        onDidReceiveNotificationResponse: (details) =>
-            _handleNotificationPayload(details.payload),
-      );
-      final launchDetails = await _localNotifications.getNotificationAppLaunchDetails();
-      if (launchDetails?.didNotificationLaunchApp == true) {
-        _handleNotificationPayload(launchDetails!.notificationResponse?.payload);
+      // iOS only: initialize() throws on Android without Android settings, which
+      // used to abort everything below — including the native channel Android's
+      // notification taps arrive on.
+      if (Platform.isIOS) {
+        await _localNotifications.initialize(
+          settings: const InitializationSettings(iOS: DarwinInitializationSettings()),
+          onDidReceiveNotificationResponse: (details) =>
+              _handleNotificationPayload(details.payload),
+        );
+        final launchDetails = await _localNotifications.getNotificationAppLaunchDetails();
+        if (launchDetails?.didNotificationLaunchApp == true) {
+          _handleNotificationPayload(launchDetails!.notificationResponse?.payload);
+        }
       }
 
       _onMessageSubscription = FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
@@ -398,12 +403,37 @@ class TwilioService {
           case 'onForegroundMessage':
             // The native side falls back to a system notification unless this is true.
             return _handleNativeForegroundMessage(call.arguments);
+          case 'onOpenCallHistory':
+            // AppDelegate keeps the tap pending for getInitialOpenCallHistory unless this is true.
+            final handler = onOpenCallHistory;
+            handler?.call();
+            return handler != null;
         }
         return null;
       });
       final initialExtras = await _incomingMessageChannel
           .invokeMethod<Map<Object?, Object?>>('getInitialIncomingMessage');
       _handleNativeExtras(initialExtras);
+      if (Platform.isIOS) {
+        final openCallHistory = await _incomingMessageChannel
+            .invokeMethod<bool>('getInitialOpenCallHistory');
+        if (openCallHistory == true) onOpenCallHistory?.call();
+      }
+    } catch (e, stackTrace) {
+      debugPrint('Error initializing notification-tap handling: $e');
+      debugPrintStack(stackTrace: stackTrace);
+    }
+
+    try {
+      // For a brand-new user the onboarding wizard owns the notification-permission
+      // prompt (see requestNotificationPermission), so don't fire one at launch
+      // before it's been explained. Everything else here still runs — device-token
+      // registration and the listeners — so once the wizard (or a later launch)
+      // grants permission, incoming pushes are delivered without further setup.
+      if (_storageService.getOnboardingCompleted(accountSid)) {
+        await FirebaseMessaging.instance.requestPermission();
+      }
+      await _registerMessagingDevice();
     } catch (e, stackTrace) {
       debugPrint('Error initializing incoming-message handling: $e');
       debugPrintStack(stackTrace: stackTrace);

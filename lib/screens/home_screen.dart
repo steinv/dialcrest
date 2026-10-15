@@ -216,6 +216,19 @@ class HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _handleIncomingMessage(_incomingMessage(from, body, '', ''));
       };
 
+      // A missed-call notification was tapped — land on the call history,
+      // reloaded in case that tab was already showing.
+      _twilioService.onOpenCallHistory = () {
+        if (!mounted) return;
+        _callHistoryKey.currentState?.refresh();
+        setState(() {
+          _showNotification = false;
+          _selectedIndex = 1; // Call history tab
+          _selectedContact = null;
+          _selectedChannel = null;
+        });
+      };
+
       _loadOutgoingNumbers();
       _maybeShowOnboarding(storageService);
     }
