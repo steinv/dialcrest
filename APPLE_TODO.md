@@ -5,7 +5,7 @@ Tracks the Apple-specific work that's outstanding for the subscription rework
 available right now.
 
 The **backend code for Apple already exists and compiles** — the items below are
-console setup, a secret, and two hardening/UX follow-ups. Nothing here blocks
+console setup, a secret, and sandbox testing. Nothing here blocks
 the Android path from working.
 
 ## 1. App Store Connect console setup (needs the account)
@@ -48,62 +48,37 @@ Apple Root CA - G3 (`functions/certs/`) before processing — see
 docs/edge-hardening-plan.md §6.4. Only needs `appAppleId` set (section 2) and a
 real Sandbox notification to confirm end to end.
 
-## 4. UX: iOS auto-recover paid entitlement after reinstall (code TODO)
+## 4. ~~UX: iOS auto-recover paid entitlement after reinstall~~ (done, untested)
 
-Marked `TODO(ios)` in `lib/services/subscription_service.dart` (the
-`currentEntitlement` getter). On iOS, StoreKit 2's
-`Transaction.currentEntitlements` can recover a paid subscription after a
-reinstall **without** a sign-in prompt, unlike `restorePurchases()`.
+With StoreKit 2 (see §5), `in_app_purchase_storekit`'s `restorePurchases()`
+iterates `Transaction.currentEntitlements` — no sign-in prompt (the prompting
+`AppStore.sync()` is a separate call we never make). So `SubscriptionService`
+now runs the startup restore and the on-block `recoverEntitlement()` retry on
+**both** platforms, and a reinstalled iOS subscriber passes the enforcement
+gate on their first dial without tapping "Restore purchases".
 
-**Android is done** — `SubscriptionService` now calls `restorePurchases()`
-(a silent local query on Android) at startup, and `recoverEntitlement()` retries
-it silently when a dial is blocked as `subscription-expired`
-(`TwilioService._accessToken`). So an Android device that owns a subscription but
-hasn't cached it passes the enforcement gate on its first dial, before opening
-Settings.
+Still to confirm on a device (§6): a reinstall recovers the entitlement
+silently, and the startup restore doesn't prompt.
 
-**iOS half to do:** give `recoverEntitlement()` / the startup path an iOS branch
-that reads StoreKit 2 `Transaction.currentEntitlements` (prompt-free) and
-persists the entitlement, mirroring the Android behavior. Until then:
-- iOS startup does **not** auto-restore (the plugin's `restorePurchases()` can
-  prompt), and `recoverEntitlement()` returns only what's already cached without
-  restoring — so the on-block dial retry is a no-op on iOS.
-- A reinstalled iOS subscriber must tap the "Restore purchases" button in
-  Settings (which may prompt for sign-in) before dialing works.
+## 5. ~~Correctness: client-presented entitlement must be a JWS~~ (done, untested)
 
-This closes the "dials before opening Settings" gap on iOS, matching Android.
-
-## 5. Correctness: client-presented entitlement must be a JWS (code TODO)
-
-The backend decodes the client-presented `signedTransactionInfo` with
-`decodeAppleSignedPayload` (`functions/src/subscription.ts`), which does
-`split('.')` and base64url-decodes the payload segment — i.e. it assumes a JWS.
-It's decoded both at purchase time (`verifyApplePurchase`) and on **every**
-gated call (`verifyEntitlement`, to read the `originalTransactionId`).
-
-But the Flutter client sends `purchase.verificationData.serverVerificationData`
-(`lib/services/subscription_service.dart` — `_verifyPurchase` and the
-`currentEntitlement` getter), and `in_app_purchase_storekit` defaults to
-**StoreKit 1**, whose `serverVerificationData` is the base64 **app receipt** — a
-single opaque blob with no `.`-separated segments. `decodeAppleSignedPayload`
-would throw on it, failing verification and enforcement. This is **not just a
-post-trial problem** — it breaks the initial purchase verify too; it's only
-masked today because the whole Apple path is parked (no secret/account, §2), so
-nothing runs.
-
-**Update:** the backend now *verifies* the presented `signedTransactionInfo`
+The backend only accepts a StoreKit 2 transaction JWS
 (`verifyPresentedAppleTransaction`: Apple chain, signature, bundle id,
-environment) before trusting its `originalTransactionId` — previously it only
-decoded it, so a forged JWS could name another customer's subscription. That makes
-a real StoreKit 2 JWS **required**: a StoreKit 1 receipt is rejected outright.
-Production transactions also need `appAppleId` (section 2).
+environment); a StoreKit 1 base64 app receipt is rejected. Production
+transactions also need `appAppleId` (section 2).
 
-Resolve before un-parking iOS. Required fix: enable **StoreKit 2** in the
-plugin so `serverVerificationData` is the transaction's JWS — this also lines up
-with §4 (StoreKit 2 `currentEntitlements` for prompt-free recovery), so do both
-together. (Keeping StoreKit 1 would instead need a separate, server-side
-receipt-validation path.) Add a sandbox test that a real device-issued
-entitlement verifies.
+`in_app_purchase_storekit` has defaulted to **StoreKit 2** since 0.4.0 (the
+lockfile has 0.4.13), so `serverVerificationData` is already the transaction's
+`jwsRepresentation` — the earlier "defaults to StoreKit 1" premise was out of
+date. Changes made:
+- `ios/Podfile` platform raised 13.0 → **15.0** (StoreKit 2's minimum). The
+  Xcode project isn't checked in — when it's (re)generated, set the Runner
+  target's `IPHONEOS_DEPLOYMENT_TARGET` to 15.0 too.
+- `SubscriptionService._verifyPurchase` refuses (throws) an iOS purchase whose
+  verification data isn't a 3-segment JWS, so a StoreKit 1 fallback fails
+  loudly instead of persisting a token every gated call would reject.
+
+Still to do: a sandbox test that a real device-issued entitlement verifies (§6).
 
 ## 6. Testing (needs the account + a sandbox tester)
 
@@ -121,4 +96,4 @@ entitlement verifies.
   `refreshAppleByOriginalTransactionId`, `verifyApplePurchase`,
   `signAppleServerJwt`, `decodeAppleSignedPayload`,
   `extractAppleSubscriptionState`
-- `lib/services/subscription_service.dart` — `TODO(ios)` on `currentEntitlement`
+- `lib/services/subscription_service.dart` — startup restore, `recoverEntitlement`, `_verifyPurchase`
