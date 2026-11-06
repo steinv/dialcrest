@@ -572,3 +572,13 @@ strong.contact {
   gap: 20px;
   flex-wrap: wrap;
 }
+
+/* Highlighted paragraph on legal pages */
+
+.notice {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent, currentColor);
+  border-radius: 8px;
+  padding: 16px 20px;
+}

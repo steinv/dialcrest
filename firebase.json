@@ -79,6 +79,10 @@
       {
         "source": "/faq",
         "destination": "/faq.html"
+      },
+      {
+        "source": "/terms",
+        "destination": "/terms.html"
       }
     ],
     "headers": [

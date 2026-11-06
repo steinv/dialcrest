@@ -16,6 +16,7 @@ export default defineConfig({
         index: resolve(__dirname, 'index.html'),
         faq: resolve(__dirname, 'faq.html'),
         privacy: resolve(__dirname, 'privacy.html'),
+        terms: resolve(__dirname, 'terms.html'),
       },
     },
   },
