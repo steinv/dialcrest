@@ -1,0 +1,10 @@
+# Credentials are NOT stored in the repo — see fastlane/.env.example.
+
+for_platform :android do
+  package_name("be.peblet.twilio_phone")
+  json_key_file(ENV["PLAY_JSON_KEY_PATH"] || File.expand_path("~/.config/dialcrest/play-service-account.json"))
+end
+
+for_platform :ios do
+  app_identifier("be.peblet.twilioPhone")
+end

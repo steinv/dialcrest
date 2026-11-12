@@ -1,0 +1,231 @@
+# Release orchestration for Android (Google Play) and iOS (TestFlight / App Store).
+#
+# Flutter builds the binaries; fastlane only uploads and manages tracks.
+# The version NAME comes from pubspec.yaml; the build NUMBER is taken from the
+# store (highest existing + 1), so it never collides and pubspec's "+N" is ignored.
+#
+# Lanes run with fastlane/ as working directory — ROOT is the Flutter project.
+
+require "tmpdir"
+
+ROOT = File.expand_path("..", __dir__)
+
+opt_out_usage
+default_platform(:android)
+
+def flutter(*args)
+  sh("flutter", *args, chdir: ROOT)
+end
+
+def pubspec_version
+  File.read(File.join(ROOT, "pubspec.yaml"))[/^version:\s*([^\s+]+)/, 1]
+end
+
+# ---------------------------------------------------------------------------
+platform :android do
+  PLAY_TRACKS = %w[internal alpha beta production].freeze
+  AAB = File.join(ROOT, "build/app/outputs/bundle/release/app-release.aab")
+
+  def highest_version_code
+    PLAY_TRACKS.flat_map do |t|
+      google_play_track_version_codes(track: t)
+    rescue StandardError => e
+      UI.verbose("track #{t}: #{e.message}")
+      []
+    end.max || 0
+  end
+
+  def rollout_status(rollout)
+    rollout.to_f >= 1 ? "completed" : "inProgress"
+  end
+
+  desc "Check that the Play service-account key works"
+  lane :validate do
+    validate_play_store_json_key
+  end
+
+  desc "Show the version codes and release names on every track"
+  lane :status do
+    PLAY_TRACKS.each do |t|
+      codes = google_play_track_version_codes(track: t) rescue []
+      names = google_play_track_release_names(track: t) rescue []
+      UI.message("#{t.ljust(11)} codes=#{codes.inspect} names=#{names.inspect}")
+    end
+  end
+
+  desc "Build a release AAB with the next version code"
+  lane :build do
+    code = highest_version_code + 1
+    UI.message("Building #{pubspec_version} (#{code})")
+    flutter("build", "appbundle", "--release", "--build-number=#{code}")
+    code
+  end
+
+  desc "Build and upload to the internal testing track"
+  desc "Options: notes:\"…\" (en-US release notes)"
+  lane :internal do |options|
+    code = build
+    upload_bundle(track: "internal", version_code: code, notes: options[:notes])
+  end
+
+  desc "Upload an already-built AAB to a track. Options: track:internal notes:\"…\""
+  lane :upload do |options|
+    UI.user_error!("No AAB at #{AAB} — run `fastlane android build` first") unless File.exist?(AAB)
+    upload_bundle(track: options[:track] || "internal", notes: options[:notes])
+  end
+
+  private_lane :upload_bundle do |options|
+    changelog_dir = nil
+    if options[:notes] && options[:version_code]
+      changelog_dir = File.join(Dir.mktmpdir, "metadata")
+      FileUtils.mkdir_p(File.join(changelog_dir, "en-US/changelogs"))
+      File.write(File.join(changelog_dir, "en-US/changelogs/#{options[:version_code]}.txt"), options[:notes])
+    end
+
+    upload_to_play_store(
+      track: options[:track],
+      aab: AAB,
+      release_status: "completed",
+      metadata_path: changelog_dir,
+      skip_upload_changelogs: changelog_dir.nil?,
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+  end
+
+  desc "Promote the latest release of one track to another"
+  desc "Options: from:internal to:production rollout:0.2 (fraction; 1 = everyone)"
+  lane :promote do |options|
+    from = options[:from] || "internal"
+    to = options[:to] || "production"
+    rollout = (options[:rollout] || 1).to_s
+    code = google_play_track_version_codes(track: from).max
+    UI.user_error!("No release on track '#{from}'") unless code
+
+    UI.important("Promoting #{code} from #{from} → #{to} at #{(rollout.to_f * 100).round}%")
+    upload_to_play_store(
+      track: from,
+      track_promote_to: to,
+      version_code: code,
+      rollout: rollout.to_f >= 1 ? nil : rollout,
+      track_promote_release_status: rollout_status(rollout),
+      skip_upload_aab: true,
+      skip_upload_apk: true,
+      skip_upload_changelogs: true,
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+  end
+
+  desc "Change the staged-rollout fraction of the latest release on a track"
+  desc "Options: rollout:0.5 track:production (rollout:1 completes the rollout)"
+  lane :rollout do |options|
+    track = options[:track] || "production"
+    rollout = options[:rollout] or UI.user_error!("Pass rollout:<fraction>, e.g. rollout:0.5")
+    code = google_play_track_version_codes(track: track).max
+    upload_to_play_store(
+      track: track,
+      version_code: code,
+      rollout: rollout.to_f >= 1 ? nil : rollout.to_s,
+      release_status: rollout_status(rollout),
+      skip_upload_aab: true,
+      skip_upload_apk: true,
+      skip_upload_changelogs: true,
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+  end
+
+  desc "Halt the staged rollout of the latest release on a track (default production)"
+  lane :halt do |options|
+    track = options[:track] || "production"
+    code = google_play_track_version_codes(track: track).max
+    upload_to_play_store(
+      track: track,
+      version_code: code,
+      release_status: "halted",
+      skip_upload_aab: true,
+      skip_upload_apk: true,
+      skip_upload_changelogs: true,
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+  end
+
+  desc "Download the current store listing into fastlane/metadata/android"
+  lane :metadata_download do
+    download_from_play_store
+  end
+
+  desc "Upload the store listing (texts + images) from fastlane/metadata/android"
+  lane :metadata_upload do
+    upload_to_play_store(
+      skip_upload_aab: true,
+      skip_upload_apk: true,
+      skip_upload_changelogs: true
+    )
+  end
+end
+
+# ---------------------------------------------------------------------------
+platform :ios do
+  IPA_DIR = File.join(ROOT, "build/ios/ipa")
+
+  def asc_key
+    unless File.directory?(File.join(ROOT, "ios/Runner.xcodeproj"))
+      UI.user_error!("ios/Runner.xcodeproj is missing — regenerate the Xcode project first (see APPLE_TODO.md)")
+    end
+    %w[ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_PATH].each do |k|
+      UI.user_error!("Set #{k} in fastlane/.env (see .env.example)") if ENV[k].to_s.empty?
+    end
+    app_store_connect_api_key(
+      key_id: ENV["ASC_KEY_ID"],
+      issuer_id: ENV["ASC_ISSUER_ID"],
+      key_filepath: ENV["ASC_KEY_PATH"]
+    )
+  end
+
+  desc "Show the latest TestFlight build number"
+  lane :status do
+    asc_key
+    n = latest_testflight_build_number(version: pubspec_version, initial_build_number: 0)
+    UI.message("#{pubspec_version}: latest TestFlight build #{n}")
+  end
+
+  desc "Build a signed IPA and upload it to TestFlight. Options: notes:\"…\""
+  lane :beta do |options|
+    asc_key
+    build = latest_testflight_build_number(initial_build_number: 0) + 1
+    UI.message("Building #{pubspec_version} (#{build})")
+    flutter("build", "ipa", "--release", "--build-number=#{build}")
+
+    upload_to_testflight(
+      ipa: Dir[File.join(IPA_DIR, "*.ipa")].first,
+      changelog: options[:notes],
+      skip_waiting_for_build_processing: options[:notes].nil?
+    )
+  end
+
+  desc "Submit the latest TestFlight build of the pubspec version for App Store review"
+  desc "Options: phased:true (7-day phased release), auto_release:true"
+  lane :release do |options|
+    asc_key
+    build = latest_testflight_build_number(version: pubspec_version)
+    upload_to_app_store(
+      app_version: pubspec_version,
+      build_number: build.to_s,
+      submit_for_review: true,
+      automatic_release: options[:auto_release] == true || options[:auto_release] == "true",
+      phased_release: options[:phased] == true || options[:phased] == "true",
+      skip_binary_upload: true,
+      skip_metadata: true,
+      skip_screenshots: true,
+      precheck_include_in_app_purchases: false,
+      force: true
+    )
+  end
+end

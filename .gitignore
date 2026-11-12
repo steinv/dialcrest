@@ -57,3 +57,12 @@ dist/
 
 # Local build-time secrets (e.g. App Check debug token), passed via --dart-define-from-file
 dart_defines.local.json
+
+# fastlane: local credentials and run artefacts
+.config/
+fastlane/.env
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/test_output
+# Local credentials (e.g. the Play Console publisher service-account key)
+/.config/
