@@ -609,5 +609,10 @@
   "@messageDeliveryFailedReason": {},
 
   "ok": "OK",
-  "@ok": {}
+  "@ok": {},
+
+  "today": "Today",
+  "@today": {},
+  "yesterday": "Yesterday",
+  "@yesterday": {}
 }

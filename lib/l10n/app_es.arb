@@ -187,5 +187,7 @@
   "recordingLimitReached": "Se alcanzó la duración máxima de grabación.",
   "messageNotDelivered": "No entregado",
   "messageDeliveryFailedReason": "No se pudo entregar este mensaje.",
-  "ok": "Aceptar"
+  "ok": "Aceptar",
+  "today": "Hoy",
+  "yesterday": "Ayer"
 }

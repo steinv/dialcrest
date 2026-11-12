@@ -667,4 +667,10 @@ class AppLocalizationsNl extends AppLocalizations {
 
   @override
   String get ok => 'OK';
+
+  @override
+  String get today => 'Vandaag';
+
+  @override
+  String get yesterday => 'Gisteren';
 }

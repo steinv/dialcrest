@@ -669,4 +669,10 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get ok => 'OK';
+
+  @override
+  String get today => 'Heute';
+
+  @override
+  String get yesterday => 'Gestern';
 }

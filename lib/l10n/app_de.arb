@@ -187,5 +187,7 @@
   "recordingLimitReached": "Maximale Aufnahmedauer erreicht.",
   "messageNotDelivered": "Nicht zugestellt",
   "messageDeliveryFailedReason": "Diese Nachricht konnte nicht zugestellt werden.",
-  "ok": "OK"
+  "ok": "OK",
+  "today": "Heute",
+  "yesterday": "Gestern"
 }

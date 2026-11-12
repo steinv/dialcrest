@@ -187,5 +187,7 @@
   "recordingLimitReached": "Maximale opnameduur bereikt.",
   "messageNotDelivered": "Niet afgeleverd",
   "messageDeliveryFailedReason": "Dit bericht kon niet worden afgeleverd.",
-  "ok": "OK"
+  "ok": "OK",
+  "today": "Vandaag",
+  "yesterday": "Gisteren"
 }

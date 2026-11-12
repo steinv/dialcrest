@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:record/record.dart';
@@ -732,7 +731,7 @@ class MessagesScreenState extends State<MessagesScreen> {
         overflow: TextOverflow.ellipsis,
       ),
       trailing: Text(
-        DateFormat.yMMMd().format(conversation.lastMessageTime),
+        _formatListTime(conversation.lastMessageTime),
         style: const TextStyle(color: Colors.grey),
       ),
       onTap: () => widget.onSelectConversation(
@@ -740,6 +739,15 @@ class MessagesScreenState extends State<MessagesScreen> {
       // Long-press opens a sheet of actions for the whole conversation.
       onLongPress: () => _showConversationActions(conversation),
     );
+  }
+
+  /// Conversation-list timestamp: the clock time for today, otherwise the
+  /// same day label as the thread separators ("Yesterday", weekday, date).
+  String _formatListTime(DateTime time) {
+    if (isSameDay(time, DateTime.now())) return formatClockTime(context, time);
+    final l10n = AppLocalizations.of(context)!;
+    return formatDayLabel(context, time,
+        today: l10n.today, yesterday: l10n.yesterday);
   }
 
   Widget _buildFooter() {
@@ -826,12 +834,51 @@ class MessagesScreenState extends State<MessagesScreen> {
                   itemCount: messages.length,
                   padding:
                       const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  itemBuilder: (context, index) =>
-                      _buildBubble(messages[index]),
+                  itemBuilder: (context, index) {
+                    final message = messages[index];
+                    final bubble = _buildBubble(message);
+                    // A day separator above the first message of each day,
+                    // since bubbles show only the clock time.
+                    final startsNewDay = index == 0 ||
+                        !isSameDay(
+                            messages[index - 1].timestamp, message.timestamp);
+                    if (!startsNewDay) return bubble;
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _buildDaySeparator(message.timestamp),
+                        bubble,
+                      ],
+                    );
+                  },
                 ),
         ),
         _buildComposer(contact, channel),
       ],
+    );
+  }
+
+  Widget _buildDaySeparator(DateTime time) {
+    final l10n = AppLocalizations.of(context)!;
+    final colorScheme = Theme.of(context).colorScheme;
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          formatDayLabel(context, time,
+              today: l10n.today, yesterday: l10n.yesterday),
+          style: TextStyle(
+            color: colorScheme.onSurfaceVariant,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ),
     );
   }
 

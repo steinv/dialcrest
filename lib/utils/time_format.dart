@@ -27,3 +27,31 @@ String formatDateTime(BuildContext context, DateTime time) {
   final date = DateFormat.yMMMd(locale).format(time);
   return '$date, ${formatClockTime(context, time)}';
 }
+
+/// Label for a day separator in a message thread: "Today", "Yesterday", the
+/// weekday name within the past week (e.g. "Monday"), otherwise the full date
+/// (e.g. "Sep 21, 2026"), per the device locale.
+String formatDayLabel(
+  BuildContext context,
+  DateTime time, {
+  required String today,
+  required String yesterday,
+  DateTime? now,
+}) {
+  final locale = Localizations.localeOf(context).toString();
+  final current = now ?? DateTime.now();
+  final day = DateTime(time.year, time.month, time.day);
+  final todayDate = DateTime(current.year, current.month, current.day);
+  // Calendar-day difference; computed in UTC to stay correct across DST.
+  final diff = DateTime.utc(todayDate.year, todayDate.month, todayDate.day)
+      .difference(DateTime.utc(day.year, day.month, day.day))
+      .inDays;
+  if (diff == 0) return today;
+  if (diff == 1) return yesterday;
+  if (diff > 1 && diff < 7) return DateFormat.EEEE(locale).format(time);
+  return DateFormat.yMMMd(locale).format(time);
+}
+
+/// Whether [a] and [b] fall on the same local calendar day.
+bool isSameDay(DateTime a, DateTime b) =>
+    a.year == b.year && a.month == b.month && a.day == b.day;
