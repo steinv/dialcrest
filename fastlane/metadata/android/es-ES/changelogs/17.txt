@@ -1,0 +1,3 @@
+• Al tocar una notificación de mensaje se vuelve a abrir esa conversación
+• Las conversaciones ahora muestran separadores de día (Hoy, Ayer, día de la semana o fecha)
+• La lista de conversaciones muestra la hora en los mensajes de hoy, y Ayer, el día de la semana o la fecha en los más antiguos

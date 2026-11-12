@@ -1,0 +1,3 @@
+• Ein Tipp auf eine Nachrichtenbenachrichtigung öffnet wieder die passende Unterhaltung
+• Unterhaltungen zeigen jetzt Tagestrenner (Heute, Gestern, Wochentag oder Datum)
+• Die Unterhaltungsliste zeigt bei Nachrichten von heute die Uhrzeit, bei älteren Gestern, den Wochentag oder das Datum

@@ -1,0 +1,3 @@
+• Toucher une notification de message ouvre à nouveau la conversation correspondante
+• Les conversations affichent désormais des séparateurs de jour (Aujourd'hui, Hier, jour de la semaine ou date)
+• La liste des conversations affiche l'heure pour les messages du jour, et Hier, le jour de la semaine ou la date pour les plus anciens

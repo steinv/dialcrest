@@ -1,0 +1,3 @@
+• Tikken op een berichtmelding opent dat gesprek weer
+• Berichtgesprekken tonen nu dagscheidingen (Vandaag, Gisteren, weekdag of datum)
+• De gesprekkenlijst toont het tijdstip voor berichten van vandaag en Gisteren, de weekdag of de datum voor oudere berichten

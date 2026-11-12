@@ -6,8 +6,6 @@
 #
 # Lanes run with fastlane/ as working directory — ROOT is the Flutter project.
 
-require "tmpdir"
-
 ROOT = File.expand_path("..", __dir__)
 
 opt_out_usage
@@ -25,6 +23,7 @@ end
 platform :android do
   PLAY_TRACKS = %w[internal alpha beta production].freeze
   AAB = File.join(ROOT, "build/app/outputs/bundle/release/app-release.aab")
+  CHANGELOGS = File.join(ROOT, "fastlane/metadata/android")
 
   def highest_version_code
     PLAY_TRACKS.flat_map do |t|
@@ -62,32 +61,36 @@ platform :android do
   end
 
   desc "Build and upload to the internal testing track"
-  desc "Options: notes:\"…\" (en-US release notes)"
-  lane :internal do |options|
+  desc "Release notes: fastlane/metadata/android/<locale>/changelogs/<versionCode>.txt"
+  lane :internal do
+    release(track: "internal")
+  end
+
+  desc "Build and upload a release to a track"
+  desc "Options: track:production status:draft|completed|inProgress rollout:0.2"
+  desc "Production defaults to a DRAFT (nothing goes live) — go live with `rollout`."
+  desc "Release notes: fastlane/metadata/android/<locale>/changelogs/<versionCode>.txt"
+  lane :release do |options|
+    track = options[:track] || "internal"
+    status = options[:status] || (track == "production" ? "draft" : "completed")
+    status = "inProgress" if options[:rollout] && options[:rollout].to_f < 1
+
     code = build
-    upload_bundle(track: "internal", version_code: code, notes: options[:notes])
-  end
-
-  desc "Upload an already-built AAB to a track. Options: track:internal notes:\"…\""
-  lane :upload do |options|
-    UI.user_error!("No AAB at #{AAB} — run `fastlane android build` first") unless File.exist?(AAB)
-    upload_bundle(track: options[:track] || "internal", notes: options[:notes])
-  end
-
-  private_lane :upload_bundle do |options|
-    changelog_dir = nil
-    if options[:notes] && options[:version_code]
-      changelog_dir = File.join(Dir.mktmpdir, "metadata")
-      FileUtils.mkdir_p(File.join(changelog_dir, "en-US/changelogs"))
-      File.write(File.join(changelog_dir, "en-US/changelogs/#{options[:version_code]}.txt"), options[:notes])
+    notes = Dir[File.join(CHANGELOGS, "*/changelogs/#{code}.txt")]
+    if notes.empty?
+      UI.important("No release notes for version code #{code} in #{CHANGELOGS}")
+    else
+      UI.message("Release notes: #{notes.map { |f| f.split('/')[-3] }.join(', ')}")
     end
 
     upload_to_play_store(
-      track: options[:track],
+      track: track,
       aab: AAB,
-      release_status: "completed",
-      metadata_path: changelog_dir,
-      skip_upload_changelogs: changelog_dir.nil?,
+      release_status: status,
+      rollout: status == "inProgress" ? options[:rollout].to_s : nil,
+      version_name: "#{code} (#{pubspec_version})",
+      metadata_path: CHANGELOGS,
+      skip_upload_changelogs: notes.empty?,
       skip_upload_metadata: true,
       skip_upload_images: true,
       skip_upload_screenshots: true
@@ -163,6 +166,10 @@ platform :android do
 
   desc "Upload the store listing (texts + images) from fastlane/metadata/android"
   lane :metadata_upload do
+    # Missing listing files would be uploaded as empty fields — require a full download first.
+    unless File.exist?(File.join(CHANGELOGS, "en-US/title.txt"))
+      UI.user_error!("No full store listing in #{CHANGELOGS} — run `fastlane android metadata_download` first")
+    end
     upload_to_play_store(
       skip_upload_aab: true,
       skip_upload_apk: true,

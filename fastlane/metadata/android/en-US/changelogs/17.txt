@@ -1,0 +1,3 @@
+• Tapping a message notification opens that conversation again
+• Message threads now show day separators (Today, Yesterday, weekday or date)
+• The conversation list shows the time for today's messages and Yesterday, the weekday or the date for older ones

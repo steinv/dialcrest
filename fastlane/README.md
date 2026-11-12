@@ -47,15 +47,21 @@ Build a release AAB with the next version code
 
 Build and upload to the internal testing track
 
-Options: notes:"…" (en-US release notes)
+Release notes: fastlane/metadata/android/<locale>/changelogs/<versionCode>.txt
 
-### android upload
+### android release
 
 ```sh
-[bundle exec] fastlane android upload
+[bundle exec] fastlane android release
 ```
 
-Upload an already-built AAB to a track. Options: track:internal notes:"…"
+Build and upload a release to a track
+
+Options: track:production status:draft|completed|inProgress rollout:0.2
+
+Production defaults to a DRAFT (nothing goes live) — go live with `rollout`.
+
+Release notes: fastlane/metadata/android/<locale>/changelogs/<versionCode>.txt
 
 ### android promote
 
